@@ -52,12 +52,11 @@ def combine_all_scraped_data(paths: PipelineFiles = FILES):
     # Detect unlimited (case-insensitive via normalization)
     mask_unlimited = df_unique["GB_norm"].str.contains(r"unl", na=False)
 
-    # Apply conversion AFTER dedupe
+    # Convert through text first so pandas string columns accept the unlimited conversion.
+    df_unique["GB"] = df_unique["GB"].astype("object")
     df_unique.loc[mask_unlimited, "GB"] = (
         df_unique.loc[mask_unlimited, "Days"].fillna(0) * 3
-    )
-
-    # Convert GB to numeric
+    ).astype(str)
     df_unique["GB"] = pd.to_numeric(df_unique["GB"], errors="coerce")
 
     # Cleanup

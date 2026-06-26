@@ -44,6 +44,14 @@ jobs:
           rm -rf workable_data
           mkdir -p workable_data
 
+      - name: Restore last successful scraper baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: outputs
+          key: scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-
+
       - name: Restore same-day scraper state
         if: github.event_name == 'workflow_dispatch' && inputs.reuse_today_successes == true
         uses: actions/cache/restore@v4
@@ -64,6 +72,13 @@ jobs:
             args+=(--resume-successful-today)
           fi
           python automation/pricing_pipeline.py "${args[@]}"
+
+      - name: Save last successful scraper baseline
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: outputs
+          key: scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save same-day scraper state
         if: always()

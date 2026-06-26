@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
+
 from pipeline_files import FILES
 
 BASE_DIR = FILES.base_dir
@@ -40,6 +42,14 @@ EXPECTED_CURRENT_OUTPUTS = {
     name: FILES.scraper_outputs_dir / f"{name}_current.csv"
     for name, _script, _timeout_s in SCRAPERS
 }
+QUALITY_RULES = {
+    "airalo": {"min_rows": 1000, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
+    "holafly": {"min_rows": 700, "min_countries": 20, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
+    "orange": {"min_rows": 1000, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
+    "saily": {"min_rows": 500, "min_countries": 100, "min_row_ratio": 0.80, "min_country_ratio": 0.80},
+    "vodafone": {"min_rows": 100, "min_countries": 100, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
+}
+REQUIRED_COLUMNS = {"Provider", "ISO3", "Price", "Currency"}
 
 
 @dataclass
@@ -52,6 +62,11 @@ class JobResult:
     attempt: int = 1
     log_path: str = ""
     note: str = ""
+    quality: str = ""
+    rows: int | None = None
+    countries: int | None = None
+    previous_rows: int | None = None
+    previous_countries: int | None = None
 
 
 def relative_log_path(path: Path) -> str:
@@ -129,6 +144,130 @@ def split_jobs_for_resume(resume_successful_today: bool) -> tuple[list[JobResult
     reusable_names = {result.name for result in reusable}
     jobs_to_run = [job for job in SCRAPERS if job[0] not in reusable_names]
     return reusable, jobs_to_run
+
+
+def append_note(result: JobResult, note: str) -> None:
+    if not note:
+        return
+    if result.note:
+        result.note = f"{result.note}; {note}"
+    else:
+        result.note = note
+
+
+def output_previous_path(name: str) -> Path:
+    return FILES.scraper_outputs_dir / f"{name}_previous.csv"
+
+
+def nonblank_count(df: pd.DataFrame, column: str) -> int:
+    if column not in df.columns:
+        return 0
+    values = df[column].astype(str).str.strip()
+    return int((values != "").sum())
+
+
+def summarize_scrape_file(path: Path) -> tuple[int, int]:
+    if not path.exists() or path.stat().st_size == 0:
+        return 0, 0
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return 0, 0
+    rows = len(df)
+    countries = nonblank_count(df.drop_duplicates("ISO3"), "ISO3") if "ISO3" in df.columns else 0
+    return rows, countries
+
+
+def validate_scrape_quality(result: JobResult) -> JobResult:
+    if result.status != "ok":
+        return result
+
+    current_path = EXPECTED_CURRENT_OUTPUTS[result.name]
+    previous_path = output_previous_path(result.name)
+    rules = QUALITY_RULES.get(
+        result.name,
+        {"min_rows": 1, "min_countries": 1, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
+    )
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    if not current_path.exists() or current_path.stat().st_size == 0:
+        result.rows = 0
+        result.countries = 0
+        result.quality = "failed"
+        result.status = "quality_failed"
+        append_note(result, f"quality failed: missing output {relative_log_path(current_path)}")
+        return result
+
+    try:
+        df = pd.read_csv(current_path)
+    except Exception as exc:
+        result.quality = "failed"
+        result.status = "quality_failed"
+        append_note(result, f"quality failed: cannot read output ({type(exc).__name__})")
+        return result
+
+    result.rows = len(df)
+    result.countries = int(df["ISO3"].dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()) if "ISO3" in df.columns else 0
+    result.previous_rows, result.previous_countries = summarize_scrape_file(previous_path)
+
+    missing_columns = sorted(REQUIRED_COLUMNS - set(df.columns))
+    if missing_columns:
+        failures.append(f"missing columns: {', '.join(missing_columns)}")
+
+    if result.rows < int(rules["min_rows"]):
+        failures.append(f"rows {result.rows} below minimum {rules['min_rows']}")
+
+    if result.countries < int(rules["min_countries"]):
+        failures.append(f"countries {result.countries} below minimum {rules['min_countries']}")
+
+    if "Price" in df.columns:
+        price_numeric = pd.to_numeric(df["Price"], errors="coerce")
+        invalid_prices = int((price_numeric.isna() | (price_numeric <= 0)).sum())
+        if invalid_prices:
+            failures.append(f"{invalid_prices} invalid prices")
+
+    if "Currency" in df.columns:
+        blank_currencies = int((df["Currency"].astype(str).str.strip() == "").sum())
+        if blank_currencies:
+            failures.append(f"{blank_currencies} blank currencies")
+        currencies = sorted(df["Currency"].dropna().astype(str).str.upper().str.strip().unique().tolist())
+        if len(currencies) > 3:
+            warnings.append(f"many currencies in Price column: {', '.join(currencies[:5])}")
+
+    if result.previous_rows and result.previous_rows > 0:
+        row_ratio = result.rows / result.previous_rows
+        if row_ratio < float(rules["min_row_ratio"]):
+            failures.append(
+                f"rows dropped to {row_ratio:.0%} of previous ({result.rows}/{result.previous_rows})"
+            )
+        elif row_ratio > 1.75:
+            warnings.append(f"rows increased to {row_ratio:.0%} of previous")
+
+    if result.previous_countries and result.previous_countries > 0:
+        country_ratio = result.countries / result.previous_countries
+        if country_ratio < float(rules["min_country_ratio"]):
+            failures.append(
+                f"countries dropped to {country_ratio:.0%} of previous ({result.countries}/{result.previous_countries})"
+            )
+        elif country_ratio > 1.50:
+            warnings.append(f"countries increased to {country_ratio:.0%} of previous")
+
+    if failures:
+        result.status = "quality_failed"
+        result.quality = "failed"
+        append_note(result, "quality failed: " + "; ".join(failures))
+    elif warnings:
+        result.quality = "warning"
+        append_note(result, "quality warning: " + "; ".join(warnings))
+    else:
+        result.quality = "ok"
+
+    return result
+
+
+def validate_scrape_results(results: list[JobResult]) -> list[JobResult]:
+    return sorted((validate_scrape_quality(result) for result in results), key=lambda r: r.name)
 
 
 def run_script(name: str, script: str, timeout_s: int, attempt: int = 1) -> JobResult:
@@ -233,6 +372,8 @@ def print_summary(title: str, results: list[JobResult]) -> None:
             status_label = "ERROR"
         elif result.status == "skipped":
             status_label = "SKIPPED"
+        elif result.status == "quality_failed":
+            status_label = "QUALITY"
         else:
             status_label = "FAILED"
 
@@ -242,6 +383,16 @@ def print_summary(title: str, results: list[JobResult]) -> None:
             f"attempt={result.attempt:<2} | exit={exit_info:<4} | "
             f"{format_duration(result.elapsed_s):>8} | {result.script}"
         )
+        if result.quality:
+            rows_info = "-" if result.rows is None else str(result.rows)
+            countries_info = "-" if result.countries is None else str(result.countries)
+            prev_rows_info = "-" if result.previous_rows is None else str(result.previous_rows)
+            prev_countries_info = "-" if result.previous_countries is None else str(result.previous_countries)
+            print(
+                f"  {'':<10} | {'quality':<7} | {result.quality}; "
+                f"rows={rows_info} prev={prev_rows_info}; "
+                f"countries={countries_info} prev={prev_countries_info}"
+            )
         if result.log_path:
             print(f"  {'':<10} | {'log':<7} | {result.log_path}")
         if result.note:
@@ -288,7 +439,7 @@ def retry_failed_scrapers(
         failed_names = ", ".join(name for name, _script, _timeout_s in failed_jobs)
         print()
         print(f"Retrying failed scrapers only, attempt {attempt}: {failed_names}")
-        retry_results = run_scraper_set(failed_jobs, attempt=attempt)
+        retry_results = validate_scrape_results(run_scraper_set(failed_jobs, attempt=attempt))
         for result in retry_results:
             final_by_name[result.name] = result
 
@@ -316,6 +467,11 @@ def write_status_report(
                     "Category": category,
                     "Name": result.name,
                     "Status": result.status,
+                    "Quality": result.quality,
+                    "Rows": "" if result.rows is None else str(result.rows),
+                    "Countries": "" if result.countries is None else str(result.countries),
+                    "PreviousRows": "" if result.previous_rows is None else str(result.previous_rows),
+                    "PreviousCountries": "" if result.previous_countries is None else str(result.previous_countries),
                     "ExitCode": "" if result.exit_code is None else str(result.exit_code),
                     "Attempt": str(result.attempt),
                     "DurationSeconds": f"{result.elapsed_s:.1f}",
@@ -341,6 +497,11 @@ def write_status_report(
         "Category",
         "Name",
         "Status",
+        "Quality",
+        "Rows",
+        "Countries",
+        "PreviousRows",
+        "PreviousCountries",
         "ExitCode",
         "Attempt",
         "DurationSeconds",
@@ -381,7 +542,9 @@ def main(resume_successful_today: bool = False) -> int:
         print("All scrapers already have successful same-day outputs; running combine next.")
         run_results = []
 
-    initial_results = sorted([*reused_results, *run_results], key=lambda r: r.name)
+    initial_results = validate_scrape_results(
+        sorted([*reused_results, *run_results], key=lambda r: r.name)
+    )
     print_summary("SCRAPER SUMMARY - FIRST ATTEMPT", initial_results)
 
     results = retry_failed_scrapers(initial_results, retry_count=DEFAULT_RETRY_COUNT)
