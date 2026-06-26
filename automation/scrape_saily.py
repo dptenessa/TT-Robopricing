@@ -18,6 +18,11 @@ try:
 except ImportError:
     pycountry = None
 
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
+
 
 OUTPUT_CURRENT_CSV = "outputs/saily_current.csv"
 OUTPUT_PREVIOUS_CSV = "outputs/saily_previous.csv"
@@ -43,6 +48,10 @@ HEADERS = {
     "Sec-Fetch-User": "?1",
     "Sec-Fetch-Dest": "document",
 }
+
+PLAYWRIGHT = None
+PLAYWRIGHT_BROWSER = None
+PLAYWRIGHT_PAGE = None
 
 CSV_FIELDNAMES = [
     "Provider",
@@ -162,6 +171,62 @@ def load_country_mapping(csv_path: str):
     return mapping
 
 
+def fetch_html_with_playwright(url: str) -> str:
+    global PLAYWRIGHT, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PAGE
+
+    if sync_playwright is None:
+        print("    [!] Playwright is not installed; browser fallback unavailable")
+        return ""
+
+    try:
+        if PLAYWRIGHT_PAGE is None:
+            print("    [*] Starting browser fallback for Saily")
+            PLAYWRIGHT = sync_playwright().start()
+            PLAYWRIGHT_BROWSER = PLAYWRIGHT.chromium.launch(headless=True)
+            context = PLAYWRIGHT_BROWSER.new_context(
+                locale="en-US",
+                user_agent=HEADERS["User-Agent"],
+                extra_http_headers={
+                    "Accept-Language": HEADERS["Accept-Language"],
+                    "Referer": HEADERS["Referer"],
+                },
+            )
+            PLAYWRIGHT_PAGE = context.new_page()
+
+        print(f"    [*] Browser fetching: {url}")
+        response = PLAYWRIGHT_PAGE.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        PLAYWRIGHT_PAGE.wait_for_timeout(3_000)
+        status = response.status if response else None
+        html = PLAYWRIGHT_PAGE.content()
+
+        if status and status >= 400:
+            print(f"    [!] Browser status: {status}")
+        if "Just a moment..." in html and "Cloudflare" in html:
+            print("    [!] Browser fallback still reached a Cloudflare challenge page")
+            return ""
+        if len(html) < 10_000:
+            print(f"    [!] Browser fallback returned short HTML: {len(html)} chars")
+
+        return html
+    except Exception as e:
+        print(f"    [!] Browser fallback failed: {type(e).__name__}: {e}")
+        return ""
+
+
+def close_browser_fallback() -> None:
+    global PLAYWRIGHT, PLAYWRIGHT_BROWSER, PLAYWRIGHT_PAGE
+
+    try:
+        if PLAYWRIGHT_BROWSER is not None:
+            PLAYWRIGHT_BROWSER.close()
+    finally:
+        if PLAYWRIGHT is not None:
+            PLAYWRIGHT.stop()
+        PLAYWRIGHT = None
+        PLAYWRIGHT_BROWSER = None
+        PLAYWRIGHT_PAGE = None
+
+
 def fetch_html(url: str, max_retries: int = 4) -> str:
     delay = 2.0
 
@@ -181,18 +246,18 @@ def fetch_html(url: str, max_retries: int = 4) -> str:
             if resp.status_code in (429, 500, 502, 503, 504):
                 if attempt == max_retries - 1:
                     print(f"    [!] HTTP {resp.status_code} for {url}")
-                    return ""
+                    return fetch_html_with_playwright(url)
                 time.sleep(delay + random.random())
                 delay *= 2
                 continue
 
             print(f"    [!] Non-200 status: {resp.status_code}")
-            return ""
+            return fetch_html_with_playwright(url)
 
         except Exception as e:
             if attempt == max_retries - 1:
                 print(f"    [!] Request failed: {e}")
-                return ""
+                return fetch_html_with_playwright(url)
             time.sleep(delay + random.random())
             delay *= 2
 
@@ -669,4 +734,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        close_browser_fallback()
