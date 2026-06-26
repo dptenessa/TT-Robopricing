@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Launch all competitor scrapers in parallel, then combine outputs.
+Launch all competitor scrapers in parallel, retry failed scrapers, then combine outputs.
 
 Usage:
     python run_weekly_scrape.py
@@ -22,6 +22,7 @@ from pipeline_files import FILES
 BASE_DIR = FILES.base_dir
 SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHON = sys.executable
+DEFAULT_RETRY_COUNT = 1
 
 SCRAPERS: list[tuple[str, str, int]] = [
     ("vodafone", "scrape_vodafone_pdf_improved.py", 30 * 60),
@@ -41,6 +42,7 @@ class JobResult:
     exit_code: int | None
     status: str
     elapsed_s: float
+    attempt: int = 1
     log_path: str = ""
 
 
@@ -51,16 +53,16 @@ def relative_log_path(path: Path) -> str:
         return str(path)
 
 
-def build_log_path(name: str) -> Path:
+def build_log_path(name: str, attempt: int) -> Path:
     log_dir = FILES.work_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return log_dir / f"{stamp}_{name}.log"
+    return log_dir / f"{stamp}_{name}_attempt{attempt}.log"
 
 
-def run_script(name: str, script: str, timeout_s: int) -> JobResult:
+def run_script(name: str, script: str, timeout_s: int, attempt: int = 1) -> JobResult:
     script_path = SCRIPT_DIR / script
-    log_path = build_log_path(name)
+    log_path = build_log_path(name, attempt)
 
     if not script_path.exists():
         log_path.write_text(f"Missing script: {script_path}\n", encoding="utf-8")
@@ -70,6 +72,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=None,
             status="missing",
             elapsed_s=0.0,
+            attempt=attempt,
             log_path=relative_log_path(log_path),
         )
 
@@ -80,6 +83,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
         with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
             print(f"Command: {' '.join(cmd)}", file=log_file)
             print(f"Working directory: {BASE_DIR}", file=log_file)
+            print(f"Attempt: {attempt}", file=log_file)
             print("-" * 72, file=log_file)
             log_file.flush()
             completed = subprocess.run(
@@ -100,6 +104,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=exit_code,
             status=status,
             elapsed_s=elapsed,
+            attempt=attempt,
             log_path=relative_log_path(log_path),
         )
     except subprocess.TimeoutExpired:
@@ -112,6 +117,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=None,
             status="timeout",
             elapsed_s=elapsed,
+            attempt=attempt,
             log_path=relative_log_path(log_path),
         )
     except Exception as exc:
@@ -125,6 +131,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=None,
             status="error",
             elapsed_s=elapsed,
+            attempt=attempt,
             log_path=relative_log_path(log_path),
         )
 
@@ -138,7 +145,7 @@ def format_duration(seconds: float) -> str:
 
 
 def print_summary(title: str, results: list[JobResult]) -> None:
-    width = 72
+    width = 84
     print()
     print("=" * width)
     print(title.center(width))
@@ -159,12 +166,58 @@ def print_summary(title: str, results: list[JobResult]) -> None:
         exit_info = "-" if result.exit_code is None else str(result.exit_code)
         print(
             f"  {result.name:<10} | {status_label:<7} | "
-            f"exit={exit_info:<4} | {format_duration(result.elapsed_s):>8} | {result.script}"
+            f"attempt={result.attempt:<2} | exit={exit_info:<4} | "
+            f"{format_duration(result.elapsed_s):>8} | {result.script}"
         )
         if result.log_path:
             print(f"  {'':<10} | {'log':<7} | {result.log_path}")
 
     print("=" * width)
+
+
+def run_scraper_set(
+    scraper_jobs: list[tuple[str, str, int]],
+    attempt: int,
+) -> list[JobResult]:
+    results: list[JobResult] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(scraper_jobs))) as executor:
+        futures = {
+            executor.submit(run_script, name, script, timeout_s, attempt): name
+            for name, script, timeout_s in scraper_jobs
+        }
+
+        for future in as_completed(futures):
+            result = future.result()
+            results.append(result)
+            print(f"[{result.name}] attempt={attempt} finished with status={result.status}")
+
+    return sorted(results, key=lambda r: r.name)
+
+
+def retry_failed_scrapers(
+    initial_results: list[JobResult],
+    retry_count: int = DEFAULT_RETRY_COUNT,
+) -> list[JobResult]:
+    final_by_name = {result.name: result for result in initial_results}
+    scraper_by_name = {name: (name, script, timeout_s) for name, script, timeout_s in SCRAPERS}
+
+    for attempt in range(2, retry_count + 2):
+        failed_jobs = [
+            scraper_by_name[result.name]
+            for result in final_by_name.values()
+            if result.status != "ok" and result.name in scraper_by_name
+        ]
+        if not failed_jobs:
+            break
+
+        failed_names = ", ".join(name for name, _script, _timeout_s in failed_jobs)
+        print()
+        print(f"Retrying failed scrapers only, attempt {attempt}: {failed_names}")
+        retry_results = run_scraper_set(failed_jobs, attempt=attempt)
+        for result in retry_results:
+            final_by_name[result.name] = result
+
+    return sorted(final_by_name.values(), key=lambda r: r.name)
 
 
 def write_status_report(
@@ -187,6 +240,7 @@ def write_status_report(
                     "Name": result.name,
                     "Status": result.status,
                     "ExitCode": "" if result.exit_code is None else str(result.exit_code),
+                    "Attempt": str(result.attempt),
                     "DurationSeconds": f"{result.elapsed_s:.1f}",
                     "Duration": format_duration(result.elapsed_s),
                     "Script": result.script,
@@ -209,6 +263,7 @@ def write_status_report(
         "Name",
         "Status",
         "ExitCode",
+        "Attempt",
         "DurationSeconds",
         "Duration",
         "Script",
@@ -228,24 +283,16 @@ def write_status_report(
 def main() -> int:
     print(f"Starting weekly scrape from: {BASE_DIR}")
     print(f"Python: {PYTHON}")
-    print(f"Running {len(SCRAPERS)} scrapers in parallel...\n")
+    print(f"Running {len(SCRAPERS)} scrapers in parallel...")
+    print(f"Failed scrapers will be retried {DEFAULT_RETRY_COUNT} time(s).\n")
 
     overall_start = time.monotonic()
-    results: list[JobResult] = []
 
-    with ThreadPoolExecutor(max_workers=len(SCRAPERS)) as executor:
-        futures = {
-            executor.submit(run_script, name, script, timeout_s): name
-            for name, script, timeout_s in SCRAPERS
-        }
+    initial_results = run_scraper_set(SCRAPERS, attempt=1)
+    print_summary("SCRAPER SUMMARY - FIRST ATTEMPT", initial_results)
 
-        for future in as_completed(futures):
-            result = future.result()
-            results.append(result)
-            print(f"[{result.name}] finished with status={result.status}")
-
-    results.sort(key=lambda r: r.name)
-    print_summary("SCRAPER SUMMARY", results)
+    results = retry_failed_scrapers(initial_results, retry_count=DEFAULT_RETRY_COUNT)
+    print_summary("SCRAPER SUMMARY - FINAL", results)
 
     print(f"\nRunning {COMBINE_SCRIPT}...")
     combine_result = run_script("combine", COMBINE_SCRIPT, 10 * 60)
@@ -259,7 +306,7 @@ def main() -> int:
 
     if scraper_failures:
         failed_names = ", ".join(r.name for r in scraper_failures)
-        print(f"Scrapers with issues: {failed_names}")
+        print(f"Scrapers with issues after retry: {failed_names}")
 
     if combine_failed:
         print("Combine step did not complete successfully.")

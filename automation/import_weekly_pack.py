@@ -112,7 +112,7 @@ def print_scrape_status(src_root: Path) -> None:
         return
 
     display_cols = [
-        col for col in ["Category", "Name", "Status", "Duration", "Script", "LogFile"]
+        col for col in ["Category", "Name", "Status", "Attempt", "Duration", "Script", "LogFile"]
         if col in status_df.columns
     ]
     print_pipe_table(status_df[display_cols], "SCRAPERS AND COMBINE")
