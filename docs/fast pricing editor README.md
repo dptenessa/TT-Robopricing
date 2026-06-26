@@ -28,8 +28,8 @@ python app.py
 ```
 
 ## Suggested workflow
-1. Run `python pricing_pipeline.py` to prepare the latest proposal from existing scraper outputs.
-2. Or run `python pricing_pipeline.py --scrape --open-editor` for the weekly scrape-to-editor flow.
+1. Run `python automation/pricing_pipeline.py` to prepare the latest proposal from existing scraper outputs.
+2. Or run `python automation/pricing_pipeline.py --scrape --open-editor` for the weekly scrape-to-editor flow.
 3. Review the USD/EUR proposal against the last export/session loaded from `workable_data/exports`.
 4. Drag points to sculpt the working curve.
 5. Select a point and apply/remove shared promotions.

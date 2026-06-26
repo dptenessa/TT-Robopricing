@@ -7,9 +7,13 @@ from pathlib import Path
 from currency_support import DEFAULT_CURRENCY, normalize_currency
 
 
+MODULE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = MODULE_DIR.parent if MODULE_DIR.name == "automation" else MODULE_DIR
+
+
 @dataclass(frozen=True)
 class PipelineFiles:
-    base_dir: Path = Path(__file__).resolve().parent
+    base_dir: Path = PROJECT_ROOT
 
     @property
     def inputs_dir(self) -> Path:

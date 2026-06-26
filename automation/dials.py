@@ -56,6 +56,7 @@ from PyQt6.QtWidgets import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parent if APP_DIR.name == "automation" else APP_DIR
 CONFIG_PY_PATH = APP_DIR / "config.py"
 CONFIG_DEFAULT_PY_PATH = APP_DIR / "config_default.py"
 
@@ -235,6 +236,8 @@ PROMO_TARGET_MARGIN_PCT = {c["PROMO_TARGET_MARGIN_PCT"]}
 # Configuration for region price definition (paths are relative to BASE_DIR)
 # ---------------------------------
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "automation":
+    BASE_DIR = BASE_DIR.parent
 INPUT_REGIONS = BASE_DIR / "{c["INPUT_REGIONS"]}"
 OUTPUT_NAME = "{c["OUTPUT_NAME"]}"
 '''

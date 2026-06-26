@@ -1,7 +1,8 @@
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Runner = Join-Path $Root "run_pricing_pipeline.ps1"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = (Resolve-Path (Join-Path $ScriptDir '..')).Path
+$Runner = Join-Path $ScriptDir "run_pricing_pipeline.ps1"
 $TaskName = "T Global Robopricing Weekly Scrape"
 
 if (-not (Test-Path -LiteralPath $Runner)) {
@@ -27,7 +28,7 @@ Register-ScheduledTask `
     -Trigger $Trigger `
     -Principal $Principal `
     -Settings $Settings `
-    -Description "Runs python pricing_pipeline.py --scrape every Monday at 03:00." `
+    -Description "Runs python automation/pricing_pipeline.py --scrape every Monday at 03:00." `
     -Force | Out-Null
 
 Write-Host "Scheduled task created or updated: $TaskName"

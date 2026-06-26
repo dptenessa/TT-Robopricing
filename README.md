@@ -4,7 +4,7 @@ Automated competitor scraping, market cleaning, USD/EUR pricing proposal generat
 
 ## Normal Weekly Flow
 
-1. GitHub Actions runs `python pricing_pipeline.py --scrape` every Monday.
+1. GitHub Actions runs `python automation/pricing_pipeline.py --scrape` every Monday.
 2. Download the `weekly-proposal-pack` artifact from GitHub.
 3. Open the `START_HERE` folder and double-click `1 Import weekly proposal pack.cmd`.
 
@@ -25,19 +25,19 @@ For normal use, the only files you need to launch manually are the two files in 
 Reuse existing scraper current files:
 
 ```powershell
-python pricing_pipeline.py
+python automation/pricing_pipeline.py
 ```
 
 Run fresh scraping locally:
 
 ```powershell
-python pricing_pipeline.py --scrape
+python automation/pricing_pipeline.py --scrape
 ```
 
 Run fresh scraping and open the editor:
 
 ```powershell
-python pricing_pipeline.py --scrape --open-editor
+python automation/pricing_pipeline.py --scrape --open-editor
 ```
 
 ## Important Folders

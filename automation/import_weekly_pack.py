@@ -269,7 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("pack", help="Path to weekly-proposal-pack.zip, or an extracted pack folder.")
     parser.add_argument(
         "--project-root",
-        default=str(Path(__file__).resolve().parent),
+        default=str(Path(__file__).resolve().parent.parent),
         help="Local project folder to update. Defaults to this script's folder.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be copied.")

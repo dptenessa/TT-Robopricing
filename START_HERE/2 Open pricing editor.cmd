@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0.."
 
-python "fast pricing editor.py"
+python "automation\fast pricing editor.py"
 
 if errorlevel 1 (
     echo.

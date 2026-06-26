@@ -30,7 +30,7 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Run scrape and proposal pipeline
-        run: python pricing_pipeline.py --scrape
+        run: python automation/pricing_pipeline.py --scrape
 
       - name: Upload proposal pack
         if: always()

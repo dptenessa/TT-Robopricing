@@ -103,7 +103,7 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
         run_step("5. Open fast editor", run_editor)
     else:
         print()
-        print("Next: open the editor with `python \"fast pricing editor.py\"`.")
+        print("Next: open the editor from START_HERE, or run `python \"automation/fast pricing editor.py\"`.")
 
     return 0
 

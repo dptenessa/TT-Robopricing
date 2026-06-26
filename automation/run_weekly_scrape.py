@@ -20,6 +20,7 @@ from pathlib import Path
 from pipeline_files import FILES
 
 BASE_DIR = FILES.base_dir
+SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
 SCRAPERS: list[tuple[str, str, int]] = [
@@ -43,7 +44,7 @@ class JobResult:
 
 
 def run_script(name: str, script: str, timeout_s: int) -> JobResult:
-    script_path = BASE_DIR / script
+    script_path = SCRIPT_DIR / script
     if not script_path.exists():
         return JobResult(
             name=name,
@@ -208,7 +209,7 @@ def main() -> int:
     results.sort(key=lambda r: r.name)
     print_summary("SCRAPER SUMMARY", results)
 
-    combine_path = BASE_DIR / COMBINE_SCRIPT
+    combine_path = SCRIPT_DIR / COMBINE_SCRIPT
     combine_result: JobResult
 
     if not combine_path.exists():

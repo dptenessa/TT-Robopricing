@@ -78,5 +78,7 @@ PROMO_TARGET_MARGIN_PCT = 0.0
 # Configuration for region price definition (paths are relative to BASE_DIR)
 # ---------------------------------
 BASE_DIR = Path(__file__).resolve().parent
+if BASE_DIR.name == "automation":
+    BASE_DIR = BASE_DIR.parent
 INPUT_REGIONS = BASE_DIR / "inputs" / "regions.yaml"
 OUTPUT_NAME = "Region_prices.csv"

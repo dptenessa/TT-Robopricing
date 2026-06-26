@@ -39,3 +39,4 @@ weekly-pack-*-test*/
 # Large/manual one-off artifacts that are not part of the automated pipeline
 public_price_list.pdf
 Final_pricing.xlsx
+reorg-import-test*/

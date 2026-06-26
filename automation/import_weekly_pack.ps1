@@ -3,7 +3,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = (Resolve-Path (Join-Path $ScriptDir '..')).Path
 
 if ([string]::IsNullOrWhiteSpace($Pack)) {
     Add-Type -AssemblyName System.Windows.Forms
@@ -27,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($Pack)) {
     $Pack = $dialog.FileName
 }
 
-python "$ProjectRoot\import_weekly_pack.py" "$Pack" --project-root "$ProjectRoot"
+python "$ScriptDir\import_weekly_pack.py" "$Pack" --project-root "$ProjectRoot"
 
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
