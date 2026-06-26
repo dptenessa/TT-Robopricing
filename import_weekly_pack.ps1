@@ -1,10 +1,31 @@
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Pack
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+if ([string]::IsNullOrWhiteSpace($Pack)) {
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $dialog.Title = "Select weekly-proposal-pack.zip"
+    $dialog.Filter = "Weekly proposal pack (*.zip)|*.zip|All files (*.*)|*.*"
+    $dialog.CheckFileExists = $true
+    $dialog.Multiselect = $false
+
+    $downloads = Join-Path $env:USERPROFILE "Downloads"
+    if (Test-Path -LiteralPath $downloads) {
+        $dialog.InitialDirectory = $downloads
+    }
+
+    if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Host "Import cancelled."
+        exit 0
+    }
+
+    $Pack = $dialog.FileName
+}
 
 python "$ProjectRoot\import_weekly_pack.py" "$Pack" --project-root "$ProjectRoot"
 

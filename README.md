@@ -9,8 +9,10 @@ Automated competitor scraping, market cleaning, USD/EUR pricing proposal generat
 3. Import it into this local repo folder:
 
 ```powershell
-.\import_weekly_pack.ps1 "C:\Users\<your-user>\Downloads\weekly-proposal-pack.zip"
+.\import_weekly_pack.ps1
 ```
+
+Choose the downloaded `weekly-proposal-pack.zip` when the file picker opens.
 
 4. Open the editor:
 
