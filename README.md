@@ -6,25 +6,19 @@ Automated competitor scraping, market cleaning, USD/EUR pricing proposal generat
 
 1. GitHub Actions runs `python pricing_pipeline.py --scrape` every Monday.
 2. Download the `weekly-proposal-pack` artifact from GitHub.
-3. Import it into this local repo folder:
-
-```powershell
-.\import_weekly_pack.ps1
-```
+3. Open the `START_HERE` folder and double-click `1 Import weekly proposal pack.cmd`.
 
 Choose the downloaded `weekly-proposal-pack.zip` when the file picker opens.
 
 The importer prints which scrapers worked or failed, compares the incoming combined scrape with your current local combined scrape, and saves fresh change reports in `workable_data/diffs/`.
 
-4. Open the editor:
-
-```powershell
-python "fast pricing editor.py"
-```
+4. In `START_HERE`, double-click `2 Open pricing editor.cmd`.
 
 5. Review proposals, adjust prices/promos, and export final USD/EUR prices.
 
 The import helper updates scrape/proposal files and history, but does not touch manual editor exports or autosaves.
+
+For normal use, the only files you need to launch manually are the two files in `START_HERE`. The other Python and workflow files are internal automation.
 
 ## Local Proposal Run
 
