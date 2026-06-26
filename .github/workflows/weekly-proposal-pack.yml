@@ -2,6 +2,12 @@ name: Weekly proposal pack
 
 on:
   workflow_dispatch:
+    inputs:
+      reuse_today_successes:
+        description: "Manual rerun: reuse scrapers that already succeeded today"
+        required: true
+        type: boolean
+        default: true
   schedule:
     # GitHub schedules are UTC. This is 03:00 Zagreb during summer time.
     - cron: "0 1 * * 1"
@@ -14,6 +20,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set same-day scrape date
+        run: echo "SCRAPE_RUN_DATE=$(TZ=Europe/Zagreb date +%F)" >> "$GITHUB_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,8 +44,35 @@ jobs:
           rm -rf workable_data
           mkdir -p workable_data
 
+      - name: Restore same-day scraper state
+        if: github.event_name == 'workflow_dispatch' && inputs.reuse_today_successes == true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            outputs
+            workable_data/scrape_status_latest.csv
+          key: scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-
+
       - name: Run scrape and proposal pipeline
-        run: python automation/pricing_pipeline.py --scrape
+        env:
+          RESUME_TODAY: ${{ github.event_name == 'workflow_dispatch' && inputs.reuse_today_successes == true }}
+        run: |
+          args=(--scrape)
+          if [ "$RESUME_TODAY" = "true" ]; then
+            args+=(--resume-successful-today)
+          fi
+          python automation/pricing_pipeline.py "${args[@]}"
+
+      - name: Save same-day scraper state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            outputs
+            workable_data/scrape_status_latest.csv
+          key: scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload proposal pack
         if: always()

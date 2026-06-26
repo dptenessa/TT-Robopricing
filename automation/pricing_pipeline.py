@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run all competitor scrapers first. Without this, existing outputs/*_current.csv files are reused.",
     )
     parser.add_argument(
+        "--resume-successful-today",
+        action="store_true",
+        help="When scraping, reuse scraper outputs that already succeeded today and rerun only the rest.",
+    )
+    parser.add_argument(
         "--skip-diff",
         action="store_true",
         help="Skip scraped-price change reports.",
@@ -66,7 +71,10 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
     if args.scrape:
         from run_weekly_scrape import main as scrape_main
 
-        scrape_code = run_step("1. Scrape competitors and combine", scrape_main)
+        scrape_code = run_step(
+            "1. Scrape competitors and combine",
+            lambda: scrape_main(resume_successful_today=args.resume_successful_today),
+        )
         if scrape_code not in (0, None):
             print("Scraping failed after retry. Stopping before diff, outlier removal, and model proposal generation.")
             return int(scrape_code) if isinstance(scrape_code, int) else 1

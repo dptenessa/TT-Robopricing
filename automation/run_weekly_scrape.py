@@ -9,12 +9,13 @@ Usage:
 from __future__ import annotations
 
 import csv
+import os
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from pipeline_files import FILES
@@ -24,7 +25,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHON = sys.executable
 DEFAULT_RETRY_COUNT = 1
 
-SCRAPERS: list[tuple[str, str, int]] = [
+ScraperJob = tuple[str, str, int]
+
+SCRAPERS: list[ScraperJob] = [
     ("vodafone", "scrape_vodafone_pdf_improved.py", 30 * 60),
     ("holafly", "scrape_holafly.py", 30 * 60),
     ("saily", "scrape_saily.py", 30 * 60),
@@ -33,6 +36,10 @@ SCRAPERS: list[tuple[str, str, int]] = [
 ]
 
 COMBINE_SCRIPT = "combine_scrapped_data.py"
+EXPECTED_CURRENT_OUTPUTS = {
+    name: FILES.scraper_outputs_dir / f"{name}_current.csv"
+    for name, _script, _timeout_s in SCRAPERS
+}
 
 
 @dataclass
@@ -44,6 +51,7 @@ class JobResult:
     elapsed_s: float
     attempt: int = 1
     log_path: str = ""
+    note: str = ""
 
 
 def relative_log_path(path: Path) -> str:
@@ -58,6 +66,69 @@ def build_log_path(name: str, attempt: int) -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return log_dir / f"{stamp}_{name}_attempt{attempt}.log"
+
+
+def current_run_date() -> str:
+    return os.environ.get("SCRAPE_RUN_DATE", date.today().isoformat())
+
+
+def row_run_date(row: dict[str, str]) -> str:
+    if row.get("RunDate"):
+        return row["RunDate"]
+    timestamp = row.get("RunTimestamp", "")
+    return timestamp[:10]
+
+
+def reusable_successful_results(run_date: str) -> list[JobResult]:
+    status_path = FILES.work_dir / "scrape_status_latest.csv"
+    if not status_path.exists():
+        return []
+
+    scraper_by_name = {name: script for name, script, _timeout_s in SCRAPERS}
+    reusable: list[JobResult] = []
+
+    with status_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("Name", "")
+            if row.get("Category") != "scraper":
+                continue
+            if row_run_date(row) != run_date:
+                continue
+            if row.get("Status", "").lower() != "ok":
+                continue
+            if name not in scraper_by_name:
+                continue
+
+            expected_output = EXPECTED_CURRENT_OUTPUTS[name]
+            if not expected_output.exists() or expected_output.stat().st_size == 0:
+                continue
+
+            reusable.append(
+                JobResult(
+                    name=name,
+                    script=scraper_by_name[name],
+                    exit_code=0,
+                    status="ok",
+                    elapsed_s=0.0,
+                    attempt=0,
+                    log_path=row.get("LogFile", ""),
+                    note=f"reused same-day output from {run_date}",
+                )
+            )
+
+    return sorted(reusable, key=lambda r: r.name)
+
+
+def split_jobs_for_resume(resume_successful_today: bool) -> tuple[list[JobResult], list[ScraperJob]]:
+    if not resume_successful_today:
+        return [], SCRAPERS
+
+    run_date = current_run_date()
+    reusable = reusable_successful_results(run_date)
+    reusable_names = {result.name for result in reusable}
+    jobs_to_run = [job for job in SCRAPERS if job[0] not in reusable_names]
+    return reusable, jobs_to_run
 
 
 def run_script(name: str, script: str, timeout_s: int, attempt: int = 1) -> JobResult:
@@ -171,12 +242,14 @@ def print_summary(title: str, results: list[JobResult]) -> None:
         )
         if result.log_path:
             print(f"  {'':<10} | {'log':<7} | {result.log_path}")
+        if result.note:
+            print(f"  {'':<10} | {'note':<7} | {result.note}")
 
     print("=" * width)
 
 
 def run_scraper_set(
-    scraper_jobs: list[tuple[str, str, int]],
+    scraper_jobs: list[ScraperJob],
     attempt: int,
 ) -> list[JobResult]:
     results: list[JobResult] = []
@@ -226,6 +299,7 @@ def write_status_report(
     overall_elapsed: float,
 ) -> None:
     report_time = datetime.now()
+    run_date = current_run_date()
     rows: list[dict[str, str]] = []
 
     for category, results in [
@@ -235,6 +309,7 @@ def write_status_report(
         for result in results:
             rows.append(
                 {
+                    "RunDate": run_date,
                     "RunTimestamp": report_time.isoformat(timespec="seconds"),
                     "Category": category,
                     "Name": result.name,
@@ -245,6 +320,7 @@ def write_status_report(
                     "Duration": format_duration(result.elapsed_s),
                     "Script": result.script,
                     "LogFile": result.log_path,
+                    "Note": result.note,
                     "OverallDuration": format_duration(overall_elapsed),
                 }
             )
@@ -258,6 +334,7 @@ def write_status_report(
     history_dir.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
+        "RunDate",
         "RunTimestamp",
         "Category",
         "Name",
@@ -268,6 +345,7 @@ def write_status_report(
         "Duration",
         "Script",
         "LogFile",
+        "Note",
         "OverallDuration",
     ]
 
@@ -280,15 +358,28 @@ def write_status_report(
     print(f"Saved scrape status report: {latest_path}")
 
 
-def main() -> int:
+def main(resume_successful_today: bool = False) -> int:
     print(f"Starting weekly scrape from: {BASE_DIR}")
     print(f"Python: {PYTHON}")
-    print(f"Running {len(SCRAPERS)} scrapers in parallel...")
+    print(f"Same-day run date: {current_run_date()}")
+    print(f"Resume same-day successful scrapers: {'yes' if resume_successful_today else 'no'}")
     print(f"Failed scrapers will be retried {DEFAULT_RETRY_COUNT} time(s).\n")
 
     overall_start = time.monotonic()
 
-    initial_results = run_scraper_set(SCRAPERS, attempt=1)
+    reused_results, jobs_to_run = split_jobs_for_resume(resume_successful_today)
+    if reused_results:
+        reused_names = ", ".join(result.name for result in reused_results)
+        print(f"Reusing same-day successful scraper outputs: {reused_names}")
+
+    if jobs_to_run:
+        print(f"Running {len(jobs_to_run)} scrapers in parallel...")
+        run_results = run_scraper_set(jobs_to_run, attempt=1)
+    else:
+        print("All scrapers already have successful same-day outputs; running combine next.")
+        run_results = []
+
+    initial_results = sorted([*reused_results, *run_results], key=lambda r: r.name)
     print_summary("SCRAPER SUMMARY - FIRST ATTEMPT", initial_results)
 
     results = retry_failed_scrapers(initial_results, retry_count=DEFAULT_RETRY_COUNT)
