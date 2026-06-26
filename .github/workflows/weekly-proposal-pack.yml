@@ -46,9 +46,10 @@ jobs:
             workable_data/market_prices_outlier_audit_log.csv
             workable_data/ht_prices_latest.csv
             workable_data/ht_failed_countries_latest.csv
+            workable_data/scrape_status_latest.csv
+            workable_data/scrape_status_history/*.csv
             workable_data/history/combined_scrapped_data_*.csv
             workable_data/history/ht_prices_*.csv
-            workable_data/diffs/*.csv
             workable_data/USD/*.csv
             workable_data/USD/history/*.csv
             workable_data/EUR/*.csv

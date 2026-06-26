@@ -14,6 +14,8 @@ Automated competitor scraping, market cleaning, USD/EUR pricing proposal generat
 
 Choose the downloaded `weekly-proposal-pack.zip` when the file picker opens.
 
+The importer prints which scrapers worked or failed, compares the incoming combined scrape with your current local combined scrape, and saves fresh change reports in `workable_data/diffs/`.
+
 4. Open the editor:
 
 ```powershell

@@ -8,11 +8,13 @@ Usage:
 
 from __future__ import annotations
 
+import csv
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from pipeline_files import FILES
@@ -128,6 +130,62 @@ def print_summary(title: str, results: list[JobResult]) -> None:
     print("=" * width)
 
 
+def write_status_report(
+    scraper_results: list[JobResult],
+    combine_result: JobResult,
+    overall_elapsed: float,
+) -> None:
+    report_time = datetime.now()
+    rows: list[dict[str, str]] = []
+
+    for category, results in [
+        ("scraper", scraper_results),
+        ("combine", [combine_result]),
+    ]:
+        for result in results:
+            rows.append(
+                {
+                    "RunTimestamp": report_time.isoformat(timespec="seconds"),
+                    "Category": category,
+                    "Name": result.name,
+                    "Status": result.status,
+                    "ExitCode": "" if result.exit_code is None else str(result.exit_code),
+                    "DurationSeconds": f"{result.elapsed_s:.1f}",
+                    "Duration": format_duration(result.elapsed_s),
+                    "Script": result.script,
+                    "OverallDuration": format_duration(overall_elapsed),
+                }
+            )
+
+    report_dir = FILES.work_dir
+    history_dir = report_dir / "scrape_status_history"
+    latest_path = report_dir / "scrape_status_latest.csv"
+    history_path = history_dir / f"scrape_status_{report_time.strftime('%Y-%m-%d_%H%M%S')}.csv"
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "RunTimestamp",
+        "Category",
+        "Name",
+        "Status",
+        "ExitCode",
+        "DurationSeconds",
+        "Duration",
+        "Script",
+        "OverallDuration",
+    ]
+
+    for path in [latest_path, history_path]:
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    print(f"Saved scrape status report: {latest_path}")
+
+
 def main() -> int:
     print(f"Starting weekly scrape from: {BASE_DIR}")
     print(f"Python: {PYTHON}")
@@ -207,6 +265,8 @@ def main() -> int:
 
     if combine_failed:
         print("Combine step did not complete successfully.")
+
+    write_status_report(results, combine_result, overall_elapsed)
 
     if scraper_failures or combine_failed:
         return 1
