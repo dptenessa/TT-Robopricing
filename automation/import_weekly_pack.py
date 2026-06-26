@@ -26,6 +26,7 @@ ALLOWED_PATTERNS = (
     "workable_data/ht_failed_countries_latest.csv",
     "workable_data/scrape_status_latest.csv",
     "workable_data/scrape_status_history/*.csv",
+    "workable_data/logs/*.log",
     "workable_data/history/combined_scrapped_data_*.csv",
     "workable_data/history/ht_prices_*.csv",
     "workable_data/USD/*.csv",
@@ -111,7 +112,7 @@ def print_scrape_status(src_root: Path) -> None:
         return
 
     display_cols = [
-        col for col in ["Category", "Name", "Status", "Duration", "Script"]
+        col for col in ["Category", "Name", "Status", "Duration", "Script", "LogFile"]
         if col in status_df.columns
     ]
     print_pipe_table(status_df[display_cols], "SCRAPERS AND COMBINE")

@@ -41,29 +41,56 @@ class JobResult:
     exit_code: int | None
     status: str
     elapsed_s: float
+    log_path: str = ""
+
+
+def relative_log_path(path: Path) -> str:
+    try:
+        return path.relative_to(BASE_DIR).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def build_log_path(name: str) -> Path:
+    log_dir = FILES.work_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return log_dir / f"{stamp}_{name}.log"
 
 
 def run_script(name: str, script: str, timeout_s: int) -> JobResult:
     script_path = SCRIPT_DIR / script
+    log_path = build_log_path(name)
+
     if not script_path.exists():
+        log_path.write_text(f"Missing script: {script_path}\n", encoding="utf-8")
         return JobResult(
             name=name,
             script=script,
             exit_code=None,
             status="missing",
             elapsed_s=0.0,
+            log_path=relative_log_path(log_path),
         )
 
     cmd = [PYTHON, str(script_path)]
     start = time.monotonic()
 
     try:
-        completed = subprocess.run(
-            cmd,
-            cwd=BASE_DIR,
-            timeout=timeout_s,
-            check=False,
-        )
+        with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
+            print(f"Command: {' '.join(cmd)}", file=log_file)
+            print(f"Working directory: {BASE_DIR}", file=log_file)
+            print("-" * 72, file=log_file)
+            log_file.flush()
+            completed = subprocess.run(
+                cmd,
+                cwd=BASE_DIR,
+                timeout=timeout_s,
+                check=False,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+
         elapsed = time.monotonic() - start
         exit_code = completed.returncode
         status = "ok" if exit_code == 0 else "failed"
@@ -73,18 +100,24 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=exit_code,
             status=status,
             elapsed_s=elapsed,
+            log_path=relative_log_path(log_path),
         )
     except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - start
+        with log_path.open("a", encoding="utf-8", errors="replace") as log_file:
+            print(f"\nTIMEOUT after {format_duration(elapsed)}", file=log_file)
         return JobResult(
             name=name,
             script=script,
             exit_code=None,
             status="timeout",
             elapsed_s=elapsed,
+            log_path=relative_log_path(log_path),
         )
     except Exception as exc:
         elapsed = time.monotonic() - start
+        with log_path.open("a", encoding="utf-8", errors="replace") as log_file:
+            print(f"\nUnexpected error: {type(exc).__name__}: {exc}", file=log_file)
         print(f"[{name}] unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return JobResult(
             name=name,
@@ -92,6 +125,7 @@ def run_script(name: str, script: str, timeout_s: int) -> JobResult:
             exit_code=None,
             status="error",
             elapsed_s=elapsed,
+            log_path=relative_log_path(log_path),
         )
 
 
@@ -122,11 +156,13 @@ def print_summary(title: str, results: list[JobResult]) -> None:
         else:
             status_label = "FAILED"
 
-        exit_info = "—" if result.exit_code is None else str(result.exit_code)
+        exit_info = "-" if result.exit_code is None else str(result.exit_code)
         print(
             f"  {result.name:<10} | {status_label:<7} | "
             f"exit={exit_info:<4} | {format_duration(result.elapsed_s):>8} | {result.script}"
         )
+        if result.log_path:
+            print(f"  {'':<10} | {'log':<7} | {result.log_path}")
 
     print("=" * width)
 
@@ -154,6 +190,7 @@ def write_status_report(
                     "DurationSeconds": f"{result.elapsed_s:.1f}",
                     "Duration": format_duration(result.elapsed_s),
                     "Script": result.script,
+                    "LogFile": result.log_path,
                     "OverallDuration": format_duration(overall_elapsed),
                 }
             )
@@ -175,6 +212,7 @@ def write_status_report(
         "DurationSeconds",
         "Duration",
         "Script",
+        "LogFile",
         "OverallDuration",
     ]
 
@@ -209,49 +247,8 @@ def main() -> int:
     results.sort(key=lambda r: r.name)
     print_summary("SCRAPER SUMMARY", results)
 
-    combine_path = SCRIPT_DIR / COMBINE_SCRIPT
-    combine_result: JobResult
-
-    if not combine_path.exists():
-        combine_result = JobResult(
-            name="combine",
-            script=COMBINE_SCRIPT,
-            exit_code=None,
-            status="missing",
-            elapsed_s=0.0,
-        )
-    else:
-        print(f"\nRunning {COMBINE_SCRIPT}...")
-        combine_start = time.monotonic()
-        try:
-            completed = subprocess.run(
-                [PYTHON, str(combine_path)],
-                cwd=BASE_DIR,
-                check=False,
-            )
-            combine_elapsed = time.monotonic() - combine_start
-            exit_code = completed.returncode
-            combine_result = JobResult(
-                name="combine",
-                script=COMBINE_SCRIPT,
-                exit_code=exit_code,
-                status="ok" if exit_code == 0 else "failed",
-                elapsed_s=combine_elapsed,
-            )
-        except Exception as exc:
-            combine_elapsed = time.monotonic() - combine_start
-            print(
-                f"[combine] unexpected error: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            combine_result = JobResult(
-                name="combine",
-                script=COMBINE_SCRIPT,
-                exit_code=None,
-                status="error",
-                elapsed_s=combine_elapsed,
-            )
-
+    print(f"\nRunning {COMBINE_SCRIPT}...")
+    combine_result = run_script("combine", COMBINE_SCRIPT, 10 * 60)
     print_summary("COMBINE SUMMARY", [combine_result])
 
     overall_elapsed = time.monotonic() - overall_start
