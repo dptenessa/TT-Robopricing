@@ -164,33 +164,31 @@ def merge_currency_tables(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
         return pd.DataFrame()
 
     combined = pd.concat(frames, ignore_index=True, sort=False)
-    grouped_rows: list[dict[str, Any]] = []
+    out = combined.drop_duplicates("_currency_row_key", keep="first").copy()
 
-    for _, group in combined.groupby("_currency_row_key", sort=False):
-        row: dict[str, Any] = {}
-        for col in combined.columns:
-            if col == "_currency_row_key":
-                continue
-            values = group[col].dropna()
-            if values.empty:
-                row[col] = np.nan
-            else:
-                first = values.iloc[0]
-                row[col] = first
+    for currency in CURRENCIES:
+        price_col = currency_price_column(currency)
+        if price_col not in combined.columns:
+            continue
 
-        for currency in CURRENCIES:
-            price_col = currency_price_column(currency)
-            c_rows = group[group["Currency"].astype(str).str.upper().eq(currency)]
-            if not c_rows.empty and price_col in c_rows.columns:
-                values = pd.to_numeric(c_rows[price_col], errors="coerce").dropna()
-                if not values.empty:
-                    row[price_col] = float(values.iloc[0])
+        currency_rows = combined[
+            combined["Currency"].astype(str).str.upper().eq(currency)
+        ][["_currency_row_key", price_col]].copy()
 
-        grouped_rows.append(row)
+        if currency_rows.empty:
+            continue
 
-    out = pd.DataFrame(grouped_rows)
-    if "_currency_row_key" in out.columns:
-        out = out.drop(columns=["_currency_row_key"])
+        currency_rows[price_col] = pd.to_numeric(currency_rows[price_col], errors="coerce")
+        price_by_key = (
+            currency_rows.dropna(subset=[price_col])
+            .drop_duplicates("_currency_row_key", keep="first")
+            .set_index("_currency_row_key")[price_col]
+        )
+
+        mapped = out["_currency_row_key"].map(price_by_key)
+        out[price_col] = mapped.combine_first(pd.to_numeric(out.get(price_col), errors="coerce"))
+
+    out = out.drop(columns=["_currency_row_key"])
     return out
 
 
