@@ -243,6 +243,10 @@ def extract_all_props(page_html: str) -> list[str]:
 def extract_variants_from_text(text: str) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
+    results.extend(extract_variants_from_current_props(text))
+    if results:
+        return results
+
     starts = [m.start() for m in re.finditer(r'"variantId":\[0,"?\d+"?\]', text)]
     if not starts:
         return results
@@ -280,6 +284,59 @@ def extract_variants_from_text(text: str) -> list[dict[str, Any]]:
             "days": days,
             "variant_id": variant_match.group(1),
             "name": name_match.group(1),
+            "iso3": iso3,
+            "iso2": iso2,
+            "country": iso2_to_country_name(iso2),
+            "eur_price": currencies.get("EUR"),
+            "usd_price": currencies.get("USD"),
+            "cad_price": currencies.get("CAD"),
+            "all_prices": currencies,
+        })
+
+    return results
+
+
+def extract_variants_from_current_props(text: str) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+
+    pattern = re.compile(
+        r'"name":\[0,"(?P<name>[^"]+)"\],'
+        r'"isocode":\[0,"(?P<iso3>[A-Z]{3})"\],'
+        r'"days":\[0,(?P<days>\d+)\],'
+        r'"gigas":\[0,"(?P<gigas>[^"]+)"\],'
+        r'"currencies":\[0,\{(?P<currencies>.*?)\}\]',
+        re.S,
+    )
+
+    seen: set[tuple[str, int, str]] = set()
+
+    for match in pattern.finditer(text):
+        days = int(match.group("days"))
+        if days > 30:
+            continue
+
+        iso3 = match.group("iso3")
+        gigas = match.group("gigas")
+        dedupe_key = (iso3, days, gigas)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        currencies: dict[str, float] = {}
+        for cur, value in re.findall(
+            r'"([A-Z]{3})":\[0,(\d+(?:\.\d+)?)\]',
+            match.group("currencies"),
+        ):
+            currencies[cur] = float(value)
+
+        if not currencies:
+            continue
+
+        iso2 = iso3_to_iso2(iso3)
+        results.append({
+            "days": days,
+            "variant_id": f"holafly-{iso3}-{gigas}-{days}",
+            "name": match.group("name"),
             "iso3": iso3,
             "iso2": iso2,
             "country": iso2_to_country_name(iso2),

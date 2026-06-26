@@ -23,6 +23,7 @@ OUTPUT_CURRENT_CSV = "outputs/saily_current.csv"
 OUTPUT_PREVIOUS_CSV = "outputs/saily_previous.csv"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 COUNTRIES_URL = "https://saily.com/all-destinations/"
+SITEMAP_URL = "https://saily.com/sitemap.xml"
 
 # Austria-only test
 AUSTRIA_ONLY = False
@@ -34,7 +35,13 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://saily.com/",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1",
+    "Sec-Fetch-Dest": "document",
 }
 
 CSV_FIELDNAMES = [
@@ -593,7 +600,10 @@ def main():
 
     main_html = fetch_html(COUNTRIES_URL)
     if not main_html:
-        raise RuntimeError("Could not fetch Saily destinations page")
+        print("[!] Could not fetch Saily destinations page; trying sitemap fallback")
+        main_html = fetch_html(SITEMAP_URL)
+    if not main_html:
+        raise RuntimeError("Could not fetch Saily destinations page or sitemap")
 
     countries = get_country_links(main_html, country_mapping)
     print(f"Matched {len(countries)} countries from Saily")

@@ -231,6 +231,8 @@ def print_summary(title: str, results: list[JobResult]) -> None:
             status_label = "MISSING"
         elif result.status == "error":
             status_label = "ERROR"
+        elif result.status == "skipped":
+            status_label = "SKIPPED"
         else:
             status_label = "FAILED"
 
