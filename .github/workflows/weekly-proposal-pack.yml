@@ -41,6 +41,15 @@ jobs:
           path: |
             outputs/*_current.csv
             outputs/*_previous.csv
-            workable_data/**/*.csv
-            workable_data/**/*.json
-            workable_data/**/*.log
+            workable_data/combined_scrapped_data_latest.csv
+            workable_data/market_prices_annotated.csv
+            workable_data/market_prices_outlier_audit_log.csv
+            workable_data/ht_prices_latest.csv
+            workable_data/ht_failed_countries_latest.csv
+            workable_data/history/combined_scrapped_data_*.csv
+            workable_data/history/ht_prices_*.csv
+            workable_data/diffs/*.csv
+            workable_data/USD/*.csv
+            workable_data/USD/history/*.csv
+            workable_data/EUR/*.csv
+            workable_data/EUR/history/*.csv

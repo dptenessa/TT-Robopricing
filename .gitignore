@@ -33,6 +33,8 @@ inputs/WS_PPG_converter.py
 *.tmp
 *.temp
 ~$*
+_weekly_pack_import_*/
+weekly-pack-*-test*/
 
 # Large/manual one-off artifacts that are not part of the automated pipeline
 public_price_list.pdf
