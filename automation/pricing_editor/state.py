@@ -291,8 +291,8 @@ class EditorState:
     def sync_linked_eur_from_usd(self) -> None:
         for p in self.row_index.values():
             prices = p.setdefault("working_prices", {})
-            usd = float(prices.get("USD", p.get("working_y", p.get("base_y", 0.0))))
-            eur = convert_price(usd, "USD", "EUR", self.eur_to_usd)
+            usd = self.round_regular_price(float(prices.get("USD", p.get("working_y", p.get("base_y", 0.0)))))
+            eur = self.round_regular_price(convert_price(usd, "USD", "EUR", self.eur_to_usd))
             prices["USD"] = usd
             prices["EUR"] = eur
             self.working_prices_by_currency.setdefault("USD", {})[str(p["row_id"])] = usd
@@ -850,11 +850,14 @@ class EditorState:
         if currency not in working_prices:
             source_currency = "USD" if currency == "EUR" else "EUR"
             source_price = working_prices.get(source_currency, base_prices.get(source_currency, point.get("working_y", 0.0)))
-            working_prices[currency] = convert_price(source_price, source_currency, currency, self.eur_to_usd)
+            working_prices[currency] = self.round_regular_price(
+                convert_price(source_price, source_currency, currency, self.eur_to_usd)
+            )
 
-        point["base_y"] = float(base_prices.get(currency, working_prices.get(currency, 0.0)))
-        point["base_display_y"] = float(base_display_prices.get(currency, point["base_y"]))
-        point["working_y"] = float(working_prices.get(currency, point["base_y"]))
+        point["base_y"] = self.round_regular_price(float(base_prices.get(currency, working_prices.get(currency, 0.0))))
+        point["base_display_y"] = self.round_regular_price(float(base_display_prices.get(currency, point["base_y"])))
+        point["working_y"] = self.round_regular_price(float(working_prices.get(currency, point["base_y"])))
+        working_prices[currency] = float(point["working_y"])
         point["y"] = float(point["working_y"])
         promo = self.promo_store.get(str(point["promo_scope_key"]).strip())
         point["promo"] = ""
@@ -950,8 +953,10 @@ class EditorState:
                 prices[active_currency] = v
                 self.working_prices_by_currency.setdefault(active_currency, {})[str(rid)] = v
             else:
-                usd_value = v if active_currency == "USD" else convert_price(v, active_currency, "USD", self.eur_to_usd)
-                eur_value = convert_price(usd_value, "USD", "EUR", self.eur_to_usd)
+                usd_value = v if active_currency == "USD" else self.round_regular_price(
+                    convert_price(v, active_currency, "USD", self.eur_to_usd)
+                )
+                eur_value = self.round_regular_price(convert_price(usd_value, "USD", "EUR", self.eur_to_usd))
                 prices["USD"] = usd_value
                 prices["EUR"] = eur_value
                 self.working_prices_by_currency.setdefault("USD", {})[str(rid)] = usd_value
@@ -1388,22 +1393,22 @@ class EditorState:
         prices = point.setdefault("working_prices", {})
 
         if not self.is_dual_currency_mode():
-            usd = float(prices.get("USD", point.get("base_prices", {}).get("USD", point.get("working_y", 0.0))))
-            return usd if currency == "USD" else float(convert_price(usd, "USD", "EUR", self.eur_to_usd))
+            usd = self.round_regular_price(float(prices.get("USD", point.get("base_prices", {}).get("USD", point.get("working_y", 0.0)))))
+            return usd if currency == "USD" else self.round_regular_price(convert_price(usd, "USD", "EUR", self.eur_to_usd))
 
         if currency in prices and pd.notna(prices[currency]):
-            return float(prices[currency])
+            return self.round_regular_price(float(prices[currency]))
 
         source_currency = "USD" if currency == "EUR" else "EUR"
         source = prices.get(source_currency, point.get("base_prices", {}).get(source_currency, point.get("working_y", 0.0)))
-        converted = float(convert_price(source, source_currency, currency, self.eur_to_usd))
+        converted = self.round_regular_price(convert_price(source, source_currency, currency, self.eur_to_usd))
         prices[currency] = converted
         return converted
 
     def _final_price_for_currency(self, point: dict[str, Any], currency: str, working_price: float) -> float:
         promo = self.promo_store.get(str(point.get("promo_scope_key", "")).strip())
         if not promo:
-            return float(working_price)
+            return self.round_regular_price(float(working_price))
 
         return self.round_promo_price(
             calculate_promo_price(
@@ -1420,8 +1425,10 @@ class EditorState:
         self._refresh_all_display_prices()
 
         for point in self.row_index.values():
-            working_price = self._working_price_for_currency(point, currency)
+            working_price = self.round_regular_price(self._working_price_for_currency(point, currency))
             final_price = self._final_price_for_currency(point, currency, working_price)
+            price_usd = self.round_regular_price(self._working_price_for_currency(point, "USD"))
+            price_eur = self.round_regular_price(self._working_price_for_currency(point, "EUR"))
 
             covered_countries = str(point.get("pricing_unit_countries", "")).strip()
             fallback_country = str(point.get("iso", "")).strip() or str(point.get("iso3", "")).strip()
@@ -1451,8 +1458,8 @@ class EditorState:
                 "Days": point.get("days", ""),
                 "Price": working_price,
                 "Currency": currency,
-                "Price_USD": self._working_price_for_currency(point, "USD"),
-                "Price_EUR": self._working_price_for_currency(point, "EUR"),
+                "Price_USD": price_usd,
+                "Price_EUR": price_eur,
 
                 "Plan": point.get("plan", ""),
                 "PricingUnitIdUsed": point.get("pricing_unit_id", ""),
