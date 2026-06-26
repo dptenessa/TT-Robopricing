@@ -1,0 +1,46 @@
+name: Weekly proposal pack
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub schedules are UTC. This is 03:00 Zagreb during summer time.
+    - cron: "0 1 * * 1"
+
+jobs:
+  build-proposal-pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run scrape and proposal pipeline
+        run: python pricing_pipeline.py --scrape
+
+      - name: Upload proposal pack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-proposal-pack
+          retention-days: 30
+          path: |
+            outputs/*_current.csv
+            outputs/*_previous.csv
+            workable_data/**/*.csv
+            workable_data/**/*.json
+            workable_data/**/*.log

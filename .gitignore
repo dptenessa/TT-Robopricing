@@ -1,0 +1,39 @@
+# Local/editor state
+.vscode/
+.agents/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Old local archives
+0-Old files/
+0-Outputs_shared_with_third_parties/
+final_outputs/
+
+# Generated debug/noisy folders
+outputs/Backup/
+outputs/debug/
+outputs/*_debug.html
+outputs/*_http_cache.json
+workable_data/logs/
+workable_data/_currency_smoke/
+workable_data/dropped_rows_debug.csv
+
+# Superseded local input experiments
+inputs/WS_PPG_OLD_delete.csv
+inputs/WS_PPG_old.csv
+inputs/WS_PPG_test_delete.csv
+inputs/regions_OLD.yaml
+inputs/WS_PPG_converter.py
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# Large/manual one-off artifacts that are not part of the automated pipeline
+public_price_list.pdf
+Final_pricing.xlsx

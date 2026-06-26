@@ -1,0 +1,44 @@
+[
+  {
+    "promo_code": "P1",
+    "promo_type": "absolute",
+    "promo_value": 4,
+    "label": "P1 (-4 USD)"
+  },
+  {
+    "promo_code": "P2",
+    "promo_type": "absolute",
+    "promo_value": 6,
+    "label": "P2 (-6 USD)"
+  },
+  {
+    "promo_code": "P3",
+    "promo_type": "percent",
+    "promo_value": 5,
+    "label": "P3 (-5%)"
+  },
+  {
+    "promo_code": "P4",
+    "promo_type": "percent",
+    "promo_value": 10,
+    "label": "P4 (-10%)"
+  },
+  {
+    "promo_code": "P5",
+    "promo_type": "percent",
+    "promo_value": 15,
+    "label": "P5 (-15%)"
+  },
+  {
+    "promo_code": "P6",
+    "promo_type": "percent",
+    "promo_value": 20,
+    "label": "P6 (-20%)"
+  },
+  {
+    "promo_code": "P7",
+    "promo_type": "percent",
+    "promo_value": 25,
+    "label": "P7 (-25%)"
+  }
+]

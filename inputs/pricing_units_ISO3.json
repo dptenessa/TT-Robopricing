@@ -1,0 +1,77 @@
+[
+  {
+    "pricing_unit_id": "ESPPRT",
+    "region": "Southwest_Europe",
+    "area_covered": ["ESP", "PRT"]
+  },
+  {
+    "pricing_unit_id": "BELNLDLUX",
+    "region": "Benelux",
+    "area_covered": ["BEL", "NLD", "LUX"]
+  },
+  {
+    "pricing_unit_id": "DNKNORSWE",
+    "region": "Scandinavia",
+    "area_covered": ["DNK", "NOR", "SWE"]
+  },
+  {
+    "pricing_unit_id": "FINEST",
+    "region": "North_Baltic",
+    "area_covered": ["FIN", "EST"]
+  },
+  {
+    "pricing_unit_id": "LVALTU",
+    "region": "Baltic",
+    "area_covered": ["LVA", "LTU"]
+  },
+  {
+    "pricing_unit_id": "GRCCYP",
+    "region": "Hellenic",
+    "area_covered": ["GRC", "CYP"]
+  },
+  {
+    "pricing_unit_id": "ROUBGR",
+    "region": "Dacothrace",
+    "area_covered": ["ROU", "BGR"]
+  },
+  {
+    "pricing_unit_id": "AUTHRVSVN",
+    "region": "Alpe_Adria",
+    "area_covered": ["AUT", "HRV", "SVN"]
+  },
+  {
+    "pricing_unit_id": "DEULIE",
+    "region": "Central_Europe",
+    "area_covered": ["DEU", "LIE"]
+  },
+  {
+    "pricing_unit_id": "ITAMLT",
+    "region": "South_Central_Europe",
+    "area_covered": ["ITA", "MLT"]
+  },
+  {
+    "pricing_unit_id": "POLCZE",
+    "region": "Central_Eastern_Europe",
+    "area_covered": ["POL", "CZE"]
+  },
+  {
+    "pricing_unit_id": "SVKHUN",
+    "region": "Pannonia",
+    "area_covered": ["SVK", "HUN"]
+  },
+  {
+    "pricing_unit_id": "GBRIRLISL",
+    "region": "Northwest_Europe",
+    "area_covered": ["GBR", "IRL", "ISL"]
+  },
+  {
+    "pricing_unit_id": "FRACHE",
+    "region": "Western_Europe",
+    "area_covered": ["FRA", "CHE"]
+  },
+    {
+    "pricing_unit_id": "ANDALONE",
+    "region": "Andorra",
+    "area_covered": ["AND"]
+  }
+]

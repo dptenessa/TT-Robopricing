@@ -1,0 +1,16 @@
+[
+  {"pricing_unit_id":"ES-PT","region":"Southwest_Europe","area_covered":["ES","PT"]},
+  {"pricing_unit_id":"BE-NL-LU","region":"Benelux","area_covered":["BE","NL","LU"]},
+  {"pricing_unit_id":"DK-NO-SE","region":"Scandinavia","area_covered":["DK","NO","SE"]},
+  {"pricing_unit_id":"FI-EE","region":"North_Baltic","area_covered":["FI","EE"]},
+  {"pricing_unit_id":"LV-LT","region":"Baltic","area_covered":["LV","LT"]},
+  {"pricing_unit_id":"GR-CY","region":"Hellenic","area_covered":["GR","CY"]},
+  {"pricing_unit_id":"RO-BG","region":"Dacothrace","area_covered":["RO","BG"]},
+  {"pricing_unit_id":"AT-HR-SI","region":"Alpe_Adria","area_covered":["AT","HR","SI"]},
+  {"pricing_unit_id":"DE-LI","region":"Central_Europe","area_covered":["DE","LI"]},
+  {"pricing_unit_id":"IT-MT","region":"South_Central_Europe","area_covered":["IT","MT"]},
+  {"pricing_unit_id":"PL-CZ","region":"Central_Eastern_Europe","area_covered":["PL","CZ"]},
+  {"pricing_unit_id":"SK-HU","region":"Pannonia","area_covered":["SK","HU"]},
+  {"pricing_unit_id":"GB-IE-IS","region":"Northwest_Europe","area_covered":["GB","IE","IS"]},
+  {"pricing_unit_id":"FR-CH","region":"Western_Europe","area_covered":["FR","CH"]}
+]

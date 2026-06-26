@@ -1,0 +1,23 @@
+PREP WORK:
+I. Define pricing units in inputs/pricing_units.json
+II. Define promos in inputs/promos.json
+III. Define wholesale countries and costs in inputs/WS_PPG.xlsx
+
+NORMAL WORKFLOW:
+1. Run `python pricing_pipeline.py --scrape` for the weekly scrape + proposal flow.
+2. Run `python "fast pricing editor.py"` to compare proposals against the last export/session and manually correct prices.
+3. Save from the editor. The save becomes the new last export and also writes history.
+
+FASTER LOCAL WORKFLOW:
+Run `python pricing_pipeline.py` to reuse existing outputs/*_current.csv files, rebuild combined market data, annotate outliers, and regenerate USD/EUR proposals.
+
+ONE-COMMAND UI WORKFLOW:
+Run `python pricing_pipeline.py --scrape --open-editor`.
+
+CANONICAL FILE AREAS:
+- outputs/*_current.csv: raw scraper current files
+- workable_data/combined_scrapped_data_latest.csv: combined competition snapshot
+- workable_data/diffs/: competition change reports
+- workable_data/market_prices_annotated.csv: market data after outlier annotation
+- workable_data/USD/ and workable_data/EUR/: model proposals by currency
+- workable_data/exports/USD/ and workable_data/exports/EUR/: manually corrected last export and history

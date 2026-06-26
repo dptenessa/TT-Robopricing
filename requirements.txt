@@ -1,0 +1,9 @@
+pandas
+numpy
+openpyxl
+requests
+beautifulsoup4
+curl_cffi
+pycountry
+playwright
+pdfplumber
