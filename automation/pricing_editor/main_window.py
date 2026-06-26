@@ -70,6 +70,15 @@ class MainWindow(QMainWindow):
         self.save_shortcut.activated.connect(self.quick_save)
         self.currency_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
         self.currency_shortcut.activated.connect(self.toggle_active_currency)
+        self.toggle_price_labels_shortcut = QShortcut(QKeySequence("Q"), self)
+        self.toggle_price_labels_shortcut.setContext(Qt.ApplicationShortcut)
+        self.toggle_price_labels_shortcut.activated.connect(self.toggle_canvas_price_labels)
+        self.toggle_competitors_shortcut = QShortcut(QKeySequence("S"), self)
+        self.toggle_competitors_shortcut.setContext(Qt.ApplicationShortcut)
+        self.toggle_competitors_shortcut.activated.connect(self.toggle_canvas_competitors)
+        self.reset_zoom_shortcut = QShortcut(QKeySequence("H"), self)
+        self.reset_zoom_shortcut.setContext(Qt.ApplicationShortcut)
+        self.reset_zoom_shortcut.activated.connect(self.reset_canvas_zoom)
         self.resource_timer = QTimer(self)
         self.resource_timer.timeout.connect(self.monitor_resources)
         self.resource_timer.start(5000)
@@ -862,6 +871,22 @@ class MainWindow(QMainWindow):
         current = normalize_currency(self.currency_combo.currentText())
         next_currency = "EUR" if current == "USD" else "USD"
         self.currency_combo.setCurrentText(next_currency)
+
+    def toggle_canvas_price_labels(self):
+        self.canvas.show_prices = not self.canvas.show_prices
+        self.canvas.update()
+        mode = "prices" if self.canvas.show_prices else "GB"
+        self.statusBar().showMessage(f"Chart labels: {mode}")
+
+    def toggle_canvas_competitors(self):
+        self.canvas.show_competitors = not self.canvas.show_competitors
+        self.canvas.update()
+        mode = "shown" if self.canvas.show_competitors else "hidden"
+        self.statusBar().showMessage(f"Competitors: {mode}")
+
+    def reset_canvas_zoom(self):
+        self.canvas.reset_zoom()
+        self.statusBar().showMessage("Zoom reset")
 
     def on_country_changed(self, country: str):
         self.state.selected_country = country
