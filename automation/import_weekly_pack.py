@@ -35,6 +35,13 @@ ALLOWED_PATTERNS = (
     "workable_data/EUR/history/*.csv",
 )
 
+DIAGNOSTIC_PATTERNS = (
+    "workable_data/scrape_status_latest.csv",
+    "workable_data/scrape_status_history/*.csv",
+    "workable_data/logs/*.log",
+)
+
+
 PROTECTED_PREFIXES = (
     "workable_data/exports/",
     "workable_data/autosave/",
@@ -45,11 +52,11 @@ def clean_rel(path: Path) -> str:
     return path.as_posix().lstrip("./")
 
 
-def is_allowed(rel_path: str) -> bool:
+def is_allowed(rel_path: str, patterns: tuple[str, ...] = ALLOWED_PATTERNS) -> bool:
     rel_path = rel_path.replace("\\", "/")
     if any(rel_path.startswith(prefix) for prefix in PROTECTED_PREFIXES):
         return False
-    return any(fnmatch(rel_path, pattern) for pattern in ALLOWED_PATTERNS)
+    return any(fnmatch(rel_path, pattern) for pattern in patterns)
 
 
 def find_pack_root(extracted_or_folder: Path) -> Path:
@@ -95,7 +102,7 @@ def latest_combined_history_label(root: Path, fallback: str) -> str:
     return files[-1].stem.replace("combined_scrapped_data_", "")
 
 
-def print_scrape_status(src_root: Path) -> None:
+def print_scrape_status(src_root: Path) -> bool:
     status_path = src_root / "workable_data" / "scrape_status_latest.csv"
 
     print()
@@ -103,13 +110,13 @@ def print_scrape_status(src_root: Path) -> None:
 
     if not status_path.exists():
         print("No scrape status file was included in this weekly pack.")
-        return
+        return True
 
     status_df = pd.read_csv(status_path).fillna("")
 
     if status_df.empty:
         print("The scrape status file is empty.")
-        return
+        return False
 
     display_cols = [
         col for col in ["Category", "Name", "Status", "Attempt", "Duration", "Script", "LogFile"]
@@ -118,15 +125,16 @@ def print_scrape_status(src_root: Path) -> None:
     print_pipe_table(status_df[display_cols], "SCRAPERS AND COMBINE")
 
     if "Status" not in status_df.columns:
-        return
+        return True
 
     issues = status_df[status_df["Status"].astype(str).str.lower() != "ok"]
     if issues.empty:
         print("All scrapers and the combine step finished OK.")
-        return
+        return True
 
     names = ", ".join(issues["Name"].astype(str).tolist())
     print(f"Needs attention: {names}")
+    return False
 
 
 def compare_incoming_to_local(
@@ -188,7 +196,12 @@ def compare_incoming_to_local(
     print(f"- {diff_file}")
 
 
-def copy_pack(src_root: Path, project_root: Path, dry_run: bool = False) -> tuple[int, int]:
+def copy_pack(
+    src_root: Path,
+    project_root: Path,
+    dry_run: bool = False,
+    patterns: tuple[str, ...] = ALLOWED_PATTERNS,
+) -> tuple[int, int]:
     copied = 0
     skipped = 0
 
@@ -202,7 +215,7 @@ def copy_pack(src_root: Path, project_root: Path, dry_run: bool = False) -> tupl
                 continue
 
             rel = clean_rel(source.relative_to(src_root))
-            if not is_allowed(rel):
+            if not is_allowed(rel, patterns=patterns):
                 skipped += 1
                 continue
 
@@ -246,10 +259,21 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
         else:
             src_root = find_pack_root(pack_path)
 
-        print_scrape_status(src_root)
-        compare_incoming_to_local(src_root, project_root, dry_run=dry_run)
-
-        copied, skipped = copy_pack(src_root, project_root, dry_run=dry_run)
+        scrape_ok = print_scrape_status(src_root)
+        if not scrape_ok:
+            print()
+            print("Scrape failed or combine was skipped. Importing diagnostics only; local prices and proposals were not changed.")
+            copied, skipped = copy_pack(
+                src_root,
+                project_root,
+                dry_run=dry_run,
+                patterns=DIAGNOSTIC_PATTERNS,
+            )
+            import_blocked = True
+        else:
+            compare_incoming_to_local(src_root, project_root, dry_run=dry_run)
+            copied, skipped = copy_pack(src_root, project_root, dry_run=dry_run)
+            import_blocked = False
     finally:
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -260,6 +284,8 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
     if skipped:
         print(f"Skipped {skipped} files that are not part of the proposal pack.")
     print("Manual exports and autosaves were not touched.")
+    if locals().get("import_blocked", False):
+        return 1
     return 0
 
 

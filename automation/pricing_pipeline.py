@@ -68,7 +68,8 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
 
         scrape_code = run_step("1. Scrape competitors and combine", scrape_main)
         if scrape_code not in (0, None):
-            print("Scraping reported issues. Continuing with available current files.")
+            print("Scraping failed after retry. Stopping before diff, outlier removal, and model proposal generation.")
+            return int(scrape_code) if isinstance(scrape_code, int) else 1
     else:
         from combine_scrapped_data import combine_all_scraped_data
 

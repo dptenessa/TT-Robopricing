@@ -29,6 +29,12 @@ jobs:
       - name: Install Chromium for Playwright
         run: python -m playwright install --with-deps chromium
 
+      - name: Clear generated files from checkout
+        run: |
+          rm -f outputs/*_current.csv outputs/*_previous.csv
+          rm -rf workable_data
+          mkdir -p workable_data
+
       - name: Run scrape and proposal pipeline
         run: python automation/pricing_pipeline.py --scrape
 

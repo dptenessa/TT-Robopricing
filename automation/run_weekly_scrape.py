@@ -294,26 +294,49 @@ def main() -> int:
     results = retry_failed_scrapers(initial_results, retry_count=DEFAULT_RETRY_COUNT)
     print_summary("SCRAPER SUMMARY - FINAL", results)
 
+    scraper_failures = [r for r in results if r.status != "ok"]
+    if scraper_failures:
+        failed_names = ", ".join(r.name for r in scraper_failures)
+        print(f"Scrapers with issues after retry: {failed_names}")
+        print("Skipping combine and proposal generation because the scrape is incomplete.")
+
+        combine_log_path = build_log_path("combine", 1)
+        combine_log_path.write_text(
+            "Combine skipped because one or more scrapers failed after retry: "
+            f"{failed_names}\n",
+            encoding="utf-8",
+        )
+        combine_result = JobResult(
+            name="combine",
+            script=COMBINE_SCRIPT,
+            exit_code=None,
+            status="skipped",
+            elapsed_s=0.0,
+            attempt=1,
+            log_path=relative_log_path(combine_log_path),
+        )
+        print_summary("COMBINE SUMMARY", [combine_result])
+
+        overall_elapsed = time.monotonic() - overall_start
+        print(f"\nTotal elapsed: {format_duration(overall_elapsed)}")
+        write_status_report(results, combine_result, overall_elapsed)
+        return 1
+
     print(f"\nRunning {COMBINE_SCRIPT}...")
     combine_result = run_script("combine", COMBINE_SCRIPT, 10 * 60)
     print_summary("COMBINE SUMMARY", [combine_result])
 
     overall_elapsed = time.monotonic() - overall_start
-    scraper_failures = [r for r in results if r.status != "ok"]
     combine_failed = combine_result.status != "ok"
 
     print(f"\nTotal elapsed: {format_duration(overall_elapsed)}")
-
-    if scraper_failures:
-        failed_names = ", ".join(r.name for r in scraper_failures)
-        print(f"Scrapers with issues after retry: {failed_names}")
 
     if combine_failed:
         print("Combine step did not complete successfully.")
 
     write_status_report(results, combine_result, overall_elapsed)
 
-    if scraper_failures or combine_failed:
+    if combine_failed:
         return 1
 
     print("Weekly scrape completed successfully.")
