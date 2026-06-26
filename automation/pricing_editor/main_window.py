@@ -60,7 +60,8 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
 
         self._build_ui()
-        self.try_auto_load()
+        self.statusBar().showMessage("Opening editor...")
+        QTimer.singleShot(100, self.try_auto_load)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave)
         self.autosave_timer.start(30000)  # every 30 seconds
@@ -1016,9 +1017,13 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def try_auto_load(self):
+        def progress(message: str) -> None:
+            self.statusBar().showMessage(message)
+            QApplication.processEvents()
 
         if PPG_PATH.exists():
             try:
+                progress("Loading PPG cost lookup...")
                 self.state.ppg_df = pd.read_csv(PPG_PATH)
                 self.state.ppg_df.columns = self.state.ppg_df.columns.astype(str).str.strip()
 
@@ -1041,34 +1046,43 @@ class MainWindow(QMainWindow):
             print("PPG file not found:", PPG_PATH)
         
         if PROMOS_PATH.exists():
+            progress("Loading promo catalog...")
             self.state.promo_catalog = load_promos(PROMOS_PATH)
 
+        progress("Loading model proposal...")
         df = self.load_currency_tables_from_folder(
             FILES.work_dir,
             ["ht_prices_latest.csv"],
         )
         if not df.empty:
+            progress("Preparing model proposal...")
             self.state.preload_baseline(df)
 
+            progress("Loading last local export...")
             if not self.load_export_prices_from_folder(FILES.editor_exports_dir, silent=True):
                 self.state.reload_working_from_baseline()
 
+        progress("Loading competitor market data...")
         df_market = self.load_currency_tables_from_folder(
             FILES.work_dir,
             ["market_prices_annotated.csv"],
         )
         if not df_market.empty:
+            progress("Preparing competitor market data...")
             self.state.preload_market(df_market)
 
         if SALES_VOLUME_PATH.exists():
+            progress("Loading sales volumes...")
             sales_df = pd.read_excel(SALES_VOLUME_PATH)
             sales_df.columns = sales_df.columns.astype(str).str.strip()
             if not sales_df.empty:
                 self.state.preload_sales_volumes(sales_df)
 
+        progress("Loading exported promos...")
         self.load_export_promos_from_folder(FILES.editor_exports_dir, silent=True)
 
         if self.state.countries():
+            progress("Drawing editor...")
             self.populate_combos()
             self.refresh_canvas()
             self.statusBar().showMessage("Auto-loaded available files.")
