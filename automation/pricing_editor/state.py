@@ -1487,8 +1487,6 @@ class EditorState:
                 "PromoLabel": promo.get("promo_label", "") if promo else "",
                 "PromoBasePrice": working_price if promo else "",
                 "FinalPriceAfterPromo": final_price,
-                "EUR_TO_USD": self.eur_to_usd,
-                "COST_EUR_TO_USD": self.cost_eur_to_usd,
 
                 "CalculatedCostFloor": cost_floor,
                 "IsBelowCostFloor": final_price < cost_floor,

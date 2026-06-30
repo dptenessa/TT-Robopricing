@@ -18,6 +18,18 @@ PLAN_PACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Unlimited", ("Unlimited",)),
 )
 
+PARTNER_DROP_COLUMNS: tuple[str, ...] = (
+    "EUR_TO_USD",
+    "COST_EUR_TO_USD",
+    "CalculatedCostFloor",
+    "IsBelowCostFloor",
+    "IsBelowCalculatedCostFloor",
+    "Is_Below_Cost_Floor",
+    "ISO3",
+    "Reference",
+    "ReferenceProvider",
+)
+
 
 @dataclass(frozen=True)
 class PartnerPackFile:
@@ -45,7 +57,7 @@ def _plan_key(series: pd.Series) -> pd.Series:
 
 
 def _bool_series(series: pd.Series) -> pd.Series:
-    return series.fillna(False).astype(str).str.strip().str.lower().isin({"true", "t", "yes", "y", "1"})
+    return series.astype("string").fillna("").str.strip().str.lower().isin({"true", "t", "yes", "y", "1"})
 
 
 def _below_cost_mask(df: pd.DataFrame) -> pd.Series:
@@ -79,7 +91,8 @@ def build_partner_price_pack(
             currency_dir = local_export_dir / currency
             country_prices = _read_required_csv(currency_dir / "HT_prices_last_export.csv")
             region_prices = _read_required_csv(currency_dir / "Region_prices.csv")
-            merged = pd.concat([country_prices, region_prices], ignore_index=True, sort=False)
+            frames = [df for df in (country_prices, region_prices) if not df.empty]
+            merged = pd.concat(frames, ignore_index=True, sort=False) if frames else country_prices.copy()
 
             if "Plan" not in merged.columns:
                 raise ValueError(f"Missing Plan column in {currency} export.")
@@ -97,6 +110,7 @@ def build_partner_price_pack(
             for pack_name, source_plans in PLAN_PACKS:
                 wanted = {plan.lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
+                out = out.drop(columns=[col for col in PARTNER_DROP_COLUMNS if col in out.columns])
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))
                 results.append(
