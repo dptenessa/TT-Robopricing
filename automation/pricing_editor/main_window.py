@@ -192,16 +192,25 @@ class MainWindow(QMainWindow):
         self.exchange_rate_spin.setValue(float(self.state.eur_to_usd))
         self.exchange_rate_spin.valueChanged.connect(self.on_exchange_rate_changed)
 
+        self.cost_exchange_rate_spin = QDoubleSpinBox()
+        self.cost_exchange_rate_spin.setDecimals(4)
+        self.cost_exchange_rate_spin.setRange(0.1000, 5.0000)
+        self.cost_exchange_rate_spin.setSingleStep(0.0100)
+        self.cost_exchange_rate_spin.setValue(float(self.state.cost_eur_to_usd))
+        self.cost_exchange_rate_spin.valueChanged.connect(self.on_cost_exchange_rate_changed)
+
         currency_grid = QGridLayout()
         currency_grid.setHorizontalSpacing(6)
         currency_grid.setVerticalSpacing(4)
         currency_grid.addWidget(QLabel("Active currency"), 0, 0)
         currency_grid.addWidget(self.currency_combo, 0, 1)
-        currency_grid.addWidget(QLabel("EUR/USD"), 1, 0)
+        currency_grid.addWidget(QLabel("Pricing EUR/USD"), 1, 0)
         currency_grid.addWidget(self.exchange_rate_spin, 1, 1)
-        currency_grid.addWidget(self.dual_currency_check, 2, 0, 1, 2)
+        currency_grid.addWidget(QLabel("Official cost EUR/USD"), 2, 0)
+        currency_grid.addWidget(self.cost_exchange_rate_spin, 2, 1)
+        currency_grid.addWidget(self.dual_currency_check, 3, 0, 1, 2)
 
-        self.currency_mode_banner = QLabel("USD/EUR LINKED EDIT MODE")
+        self.currency_mode_banner = QLabel("")
         self.currency_mode_banner.setAlignment(Qt.AlignCenter)
         self.currency_mode_banner.setStyleSheet(
             "font-weight: bold; color: #f7f8fa; background-color: #30343b; "
@@ -887,28 +896,11 @@ class MainWindow(QMainWindow):
 
     def refresh_currency_visuals(self):
         is_linked = self.state.currency_mode == LINKED_USD_MODE
-        self.currency_mode_banner.setVisible(is_linked)
+        self.currency_mode_banner.setVisible(False)
         self.side_panel_content.setStyleSheet(
             """
             QWidget#SidePanelContent {
-                background-color: #30343b;
-                color: #f7f8fa;
                 border-left: 5px solid #d6a400;
-            }
-            QWidget#SidePanelContent QLabel {
-                color: #f7f8fa;
-            }
-            QWidget#SidePanelContent QPushButton,
-            QWidget#SidePanelContent QToolButton,
-            QWidget#SidePanelContent QComboBox,
-            QWidget#SidePanelContent QDoubleSpinBox,
-            QWidget#SidePanelContent QListWidget {
-                background-color: #ffffff;
-                color: #202124;
-                border: 1px solid #c7cbd1;
-            }
-            QWidget#SidePanelContent QCheckBox {
-                color: #f7f8fa;
             }
             """ if is_linked else ""
         )
@@ -925,6 +917,10 @@ class MainWindow(QMainWindow):
 
     def on_exchange_rate_changed(self, rate: float):
         self.state.set_eur_to_usd(float(rate))
+        self.refresh_canvas()
+
+    def on_cost_exchange_rate_changed(self, rate: float):
+        self.state.set_cost_eur_to_usd(float(rate))
         self.refresh_canvas()
 
     def toggle_active_currency(self):

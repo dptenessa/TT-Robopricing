@@ -10,6 +10,7 @@ import math
 import numpy as np
 import pandas as pd
 from config import UTILIZATION_OF_GB_IN_PRACTICE, VAT, HT_REV_SHARE
+from costing import cost_per_gb_from_eur, ipg_fee
 try:
     from config import DEFAULT_EUR_TO_USD, EDITOR_DUAL_CURRENCY_DEFAULT
 except Exception:
@@ -130,7 +131,7 @@ def load_table(
 
     needed = [
         "Provider", "ReferenceProvider", "Country", "ISO", "ISO3", "SKU", "GB", "Days", "Price",
-        "Currency", "Price_USD", "Price_EUR", "usd_price", "eur_price", "EUR_TO_USD",
+        "Currency", "Price_USD", "Price_EUR", "usd_price", "eur_price", "EUR_TO_USD", "COST_EUR_TO_USD",
         "Cost", "Is_Below_Cost_Floor", "Plan", "PricingUnitIdUsed", "PricingSourceUsed",
         "PricingRegionUsed", "PricingUnitCountriesUsed", "PromoScopeKey", "PromoCode",
         "PromoType", "PromoValue", "PromoCurrency", "PromoLabel", "PromoBasePrice", "FinalPriceAfterPromo",
@@ -149,7 +150,7 @@ def load_table(
 
     for col in [
         "GB", "Days", "Price", "Price_USD", "Price_EUR", "Cost", "PromoValue",
-        "PromoBasePrice", "FinalPriceAfterPromo", "EUR_TO_USD",
+        "PromoBasePrice", "FinalPriceAfterPromo", "EUR_TO_USD", "COST_EUR_TO_USD",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     for col in [
@@ -193,6 +194,7 @@ class EditorState:
     active_currency: str = DEFAULT_CURRENCY
     currency_mode: str = DUAL_CURRENCY_MODE if EDITOR_DUAL_CURRENCY_DEFAULT else LINKED_USD_MODE
     eur_to_usd: float = DEFAULT_EUR_TO_USD
+    cost_eur_to_usd: float = DEFAULT_EUR_TO_USD
     
 
     country_info_map: dict[str, str] = field(default_factory=dict)
@@ -244,6 +246,14 @@ class EditorState:
         except Exception:
             rate = DEFAULT_EUR_TO_USD
         self.eur_to_usd = rate if rate > 0 else DEFAULT_EUR_TO_USD
+        self._refresh_all_display_prices()
+
+    def set_cost_eur_to_usd(self, rate: float) -> None:
+        try:
+            rate = float(rate)
+        except Exception:
+            rate = DEFAULT_EUR_TO_USD
+        self.cost_eur_to_usd = rate if rate > 0 else DEFAULT_EUR_TO_USD
         self._refresh_all_display_prices()
 
     def _working_prices_for(self, currency: str | None = None) -> dict[str, float]:
@@ -613,29 +623,13 @@ class EditorState:
             or [0.0]
         )
         currency = normalize_currency(currency or self.active_currency)
-        ws_cost_per_gb = (
-            ws_cost_per_gb_eur * self.eur_to_usd
-            if currency == "USD"
-            else ws_cost_per_gb_eur
-        )
+        ws_cost_per_gb = cost_per_gb_from_eur(ws_cost_per_gb_eur, currency, self.cost_eur_to_usd)
 
         cost_gb = gb * UTILIZATION_OF_GB_IN_PRACTICE * ws_cost_per_gb
 
-        ipg_fee = (
-            .9 * .2
-            + .9 * .005 * price
-            + .25 * .1
-            + .00275 * .1
-            + .05
-            + .005 * price
-            + .02 * .65 * price
-            + .01 * .35 * price
-            + .03
-            + .002 * price
-            + 20 * .01
-        )
+        fee = ipg_fee(price, currency=currency, eur_to_usd=self.cost_eur_to_usd)
 
-        return cost_gb + ipg_fee + HT_REV_SHARE * price/(1 + VAT)
+        return cost_gb + fee + HT_REV_SHARE * price/(1 + VAT)
 
 
 
@@ -924,7 +918,10 @@ class EditorState:
             return "No country loaded"
         base = self.country_info_map.get(str(self.selected_country), "No country loaded")
         mode = "Edit active currency only" if self.is_dual_currency_mode() else "Edit USD/EUR together"
-        return f"{base}\nCurrency: {self.normalize_current_currency()} | Mode: {mode} | EUR/USD: {self.eur_to_usd:.4f}"
+        return (
+            f"{base}\nCurrency: {self.normalize_current_currency()} | Mode: {mode} | "
+            f"Pricing EUR/USD: {self.eur_to_usd:.4f} | Official cost EUR/USD: {self.cost_eur_to_usd:.4f}"
+        )
 
     def selected_point_info(self) -> dict[str, Any] | None:
         if not self.selected_row_id:
@@ -1471,6 +1468,7 @@ class EditorState:
                 "PromoBasePrice": working_price if promo else "",
                 "FinalPriceAfterPromo": final_price,
                 "EUR_TO_USD": self.eur_to_usd,
+                "COST_EUR_TO_USD": self.cost_eur_to_usd,
 
                 "CalculatedCostFloor": cost_floor,
                 "IsBelowCalculatedCostFloor": final_price < cost_floor,
