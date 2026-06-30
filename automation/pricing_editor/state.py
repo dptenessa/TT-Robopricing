@@ -195,6 +195,9 @@ class EditorState:
     currency_mode: str = DUAL_CURRENCY_MODE if EDITOR_DUAL_CURRENCY_DEFAULT else LINKED_USD_MODE
     eur_to_usd: float = DEFAULT_EUR_TO_USD
     cost_eur_to_usd: float = DEFAULT_EUR_TO_USD
+    cost_eur_to_usd_source: str = "ECB"
+    cost_eur_to_usd_date: str = "not loaded"
+    cost_eur_to_usd_status: str = "fallback"
     
 
     country_info_map: dict[str, str] = field(default_factory=dict)
@@ -248,12 +251,22 @@ class EditorState:
         self.eur_to_usd = rate if rate > 0 else DEFAULT_EUR_TO_USD
         self._refresh_all_display_prices()
 
-    def set_cost_eur_to_usd(self, rate: float) -> None:
+    def set_official_cost_eur_to_usd(
+        self,
+        rate: float,
+        *,
+        source: str = "ECB",
+        date: str = "not loaded",
+        status: str = "fallback",
+    ) -> None:
         try:
             rate = float(rate)
         except Exception:
             rate = DEFAULT_EUR_TO_USD
         self.cost_eur_to_usd = rate if rate > 0 else DEFAULT_EUR_TO_USD
+        self.cost_eur_to_usd_source = str(source or "ECB")
+        self.cost_eur_to_usd_date = str(date or "not loaded")
+        self.cost_eur_to_usd_status = str(status or "fallback")
         self._refresh_all_display_prices()
 
     def _working_prices_for(self, currency: str | None = None) -> dict[str, float]:
@@ -920,7 +933,9 @@ class EditorState:
         mode = "Edit active currency only" if self.is_dual_currency_mode() else "Edit USD/EUR together"
         return (
             f"{base}\nCurrency: {self.normalize_current_currency()} | Mode: {mode} | "
-            f"Pricing EUR/USD: {self.eur_to_usd:.4f} | Official cost EUR/USD: {self.cost_eur_to_usd:.4f}"
+            f"Pricing EUR/USD: {self.eur_to_usd:.4f} | "
+            f"Official cost EUR/USD: {self.cost_eur_to_usd:.4f} "
+            f"({self.cost_eur_to_usd_source} {self.cost_eur_to_usd_date}, {self.cost_eur_to_usd_status})"
         )
 
     def selected_point_info(self) -> dict[str, Any] | None:

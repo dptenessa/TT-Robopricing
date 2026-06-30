@@ -36,6 +36,10 @@ try:
     from define_region_prices import generate_region_prices_for_export_folder
 except ImportError:
     from automation.define_region_prices import generate_region_prices_for_export_folder
+try:
+    from official_fx import get_official_eur_usd
+except ImportError:
+    from automation.official_fx import get_official_eur_usd
 from currency_support import (
     CURRENCIES,
     DEFAULT_CURRENCY,
@@ -192,12 +196,7 @@ class MainWindow(QMainWindow):
         self.exchange_rate_spin.setValue(float(self.state.eur_to_usd))
         self.exchange_rate_spin.valueChanged.connect(self.on_exchange_rate_changed)
 
-        self.cost_exchange_rate_spin = QDoubleSpinBox()
-        self.cost_exchange_rate_spin.setDecimals(4)
-        self.cost_exchange_rate_spin.setRange(0.1000, 5.0000)
-        self.cost_exchange_rate_spin.setSingleStep(0.0100)
-        self.cost_exchange_rate_spin.setValue(float(self.state.cost_eur_to_usd))
-        self.cost_exchange_rate_spin.valueChanged.connect(self.on_cost_exchange_rate_changed)
+        self.official_cost_rate_label = QLabel("Loading official rate...")
 
         currency_grid = QGridLayout()
         currency_grid.setHorizontalSpacing(6)
@@ -207,7 +206,7 @@ class MainWindow(QMainWindow):
         currency_grid.addWidget(QLabel("Pricing EUR/USD"), 1, 0)
         currency_grid.addWidget(self.exchange_rate_spin, 1, 1)
         currency_grid.addWidget(QLabel("Official cost EUR/USD"), 2, 0)
-        currency_grid.addWidget(self.cost_exchange_rate_spin, 2, 1)
+        currency_grid.addWidget(self.official_cost_rate_label, 2, 1)
         currency_grid.addWidget(self.dual_currency_check, 3, 0, 1, 2)
 
         self.currency_mode_banner = QLabel("")
@@ -919,10 +918,6 @@ class MainWindow(QMainWindow):
         self.state.set_eur_to_usd(float(rate))
         self.refresh_canvas()
 
-    def on_cost_exchange_rate_changed(self, rate: float):
-        self.state.set_cost_eur_to_usd(float(rate))
-        self.refresh_canvas()
-
     def toggle_active_currency(self):
         current = normalize_currency(self.currency_combo.currentText())
         next_currency = "EUR" if current == "USD" else "USD"
@@ -944,6 +939,21 @@ class MainWindow(QMainWindow):
     def reset_canvas_zoom(self):
         self.canvas.reset_zoom()
         self.statusBar().showMessage("Zoom reset")
+
+    def load_official_cost_exchange_rate(self) -> None:
+        cache_path = FILES.work_dir / "fx_rates" / "official_eur_usd_latest.json"
+        rate = get_official_eur_usd(
+            cache_path,
+            fallback_rate=self.state.cost_eur_to_usd,
+            timeout_seconds=4.0,
+        )
+        self.state.set_official_cost_eur_to_usd(
+            rate.rate,
+            source=rate.source,
+            date=rate.date,
+            status=rate.status,
+        )
+        self.official_cost_rate_label.setText(rate.label)
 
     def on_country_changed(self, country: str):
         self.state.selected_country = country
@@ -1102,6 +1112,9 @@ class MainWindow(QMainWindow):
         def progress(message: str) -> None:
             self.statusBar().showMessage(message)
             QApplication.processEvents()
+
+        progress("Loading official EUR/USD cost rate...")
+        self.load_official_cost_exchange_rate()
 
         if PPG_PATH.exists():
             try:
