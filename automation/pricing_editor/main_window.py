@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import pandas as pd
 import ctypes
 from datetime import datetime
@@ -36,6 +37,10 @@ try:
     from define_region_prices import generate_region_prices_for_export_folder
 except ImportError:
     from automation.define_region_prices import generate_region_prices_for_export_folder
+try:
+    from partner_export_pack import build_partner_price_pack
+except ImportError:
+    from automation.partner_export_pack import build_partner_price_pack
 try:
     from official_fx import get_official_eur_usd
 except ImportError:
@@ -692,7 +697,7 @@ class MainWindow(QMainWindow):
         self.state.reload_pricing_unit_from_loaded()
         self.refresh_canvas()
 
-    def save_exports_to_folder(self, export_dir: Path, include_history: bool = False, autosave: bool = False) -> None:
+    def save_exports_to_folder(self, export_dir: Path, include_history: bool = False, autosave: bool = False) -> str:
         export_dir.mkdir(parents=True, exist_ok=True)
         history_dir = export_dir / "history"
         if include_history:
@@ -727,6 +732,24 @@ class MainWindow(QMainWindow):
             if include_history:
                 self.state.export_prices_csv(history_dir / f"HT_prices_{ts}.csv", currency=DEFAULT_CURRENCY)
                 self.state.export_applied_promos_json(history_dir / f"promos_{ts}.json", currency=DEFAULT_CURRENCY)
+
+        return ts
+
+    def save_region_prices_to_folder(
+        self,
+        export_dir: Path,
+        *,
+        include_history: bool = False,
+        timestamp: str | None = None,
+    ):
+        results = generate_region_prices_for_export_folder(export_dir)
+        if include_history:
+            ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+            for result in results:
+                history_dir = result.output_csv.parent / "history"
+                history_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(result.output_csv, history_dir / f"Region_prices_{ts}.csv")
+        return results
         
     def quick_save(self):
         try:
@@ -756,64 +779,46 @@ class MainWindow(QMainWindow):
         try:
             folder = QFileDialog.getExistingDirectory(
                 self,
-                "Choose export folder"
+                "Choose clean price pack export folder"
             )
             if not folder:
                 return
 
-            export_dir = Path(folder)
+            pack_dir = Path(folder)
+            local_export_dir = FILES.editor_exports_dir
 
-            self.statusBar().showMessage("Saving prices and promos...")
+            self.statusBar().showMessage("Saving local export, history, promos, and regions...")
             QApplication.setOverrideCursor(Qt.WaitCursor)
             cursor_active = True
             QApplication.processEvents()
 
-            self.save_exports_to_folder(export_dir, include_history=True)
+            ts = self.save_exports_to_folder(local_export_dir, include_history=True)
+            region_results = self.save_region_prices_to_folder(
+                local_export_dir,
+                include_history=True,
+                timestamp=ts,
+            )
+            pack_results = build_partner_price_pack(local_export_dir, pack_dir)
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
 
-            self.statusBar().showMessage(
-                f"Saved in: {export_dir} | USD and EUR subfolders"
-            )
-
-            answer = QMessageBox.question(
+            pack_lines = [
+                f"{result.path.name}: {result.rows_written} rows"
+                for result in pack_results
+            ]
+            excluded = sorted({country for result in region_results for country in result.excluded_countries})
+            excluded_text = ", ".join(excluded) if excluded else "none"
+            QMessageBox.information(
                 self,
-                "Generate region prices?",
-                "Also generate Region_prices.csv for the exported USD and EUR price files?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
+                "Export complete",
+                f"Local latest files and history were saved in:\n{local_export_dir}\n\n"
+                f"The clean partner pack was saved in:\n{pack_dir}\n\n"
+                f"Partner pack files: {len(pack_results)}\n"
+                + "\n".join(pack_lines)
+                + f"\n\nExcluded countries due to cost floor: {excluded_text}",
             )
-
-            if answer == QMessageBox.Yes:
-                self.statusBar().showMessage("Generating region prices...")
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                cursor_active = True
-                QApplication.processEvents()
-
-                results = generate_region_prices_for_export_folder(export_dir)
-
-                QApplication.restoreOverrideCursor()
-                cursor_active = False
-
-                summary_lines = []
-                for result in results:
-                    location = "root" if result.output_csv.parent == export_dir else result.output_csv.parent.name
-                    summary_lines.append(
-                        f"{location}: {result.output_csv.name} ({result.rows_written} rows)"
-                    )
-                excluded = sorted({country for result in results for country in result.excluded_countries})
-                excluded_text = ", ".join(excluded) if excluded else "none"
-                QMessageBox.information(
-                    self,
-                    "Export complete",
-                    "Prices, promos, and region prices were saved.\n\n"
-                    + "\n".join(summary_lines)
-                    + f"\n\nExcluded countries due to cost floor: {excluded_text}",
-                )
-                self.statusBar().showMessage("Export complete, including region prices.")
-            else:
-                self.statusBar().showMessage("Export complete. Region prices were not generated.")
+            self.statusBar().showMessage("Export complete: local history saved and clean 8-file pack created.")
 
         except Exception as e:
             QMessageBox.warning(self, "Export failed", f"Could not save export: {e}")
