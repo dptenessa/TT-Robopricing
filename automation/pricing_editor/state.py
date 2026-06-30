@@ -224,10 +224,14 @@ class EditorState:
     def is_dual_currency_mode(self) -> bool:
         return self.currency_mode == DUAL_CURRENCY_MODE
 
+    def is_linked_currency_mode(self) -> bool:
+        return self.currency_mode == LINKED_USD_MODE
+
     def set_currency_mode(self, dual: bool) -> None:
-        self.currency_mode = DUAL_CURRENCY_MODE if dual else LINKED_USD_MODE
-        if not dual:
-            self.sync_linked_eur_from_usd()
+        self.set_linked_currency_mode(not dual)
+
+    def set_linked_currency_mode(self, linked: bool) -> None:
+        self.currency_mode = LINKED_USD_MODE if linked else DUAL_CURRENCY_MODE
         self._refresh_all_display_prices()
 
     def set_active_currency(self, currency: str) -> None:
@@ -240,8 +244,6 @@ class EditorState:
         except Exception:
             rate = DEFAULT_EUR_TO_USD
         self.eur_to_usd = rate if rate > 0 else DEFAULT_EUR_TO_USD
-        if not self.is_dual_currency_mode():
-            self.sync_linked_eur_from_usd()
         self._refresh_all_display_prices()
 
     def _working_prices_for(self, currency: str | None = None) -> dict[str, float]:
@@ -835,8 +837,6 @@ class EditorState:
                 self.loaded_promo_store[promo_key] = promo
                 self.promo_store[promo_key] = promo
 
-        if not self.is_dual_currency_mode():
-            self.sync_linked_eur_from_usd()
         self.loaded_prices = self._loaded_prices_for(self.active_currency)
         for q in self.row_index.values():
             self._apply_point_display(q)
@@ -875,8 +875,6 @@ class EditorState:
 
     def _refresh_all_display_prices(self) -> None:
         currency = self.normalize_current_currency()
-        if not self.is_dual_currency_mode():
-            self.sync_linked_eur_from_usd()
         for points in self.points_by_country.values():
             for p in points:
                 prices = p.setdefault("working_prices", {})
@@ -925,7 +923,7 @@ class EditorState:
         if not self.selected_country:
             return "No country loaded"
         base = self.country_info_map.get(str(self.selected_country), "No country loaded")
-        mode = "Dual currency" if self.is_dual_currency_mode() else "Linked USD"
+        mode = "Edit active currency only" if self.is_dual_currency_mode() else "Edit USD/EUR together"
         return f"{base}\nCurrency: {self.normalize_current_currency()} | Mode: {mode} | EUR/USD: {self.eur_to_usd:.4f}"
 
     def selected_point_info(self) -> dict[str, Any] | None:
@@ -953,10 +951,12 @@ class EditorState:
                 prices[active_currency] = v
                 self.working_prices_by_currency.setdefault(active_currency, {})[str(rid)] = v
             else:
-                usd_value = v if active_currency == "USD" else self.round_regular_price(
-                    convert_price(v, active_currency, "USD", self.eur_to_usd)
-                )
-                eur_value = self.round_regular_price(convert_price(usd_value, "USD", "EUR", self.eur_to_usd))
+                if active_currency == "USD":
+                    usd_value = v
+                    eur_value = self.round_regular_price(convert_price(v, "USD", "EUR", self.eur_to_usd))
+                else:
+                    eur_value = v
+                    usd_value = self.round_regular_price(convert_price(v, "EUR", "USD", self.eur_to_usd))
                 prices["USD"] = usd_value
                 prices["EUR"] = eur_value
                 self.working_prices_by_currency.setdefault("USD", {})[str(rid)] = usd_value
@@ -1291,8 +1291,6 @@ class EditorState:
                     p["working_prices"].get(currency, p.get("base_y", 0.0))
                 )
             self._apply_point_display(p)
-        if not self.is_dual_currency_mode():
-            self.sync_linked_eur_from_usd()
 
     def promo_candidates_for_selected(self) -> list[dict[str, Any]]:
         p = self.selected_point_info()
@@ -1392,10 +1390,6 @@ class EditorState:
         currency = normalize_currency(currency)
         prices = point.setdefault("working_prices", {})
 
-        if not self.is_dual_currency_mode():
-            usd = self.round_regular_price(float(prices.get("USD", point.get("base_prices", {}).get("USD", point.get("working_y", 0.0)))))
-            return usd if currency == "USD" else self.round_regular_price(convert_price(usd, "USD", "EUR", self.eur_to_usd))
-
         if currency in prices and pd.notna(prices[currency]):
             return self.round_regular_price(float(prices[currency]))
 
@@ -1403,6 +1397,7 @@ class EditorState:
         source = prices.get(source_currency, point.get("base_prices", {}).get(source_currency, point.get("working_y", 0.0)))
         converted = self.round_regular_price(convert_price(source, source_currency, currency, self.eur_to_usd))
         prices[currency] = converted
+        self.working_prices_by_currency.setdefault(currency, {})[str(point.get("row_id", ""))] = converted
         return converted
 
     def _final_price_for_currency(self, point: dict[str, Any], currency: str, working_price: float) -> float:

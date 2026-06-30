@@ -32,10 +32,14 @@ from PySide6.QtWidgets import (
 
 from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
+try:
+    from define_region_prices import generate_region_prices_for_export_folder
+except ImportError:
+    from automation.define_region_prices import generate_region_prices_for_export_folder
 from currency_support import (
     CURRENCIES,
     DEFAULT_CURRENCY,
-    DUAL_CURRENCY_MODE,
+    LINKED_USD_MODE,
     find_currency_file,
     merge_currency_tables,
     normalize_currency,
@@ -69,7 +73,11 @@ class MainWindow(QMainWindow):
         self.save_shortcut = QShortcut(QKeySequence.Save, self)
         self.save_shortcut.activated.connect(self.quick_save)
         self.currency_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
+        self.currency_shortcut.setContext(Qt.ApplicationShortcut)
         self.currency_shortcut.activated.connect(self.toggle_active_currency)
+        self.currency_letter_shortcut = QShortcut(QKeySequence("C"), self)
+        self.currency_letter_shortcut.setContext(Qt.ApplicationShortcut)
+        self.currency_letter_shortcut.activated.connect(self.toggle_active_currency)
         self.toggle_price_labels_shortcut = QShortcut(QKeySequence("Q"), self)
         self.toggle_price_labels_shortcut.setContext(Qt.ApplicationShortcut)
         self.toggle_price_labels_shortcut.activated.connect(self.toggle_canvas_price_labels)
@@ -104,6 +112,7 @@ class MainWindow(QMainWindow):
         self.side_panel.setWidgetResizable(True)
 
         self.side_panel_content = QWidget()
+        self.side_panel_content.setObjectName("SidePanelContent")
         side_layout = QVBoxLayout(self.side_panel_content)
 
         self.side_panel.setWidget(self.side_panel_content)
@@ -172,8 +181,8 @@ class MainWindow(QMainWindow):
         self.currency_combo.setCurrentText(self.state.active_currency)
         self.currency_combo.currentTextChanged.connect(self.on_currency_changed)
 
-        self.dual_currency_check = QCheckBox("Manage USD and EUR independently")
-        self.dual_currency_check.setChecked(self.state.currency_mode == DUAL_CURRENCY_MODE)
+        self.dual_currency_check = QCheckBox("Edit USD/EUR together")
+        self.dual_currency_check.setChecked(self.state.currency_mode == LINKED_USD_MODE)
         self.dual_currency_check.stateChanged.connect(self.on_currency_mode_changed)
 
         self.exchange_rate_spin = QDoubleSpinBox()
@@ -192,11 +201,12 @@ class MainWindow(QMainWindow):
         currency_grid.addWidget(self.exchange_rate_spin, 1, 1)
         currency_grid.addWidget(self.dual_currency_check, 2, 0, 1, 2)
 
-        self.currency_mode_banner = QLabel("DUAL CURRENCY MODE")
+        self.currency_mode_banner = QLabel("USD/EUR LINKED EDIT MODE")
         self.currency_mode_banner.setAlignment(Qt.AlignCenter)
         self.currency_mode_banner.setStyleSheet(
-            "font-weight: bold; color: #ffffff; background-color: #073763; "
-            "border: 1px solid #3f7fb5; border-radius: 4px; padding: 6px;"
+            "font-weight: bold; color: #f7f8fa; background-color: #30343b; "
+            "border: 1px solid #666d78; border-left: 5px solid #d6a400; "
+            "border-radius: 4px; padding: 6px;"
         )
         self.currency_mode_banner.setVisible(False)
 
@@ -734,6 +744,7 @@ class MainWindow(QMainWindow):
 
 
     def export_prices(self):
+        cursor_active = False
         try:
             folder = QFileDialog.getExistingDirectory(
                 self,
@@ -746,20 +757,63 @@ class MainWindow(QMainWindow):
 
             self.statusBar().showMessage("Saving prices and promos...")
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            cursor_active = True
             QApplication.processEvents()
 
             self.save_exports_to_folder(export_dir, include_history=True)
 
+            QApplication.restoreOverrideCursor()
+            cursor_active = False
+
             self.statusBar().showMessage(
-                f"Saved in:\n{export_dir}\nUSD and EUR subfolders"
+                f"Saved in: {export_dir} | USD and EUR subfolders"
             )
+
+            answer = QMessageBox.question(
+                self,
+                "Generate region prices?",
+                "Also generate Region_prices.csv for the exported USD and EUR price files?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+
+            if answer == QMessageBox.Yes:
+                self.statusBar().showMessage("Generating region prices...")
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                cursor_active = True
+                QApplication.processEvents()
+
+                results = generate_region_prices_for_export_folder(export_dir)
+
+                QApplication.restoreOverrideCursor()
+                cursor_active = False
+
+                summary_lines = []
+                for result in results:
+                    location = "root" if result.output_csv.parent == export_dir else result.output_csv.parent.name
+                    summary_lines.append(
+                        f"{location}: {result.output_csv.name} ({result.rows_written} rows)"
+                    )
+                excluded = sorted({country for result in results for country in result.excluded_countries})
+                excluded_text = ", ".join(excluded) if excluded else "none"
+                QMessageBox.information(
+                    self,
+                    "Export complete",
+                    "Prices, promos, and region prices were saved.\n\n"
+                    + "\n".join(summary_lines)
+                    + f"\n\nExcluded countries due to cost floor: {excluded_text}",
+                )
+                self.statusBar().showMessage("Export complete, including region prices.")
+            else:
+                self.statusBar().showMessage("Export complete. Region prices were not generated.")
 
         except Exception as e:
             QMessageBox.warning(self, "Export failed", f"Could not save export: {e}")
             self.statusBar().showMessage("Export failed.")
 
         finally:
-            QApplication.restoreOverrideCursor()
+            if cursor_active:
+                QApplication.restoreOverrideCursor()
 
     def populate_combos(self):
         self.country_combo.blockSignals(True)
@@ -832,25 +886,31 @@ class MainWindow(QMainWindow):
         self.total_projected_label.setStyleSheet(f"color: {color(total_impact)}; font-weight: bold;")
 
     def refresh_currency_visuals(self):
-        is_dual = self.state.currency_mode == DUAL_CURRENCY_MODE
-        self.currency_mode_banner.setVisible(is_dual)
+        is_linked = self.state.currency_mode == LINKED_USD_MODE
+        self.currency_mode_banner.setVisible(is_linked)
         self.side_panel_content.setStyleSheet(
             """
-            QWidget {
-                background-color: #0b2f55;
-                color: #ffffff;
+            QWidget#SidePanelContent {
+                background-color: #30343b;
+                color: #f7f8fa;
+                border-left: 5px solid #d6a400;
             }
-            QLabel {
-                color: #ffffff;
+            QWidget#SidePanelContent QLabel {
+                color: #f7f8fa;
             }
-            QPushButton, QToolButton, QComboBox, QDoubleSpinBox, QListWidget {
+            QWidget#SidePanelContent QPushButton,
+            QWidget#SidePanelContent QToolButton,
+            QWidget#SidePanelContent QComboBox,
+            QWidget#SidePanelContent QDoubleSpinBox,
+            QWidget#SidePanelContent QListWidget {
                 background-color: #ffffff;
                 color: #202124;
+                border: 1px solid #c7cbd1;
             }
-            QCheckBox {
-                color: #ffffff;
+            QWidget#SidePanelContent QCheckBox {
+                color: #f7f8fa;
             }
-            """ if is_dual else ""
+            """ if is_linked else ""
         )
 
     def on_currency_changed(self, currency: str):
@@ -859,7 +919,7 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def on_currency_mode_changed(self, *_):
-        self.state.set_currency_mode(self.dual_currency_check.isChecked())
+        self.state.set_linked_currency_mode(self.dual_currency_check.isChecked())
         self.refresh_currency_visuals()
         self.refresh_canvas()
 
@@ -871,6 +931,7 @@ class MainWindow(QMainWindow):
         current = normalize_currency(self.currency_combo.currentText())
         next_currency = "EUR" if current == "USD" else "USD"
         self.currency_combo.setCurrentText(next_currency)
+        self.statusBar().showMessage(f"Editing currency: {next_currency}")
 
     def toggle_canvas_price_labels(self):
         self.canvas.show_prices = not self.canvas.show_prices
