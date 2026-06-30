@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import shutil
 import pandas as pd
-import ctypes
 from datetime import datetime
 
 from PySide6.QtPrintSupport import QPrinter
@@ -96,9 +95,7 @@ class MainWindow(QMainWindow):
         self.reset_zoom_shortcut = QShortcut(QKeySequence("H"), self)
         self.reset_zoom_shortcut.setContext(Qt.ApplicationShortcut)
         self.reset_zoom_shortcut.activated.connect(self.reset_canvas_zoom)
-        self.resource_timer = QTimer(self)
-        self.resource_timer.timeout.connect(self.monitor_resources)
-        self.resource_timer.start(5000)
+        self.clear_busy_cursor()
 
     def _build_ui(self):
         root = QWidget()
@@ -493,27 +490,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"PDF exported: {path}")
     
     
-    def monitor_resources(self):
-        try:
-            user_objects = ctypes.windll.user32.GetGuiResources(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                1,
-            )
-
-            gdi_objects = ctypes.windll.user32.GetGuiResources(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                0,
-            )
-
-            self.statusBar().showMessage(
-                f"USER: {user_objects} | GDI: {gdi_objects}"
-            )
-
-            if user_objects > 8000:
-                print("WARNING: USER handles dangerously high")
-
-        except Exception as e:
-            print("Resource monitor failed:", e)
+    def clear_busy_cursor(self):
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
     
     def set_drag_mode(self, mode_key: str):
         self.current_drag_mode = mode_key
@@ -793,6 +772,7 @@ class MainWindow(QMainWindow):
             local_export_dir = FILES.editor_exports_dir
 
             self.statusBar().showMessage("Saving local export, history, promos, and regions...")
+            self.clear_busy_cursor()
             QApplication.setOverrideCursor(Qt.WaitCursor)
             cursor_active = True
             QApplication.processEvents()
@@ -834,7 +814,7 @@ class MainWindow(QMainWindow):
 
         finally:
             if cursor_active:
-                QApplication.restoreOverrideCursor()
+                self.clear_busy_cursor()
 
     def populate_combos(self):
         self.country_combo.blockSignals(True)
