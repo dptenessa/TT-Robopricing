@@ -132,10 +132,15 @@ def load_table(
     needed = [
         "Provider", "ReferenceProvider", "Country", "ISO", "ISO3", "SKU", "GB", "Days", "Price",
         "Currency", "Price_USD", "Price_EUR", "usd_price", "eur_price", "EUR_TO_USD", "COST_EUR_TO_USD",
-        "Cost", "Is_Below_Cost_Floor", "Plan", "PricingUnitIdUsed", "PricingSourceUsed",
+        "Cost", "IsBelowCostFloor", "Plan", "PricingUnitIdUsed", "PricingSourceUsed",
         "PricingRegionUsed", "PricingUnitCountriesUsed", "PromoScopeKey", "PromoCode",
         "PromoType", "PromoValue", "PromoCurrency", "PromoLabel", "PromoBasePrice", "FinalPriceAfterPromo",
     ]
+    if "IsBelowCostFloor" not in df.columns:
+        if "IsBelowCalculatedCostFloor" in df.columns:
+            df["IsBelowCostFloor"] = df["IsBelowCalculatedCostFloor"]
+        elif "Is_Below_Cost_Floor" in df.columns:
+            df["IsBelowCostFloor"] = df["Is_Below_Cost_Floor"]
     for col in needed:
         if col not in df.columns:
             df[col] = np.nan
@@ -1486,7 +1491,7 @@ class EditorState:
                 "COST_EUR_TO_USD": self.cost_eur_to_usd,
 
                 "CalculatedCostFloor": cost_floor,
-                "IsBelowCalculatedCostFloor": final_price < cost_floor,
+                "IsBelowCostFloor": final_price < cost_floor,
             })
 
         out = pd.DataFrame(rows)

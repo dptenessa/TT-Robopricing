@@ -777,14 +777,19 @@ class MainWindow(QMainWindow):
     def export_prices(self):
         cursor_active = False
         try:
-            folder = QFileDialog.getExistingDirectory(
+            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
+            path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Choose clean price pack export folder"
+                "Save clean price pack ZIP",
+                str(Path.home() / default_zip),
+                "Zip files (*.zip)"
             )
-            if not folder:
+            if not path:
                 return
 
-            pack_dir = Path(folder)
+            zip_path = Path(path)
+            if zip_path.suffix.lower() != ".zip":
+                zip_path = zip_path.with_suffix(".zip")
             local_export_dir = FILES.editor_exports_dir
 
             self.statusBar().showMessage("Saving local export, history, promos, and regions...")
@@ -798,14 +803,17 @@ class MainWindow(QMainWindow):
                 include_history=True,
                 timestamp=ts,
             )
-            pack_results = build_partner_price_pack(local_export_dir, pack_dir)
+            pack_result = build_partner_price_pack(local_export_dir, zip_path)
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
 
             pack_lines = [
-                f"{result.path.name}: {result.rows_written} rows"
-                for result in pack_results
+                (
+                    f"{result.member_name}: {result.rows_written} rows"
+                    f" ({result.rows_removed_below_cost} below-cost removed)"
+                )
+                for result in pack_result.files
             ]
             excluded = sorted({country for result in region_results for country in result.excluded_countries})
             excluded_text = ", ".join(excluded) if excluded else "none"
@@ -813,12 +821,12 @@ class MainWindow(QMainWindow):
                 self,
                 "Export complete",
                 f"Local latest files and history were saved in:\n{local_export_dir}\n\n"
-                f"The clean partner pack was saved in:\n{pack_dir}\n\n"
-                f"Partner pack files: {len(pack_results)}\n"
+                f"The clean partner ZIP was saved as:\n{pack_result.zip_path}\n\n"
+                f"CSV files inside ZIP: {len(pack_result.files)}\n"
                 + "\n".join(pack_lines)
                 + f"\n\nExcluded countries due to cost floor: {excluded_text}",
             )
-            self.statusBar().showMessage("Export complete: local history saved and clean 8-file pack created.")
+            self.statusBar().showMessage("Export complete: local history saved and clean ZIP pack created.")
 
         except Exception as e:
             QMessageBox.warning(self, "Export failed", f"Could not save export: {e}")

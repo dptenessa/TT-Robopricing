@@ -1015,7 +1015,7 @@ def build_ht_prices(
         final_prices = df.loc[ht_mask, "Price"].astype(float)
         floor_refs = df.loc[ht_mask, "Cost_Floor_Reference"].astype(float)
 
-        df.loc[ht_mask, "Is_Below_Cost_Floor"] = final_prices < floor_refs
+        df.loc[ht_mask, "IsBelowCostFloor"] = final_prices < floor_refs
         df.loc[ht_mask, "Cost_Floor_Gap"] = np.maximum(floor_refs - final_prices, 0.0)
 
     df = apply_competitive_promos(
@@ -1027,8 +1027,8 @@ def build_ht_prices(
         target_margin_pct=promo_target_margin_pct,
     )
 
-    df["Is_Below_Cost_Floor"] = (
-        df["Is_Below_Cost_Floor"]
+    df["IsBelowCostFloor"] = (
+        df["IsBelowCostFloor"]
         .fillna(False)
         .infer_objects(copy=False)
     )

@@ -313,7 +313,7 @@ def run_batch_pricing_for_currency(
         "PricingUnitIdUsed",
         "PricingRegionUsed",
         "PricingUnitCountriesUsed",
-        "Is_Below_Cost_Floor",
+        "IsBelowCostFloor",
         "Cost_Floor_Gap",
         "sku_scope_key",
         "SKU",

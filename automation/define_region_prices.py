@@ -172,7 +172,11 @@ def _required_columns(fieldnames: list[str]) -> None:
 
 
 def _is_below_cost(row: dict[str, Any]) -> bool:
-    return parse_bool(row.get("IsBelowCalculatedCostFloor")) or parse_bool(row.get("Is_Below_Cost_Floor"))
+    return (
+        parse_bool(row.get("IsBelowCostFloor"))
+        or parse_bool(row.get("IsBelowCalculatedCostFloor"))
+        or parse_bool(row.get("Is_Below_Cost_Floor"))
+    )
 
 
 def _row_final_price(row: dict[str, Any]) -> float:
