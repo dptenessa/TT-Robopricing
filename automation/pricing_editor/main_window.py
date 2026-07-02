@@ -75,6 +75,8 @@ class MainWindow(QMainWindow):
         self.state = EditorState()
         self.current_drag_mode = "inflate"
         self.mode_buttons: dict[str, QToolButton] = {}
+        self.autosave_dirty = False
+        self.autosave_in_progress = False
 
         self._build_ui()
         self.statusBar().showMessage("Opening editor...")
@@ -101,6 +103,9 @@ class MainWindow(QMainWindow):
         self.reset_zoom_shortcut.setContext(Qt.ApplicationShortcut)
         self.reset_zoom_shortcut.activated.connect(self.reset_canvas_zoom)
         self.clear_busy_cursor()
+
+    def mark_dirty(self) -> None:
+        self.autosave_dirty = True
 
     def _build_ui(self):
         root = QWidget()
@@ -699,6 +704,7 @@ class MainWindow(QMainWindow):
         self.state.preload_last_export(df)
         self.state.preload_last_exported_promos(promos)
         self.populate_combos()
+        self.autosave_dirty = False
         self.refresh_canvas()
         self.statusBar().showMessage(f"Loaded saved state: {selected_label}")
 
@@ -732,19 +738,23 @@ class MainWindow(QMainWindow):
 
     def use_baseline_for_selected_plan(self):
         self.state.reload_selected_plan_from_baseline()
+        self.mark_dirty()
         self.refresh_canvas()
 
     def use_baseline_for_pricing_unit(self):
         self.state.reload_pricing_unit_from_baseline()
+        self.mark_dirty()
         self.refresh_canvas()
         
     def use_loaded_for_selected_plan(self):
         self.state.reload_selected_plan_from_loaded()
+        self.mark_dirty()
         self.refresh_canvas()
 
 
     def use_loaded_for_pricing_unit(self):
         self.state.reload_pricing_unit_from_loaded()
+        self.mark_dirty()
         self.refresh_canvas()
 
     def save_exports_to_folder(self, export_dir: Path, include_history: bool = False, autosave: bool = False) -> str:
@@ -796,6 +806,7 @@ class MainWindow(QMainWindow):
         try:
             export_dir = FILES.editor_exports_dir
             self.save_exports_to_folder(export_dir)
+            self.autosave_dirty = False
 
             self.statusBar().showMessage("Quick saved to outputs/manual_prices/current")
 
@@ -805,14 +816,21 @@ class MainWindow(QMainWindow):
 
 
     def autosave(self):
+        if not self.autosave_dirty or self.autosave_in_progress or self.canvas.is_dragging:
+            return
+
         try:
+            self.autosave_in_progress = True
             export_dir = FILES.editor_autosave_dir
             self.save_exports_to_folder(export_dir, autosave=True)
+            self.autosave_dirty = False
 
             self.statusBar().showMessage("Autosaved")
 
         except Exception as e:
             print("Autosave failed:", e)
+        finally:
+            self.autosave_in_progress = False
 
 
     def export_prices(self):
@@ -847,6 +865,7 @@ class MainWindow(QMainWindow):
                 timestamp=ts,
             )
             pack_result = build_partner_price_pack(local_export_dir, zip_path)
+            self.autosave_dirty = False
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
@@ -972,6 +991,7 @@ class MainWindow(QMainWindow):
 
     def on_exchange_rate_changed(self, rate: float):
         self.state.set_eur_to_usd(float(rate))
+        self.mark_dirty()
         self.refresh_canvas()
 
     def toggle_active_currency(self):
@@ -1045,6 +1065,7 @@ class MainWindow(QMainWindow):
         else:
             self.state.assign_promo_to_selected(str(promo_code))
 
+        self.mark_dirty()
         self.refresh_canvas()
 
     def on_point_dragged(self, row_id: str, new_price: float, point_index: int):
@@ -1073,6 +1094,7 @@ class MainWindow(QMainWindow):
         else:
             self.state.set_scope_price(row_id, new_price)
 
+        self.mark_dirty()
         self.refresh_canvas()
 
     def refresh_selection_label(self):
@@ -1137,6 +1159,7 @@ class MainWindow(QMainWindow):
         else:
             self.state.assign_promo_to_selected(str(promo_code))
 
+        self.mark_dirty()
         self.refresh_canvas()
 
     def toggle_left_panel(self):
@@ -1169,6 +1192,7 @@ class MainWindow(QMainWindow):
 
     def remove_selected_promo(self):
         self.state.remove_selected_promo()
+        self.mark_dirty()
         self.refresh_canvas()
 
     def try_auto_load(self):
@@ -1248,6 +1272,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Auto-load found nothing usable. Use the buttons to load files."
             )
+        self.autosave_dirty = False
 
 
 def run():
