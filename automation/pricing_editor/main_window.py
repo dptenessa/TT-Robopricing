@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -131,9 +132,9 @@ class MainWindow(QMainWindow):
         self.load_model_btn.setFixedSize(88, 72)
         self.load_model_btn.clicked.connect(self.load_baseline)
 
-        self.load_export_prices_btn = QPushButton("Load export\nfolder")
-        self.load_export_prices_btn.setFixedSize(88, 72)
-        self.load_export_prices_btn.clicked.connect(self.load_exported_prices)
+        self.load_saved_state_btn = QPushButton("Load saved\nstate")
+        self.load_saved_state_btn.setFixedSize(88, 72)
+        self.load_saved_state_btn.clicked.connect(self.load_saved_state)
 
         self.load_market_btn = QPushButton("Load market\nfolder")
         self.load_market_btn.setFixedSize(88, 72)
@@ -146,10 +147,6 @@ class MainWindow(QMainWindow):
         self.load_sales_btn = QPushButton("Load sales\nvolumes")
         self.load_sales_btn.setFixedSize(88, 72)
         self.load_sales_btn.clicked.connect(self.load_sales_volumes)
-
-        self.load_export_promos_btn = QPushButton("Load export\npromos")
-        self.load_export_promos_btn.setFixedSize(88, 72)
-        self.load_export_promos_btn.clicked.connect(self.load_exported_promos)
 
         self.impact_label = QLabel("Pricing unit impact: —")
         self.total_impact_label = QLabel("Total impact: —")
@@ -176,11 +173,10 @@ class MainWindow(QMainWindow):
         load_grid.setHorizontalSpacing(6)
         load_grid.setVerticalSpacing(6)
         load_grid.addWidget(self.load_model_btn, 0, 0)
-        load_grid.addWidget(self.load_export_prices_btn, 0, 1)
+        load_grid.addWidget(self.load_saved_state_btn, 0, 1)
         load_grid.addWidget(self.load_market_btn, 0, 2)
         load_grid.addWidget(self.load_promo_btn, 1, 0)
-        load_grid.addWidget(self.load_export_promos_btn, 1, 1)
-        load_grid.addWidget(self.load_sales_btn, 1, 2)
+        load_grid.addWidget(self.load_sales_btn, 1, 1)
 
         self.currency_combo = QComboBox()
         self.currency_combo.addItems(list(CURRENCIES))
@@ -522,10 +518,49 @@ class MainWindow(QMainWindow):
 
         return merge_currency_tables(tables)
 
-    def load_promos_from_folder(self, folder: str | Path) -> list[dict]:
+    @staticmethod
+    def _history_timestamp(path: Path, prefix: str, suffix: str) -> str | None:
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            return None
+        timestamp = name[len(prefix):-len(suffix)]
+        try:
+            datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
+        except ValueError:
+            return None
+        return timestamp
+
+    @staticmethod
+    def _history_timestamp_label(timestamp: str) -> str:
+        try:
+            return datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return timestamp
+
+    def saved_state_timestamps(self) -> list[str]:
+        timestamp_sets: list[set[str]] = []
+        for currency in CURRENCIES:
+            history_dir = FILES.editor_history_dir(FILES.editor_exports_dir, currency)
+            price_timestamps = {
+                ts for path in history_dir.glob("manual_prices_*.csv")
+                for ts in [self._history_timestamp(path, "manual_prices_", ".csv")]
+                if ts
+            }
+            promo_timestamps = {
+                ts for path in history_dir.glob("promos_*.json")
+                for ts in [self._history_timestamp(path, "promos_", ".json")]
+                if ts
+            }
+            timestamp_sets.append(price_timestamps & promo_timestamps)
+
+        if not timestamp_sets:
+            return []
+        return sorted(set.intersection(*timestamp_sets), reverse=True)
+
+    def read_promos_from_folder(self, folder: str | Path, names: list[str]) -> tuple[bool, list[dict]]:
         folder = Path(folder)
         for currency in CURRENCIES:
-            path = find_currency_file(folder, currency, ["promos_current.json"])
+            path = find_currency_file(folder, currency, names)
             if path is None:
                 continue
             try:
@@ -534,10 +569,14 @@ class MainWindow(QMainWindow):
                 if isinstance(data, dict):
                     data = [data]
                 if isinstance(data, list):
-                    return data
+                    return True, data
             except Exception:
                 continue
-        return []
+        return False, []
+
+    def load_promos_from_folder(self, folder: str | Path) -> list[dict]:
+        _found, data = self.read_promos_from_folder(folder, ["promos_current.json"])
+        return data
 
     def load_export_prices_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
         df = self.load_currency_tables_from_folder(
@@ -554,8 +593,8 @@ class MainWindow(QMainWindow):
         return True
 
     def load_export_promos_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
-        data = self.load_promos_from_folder(folder)
-        if not data:
+        found, data = self.read_promos_from_folder(folder, ["promos_current.json"])
+        if not found:
             if not silent:
                 QMessageBox.warning(self, "Load failed", "No usable exported promos found in that folder.")
             return False
@@ -608,15 +647,56 @@ class MainWindow(QMainWindow):
         self.state.preload_sales_volumes(df)
         self.refresh_canvas()
 
-    def load_exported_prices(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Load exported prices folder",
-        )
-        if not folder:
+    def load_saved_state(self):
+        if not self.state.row_index:
+            QMessageBox.warning(self, "Load saved state", "Load a model proposal before loading a saved state.")
             return
 
-        self.load_export_prices_from_folder(folder)
+        timestamps = self.saved_state_timestamps()
+        if not timestamps:
+            QMessageBox.information(
+                self,
+                "Load saved state",
+                "No complete saved states were found in outputs/manual_prices/history.",
+            )
+            return
+
+        labels = [self._history_timestamp_label(ts) for ts in timestamps]
+        label_to_timestamp = dict(zip(labels, timestamps))
+        selected_label, ok = QInputDialog.getItem(
+            self,
+            "Load saved state",
+            "Saved state:",
+            labels,
+            0,
+            False,
+        )
+        if not ok or not selected_label:
+            return
+
+        timestamp = label_to_timestamp[str(selected_label)]
+        history_root = FILES.editor_history_root
+        df = self.load_currency_tables_from_folder(
+            history_root,
+            [f"manual_prices_{timestamp}.csv"],
+        )
+        if df.empty:
+            QMessageBox.warning(self, "Load saved state", "Could not load saved prices for that date.")
+            return
+
+        found_promos, promos = self.read_promos_from_folder(
+            history_root,
+            [f"promos_{timestamp}.json"],
+        )
+        if not found_promos:
+            QMessageBox.warning(self, "Load saved state", "Could not load saved promos for that date.")
+            return
+
+        self.state.preload_last_export(df)
+        self.state.preload_last_exported_promos(promos)
+        self.populate_combos()
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Loaded saved state: {selected_label}")
 
     def load_market(self):
         folder = QFileDialog.getExistingDirectory(
@@ -645,19 +725,6 @@ class MainWindow(QMainWindow):
 
         self.state.promo_catalog = load_promos(path)
         self.refresh_canvas()
-
-    def load_exported_promos(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Load exported promos folder",
-        )
-        if not folder:
-            return
-
-        try:
-            self.load_export_promos_from_folder(folder)
-        except Exception as e:
-            QMessageBox.warning(self, "Load failed", f"Could not read exported promos: {e}")
 
     def use_baseline_for_selected_plan(self):
         self.state.reload_selected_plan_from_baseline()

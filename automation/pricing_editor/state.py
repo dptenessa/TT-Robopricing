@@ -498,6 +498,7 @@ class EditorState:
 
     def preload_last_exported_promos(self, data: list[dict[str, Any]]) -> None:
         self.promo_store = {}
+        self.loaded_promo_store = {}
 
         if not data:
             for q in self.row_index.values():
@@ -521,6 +522,7 @@ class EditorState:
             }
 
             self.promo_store[promo_scope_key] = promo
+            self.loaded_promo_store[promo_scope_key] = dict(promo)
 
         # Re-apply promo effect to all loaded points
         for q in self.row_index.values():
