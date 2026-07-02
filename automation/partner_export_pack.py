@@ -10,14 +10,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 
 from currency_support import CURRENCIES, normalize_currency
+from plan_labels import PARTNER_PLAN_PACKS, display_plan_label
 
-
-PLAN_PACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Basic", ("Basic",)),
-    ("Medium", ("Medium", "Moderate")),
-    ("Large", ("Large",)),
-    ("Unlimited", ("Unlimited",)),
-)
 
 PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "EUR_TO_USD",
@@ -228,9 +222,10 @@ def build_partner_price_pack(
             )
             merged = merged.loc[~below_cost].copy()
             plan_values = _plan_key(merged["Plan"])
-            for pack_name, source_plans in PLAN_PACKS:
+            for pack_name, source_plans in PARTNER_PLAN_PACKS:
                 wanted = {plan.lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
+                out["Plan"] = out["Plan"].map(display_plan_label)
                 out = out.drop(columns=[col for col in PARTNER_DROP_COLUMNS if col in out.columns])
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))

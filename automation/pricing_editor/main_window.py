@@ -42,6 +42,10 @@ try:
 except ImportError:
     from automation.partner_export_pack import build_partner_price_pack
 try:
+    from plan_labels import display_plan_label
+except ImportError:
+    from automation.plan_labels import display_plan_label
+try:
     from official_fx import get_official_eur_usd
 except ImportError:
     from automation.official_fx import get_official_eur_usd
@@ -1085,7 +1089,7 @@ class MainWindow(QMainWindow):
             else ""
         )
         self.selection_label.setText(
-            f"{info['plan']} | {info['days']} days | {info['gb']} GB\n"
+            f"{display_plan_label(info['plan'])} | {info['days']} days | {info['gb']} GB\n"
             f"Currency: {self.state.active_currency}\n"
             f"Working price: {info['y']:.2f}\n"
             f"Model price: {info['base_y']:.2f}\n"

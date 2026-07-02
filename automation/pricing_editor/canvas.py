@@ -9,6 +9,11 @@ from PySide6.QtWidgets import QWidget #, QToolTip
 
 import math
 
+try:
+    from plan_labels import display_plan_label
+except ImportError:
+    from automation.plan_labels import display_plan_label
+
 
 class PriceCurveCanvas(QWidget):
     pointSelected = Signal(str)
@@ -129,7 +134,7 @@ class PriceCurveCanvas(QWidget):
         comp = self._nearest_competitor(event.position()) if self.show_competitors else None
         if comp is not None:
             msg = (
-                f'Operator: {comp["provider"]} | Plan: {comp.get("plan", "")} | '
+                f'Operator: {comp["provider"]} | Plan: {display_plan_label(comp.get("plan", ""))} | '
                 f'Days: {comp.get("days", "")} | GB: {comp.get("gb", "")} | '
                 f'Price: {comp["y"]:.2f} | Promo: no'
             )
@@ -142,7 +147,7 @@ class PriceCurveCanvas(QWidget):
         if idx is not None:
             p = self.points[idx]
             msg = (
-                f'Operator: HT | Plan: {p["plan"]} | Days: {p["days"]} | '
+                f'Operator: HT | Plan: {display_plan_label(p["plan"])} | Days: {p["days"]} | '
                 f'GB: {p["gb"]} | Price: {p["y"]:.2f} | Promo: {p["promo"] or "no"}'
             )
             self.statusChanged.emit(msg)
