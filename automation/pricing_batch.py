@@ -363,7 +363,7 @@ def run_batch_pricing(paths: PipelineFiles = FILES):
     base_dir = paths.base_dir
 
     market_file = paths.market_annotated
-    ppg_file = paths.ppg_xlsx
+    ppg_file = paths.ppg_csv
     pricing_units_file = paths.pricing_units_json
 
     if not os.path.exists(ppg_file):
@@ -401,7 +401,7 @@ def run_batch_pricing(paths: PipelineFiles = FILES):
         error_msg = str(e)
         if "[Errno 22]" in error_msg:
             print(f"Error preparing input data: {error_msg}")
-            print("TIP: Check if WS_PPG.xlsx is open in Excel. Please close it and try again.")
+            print("TIP: Check if WS_PPG.csv is open in Excel. Please close it and try again.")
         else:
             print(f"Error preparing input data: {e}")
         return

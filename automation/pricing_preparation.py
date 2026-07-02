@@ -92,7 +92,10 @@ def prepare_market_data(
 
 
 def prepare_ppg_data(ppg_file: str) -> pd.DataFrame:
-    df = pd.read_excel(ppg_file)
+    if str(ppg_file).lower().endswith(".csv"):
+        df = pd.read_csv(ppg_file)
+    else:
+        df = pd.read_excel(ppg_file)
 
     iso_col = None
     for candidate in ["ISO", "ISO_Code_A2", "ISO_A2", "Country_Code_A2"]:

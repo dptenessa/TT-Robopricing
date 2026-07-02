@@ -1,7 +1,8 @@
 PREP WORK:
 I. Define pricing units in inputs/pricing_units.json
 II. Define promos in inputs/promos.json
-III. Define wholesale countries and costs in inputs/WS_PPG.xlsx
+III. Define wholesale countries and costs in inputs/WS_PPG.csv
+IV. Optional for GitHub Actions: store WS_PPG.csv as repository secret WS_PPG_CSV_B64 instead of committing it.
 
 NORMAL WORKFLOW:
 1. Run `python automation/pricing_pipeline.py --scrape` for the weekly scrape + proposal flow.

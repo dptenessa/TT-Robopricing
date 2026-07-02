@@ -21,6 +21,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Restore private PPG cost file from secret
+        env:
+          WS_PPG_CSV_B64: ${{ secrets.WS_PPG_CSV_B64 }}
+        run: |
+          if [ -n "$WS_PPG_CSV_B64" ]; then
+            mkdir -p inputs
+            printf '%s' "$WS_PPG_CSV_B64" | base64 --decode > inputs/WS_PPG.csv
+            echo "Loaded inputs/WS_PPG.csv from GitHub secret."
+          else
+            echo "No WS_PPG_CSV_B64 secret configured; using repository inputs/WS_PPG.csv if present."
+          fi
+
       - name: Set same-day scrape date
         run: echo "SCRAPE_RUN_DATE=$(TZ=Europe/Zagreb date +%F)" >> "$GITHUB_ENV"
 

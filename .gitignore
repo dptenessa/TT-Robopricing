@@ -23,6 +23,10 @@ outputs/_currency_smoke/
 outputs/market_analysis/dropped_rows_debug.csv
 
 # Superseded local input experiments
+inputs/Connections_*.csv
+inputs/Vodafone Prices.pdf
+inputs/WS_PPG.csv
+inputs/WS_PPG.xlsx
 inputs/WS_PPG_OLD_delete.csv
 inputs/WS_PPG_old.csv
 inputs/WS_PPG_test_delete.csv
