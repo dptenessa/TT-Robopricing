@@ -211,6 +211,8 @@ class PriceCurveCanvas(QWidget):
         return "unlimited" in str(plan).strip().lower()
     
     def _is_below_cost_floor(self, point: dict[str, Any]) -> bool:
+        if "is_below_cost_floor" in point:
+            return bool(point.get("is_below_cost_floor"))
         floor = point.get("cost_floor")
         if floor is None:
             return False
@@ -219,6 +221,26 @@ class PriceCurveCanvas(QWidget):
             return float(point.get("y", 0.0)) < float(floor)
         except Exception:
             return False
+
+    def _is_partner_export_blocked(self, point: dict[str, Any]) -> bool:
+        return bool(point.get("is_partner_export_blocked") or point.get("partner_export_blocked"))
+
+    def _floor_marker_state(self, point: dict[str, Any]) -> str:
+        below_by_currency = point.get("below_cost_floor_by_currency") or {}
+        active_currency = str(point.get("active_currency") or "").upper()
+        active_below = self._is_below_cost_floor(point)
+        other_below = any(
+            bool(is_below)
+            for currency, is_below in below_by_currency.items()
+            if str(currency).upper() != active_currency
+        )
+        if active_below and other_below:
+            return "both_below"
+        if active_below:
+            return "active_below"
+        if other_below or self._is_partner_export_blocked(point):
+            return "other_below"
+        return "ok"
 
     def _data_ranges(self):
         xs = [p["x"] for p in self.points] + [c["x"] for c in self.competitors]
@@ -572,10 +594,14 @@ class PriceCurveCanvas(QWidget):
                 width = 1 if self._is_unlimited(plan) else 1
                 if is_selected and not self._is_unlimited(plan):
                     outline = QColor("#555555")
-                if self._is_below_cost_floor(point):
-                    painter.setPen(QPen(QColor("#c62828"), 3))
+                floor_state = self._floor_marker_state(point)
+                if floor_state in {"active_below", "both_below"}:
+                    cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
+                    painter.setPen(QPen(cross_color, 3))
                     painter.drawLine(pt.x() - 7, pt.y() - 7, pt.x() + 7, pt.y() + 7)
                     painter.drawLine(pt.x() - 7, pt.y() + 7, pt.x() + 7, pt.y() - 7)
+                elif floor_state == "other_below":
+                    self._draw_marker(painter, pt, "circle", 9 if is_selected else 8, fill, QColor("#1565c0"), 3)
                 else:
                     self._draw_marker(painter, pt, "circle", 9 if is_selected else 8, fill, outline, width)
 
@@ -630,6 +656,25 @@ class PriceCurveCanvas(QWidget):
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, QColor("#ff9800"), QColor("#ef6c00"), 1)
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x) + 28, int(y) + 4, "Applied promo")
+        y += 22
+
+        painter.setPen(QPen(QColor("#1565c0"), 3))
+        painter.drawLine(legend_x + 3, y - 7, legend_x + 17, y + 7)
+        painter.drawLine(legend_x + 3, y + 7, legend_x + 17, y - 7)
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "This currency below")
+        y += 22
+
+        painter.setPen(QPen(QColor("#c62828"), 3))
+        painter.drawLine(legend_x + 3, y - 7, legend_x + 17, y + 7)
+        painter.drawLine(legend_x + 3, y + 7, legend_x + 17, y - 7)
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Both currencies below")
+        y += 22
+
+        self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#1565c0"), 3)
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Other currency below")
         y += 22
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#bdbdbd"), 1)

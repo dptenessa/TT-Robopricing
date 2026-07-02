@@ -226,7 +226,10 @@ def _required_columns(fieldnames: list[str]) -> None:
 
 def _is_below_cost(row: dict[str, Any]) -> bool:
     return (
-        parse_bool(row.get("IsBelowCostFloor"))
+        parse_bool(row.get("IsPartnerExportBlocked"))
+        or parse_bool(row.get("USD_IsBelowCostFloor"))
+        or parse_bool(row.get("EUR_IsBelowCostFloor"))
+        or parse_bool(row.get("IsBelowCostFloor"))
         or parse_bool(row.get("IsBelowCalculatedCostFloor"))
         or parse_bool(row.get("Is_Below_Cost_Floor"))
     )
@@ -335,7 +338,6 @@ def generate_region_prices(
         for (_provider, plan, days), group_rows in grouped.items():
             max_row = max(group_rows, key=_row_final_price)
             final_price = round_regular_price(_row_final_price(max_row))
-            row_currency = normalize_currency(max_row.get("Currency") or detected_currency, detected_currency)
             eur_to_usd = _rate_for_row(max_row)
 
             new_row = dict(max_row)
@@ -350,15 +352,17 @@ def generate_region_prices(
             _set_if_present(new_row, fieldnames, "PromoScopeKey", f"{region_name}|{plan}|{days}")
             _set_if_present(new_row, fieldnames, "Price", final_price)
             _set_if_present(new_row, fieldnames, "FinalPriceAfterPromo", final_price)
+            _set_if_present(new_row, fieldnames, "IsPartnerExportBlocked", False)
+            _set_if_present(new_row, fieldnames, "PartnerExportBlockReason", "")
 
             if "Price_USD" in fieldnames:
                 price_usd = final_price if detected_currency == "USD" else round_regular_price(
-                    convert_price(final_price, row_currency, "USD", eur_to_usd)
+                    convert_price(final_price, detected_currency, "USD", eur_to_usd)
                 )
                 _set_if_present(new_row, fieldnames, "Price_USD", price_usd)
             if "Price_EUR" in fieldnames:
                 price_eur = final_price if detected_currency == "EUR" else round_regular_price(
-                    convert_price(final_price, row_currency, "EUR", eur_to_usd)
+                    convert_price(final_price, detected_currency, "EUR", eur_to_usd)
                 )
                 _set_if_present(new_row, fieldnames, "Price_EUR", price_eur)
 

@@ -1078,6 +1078,12 @@ class MainWindow(QMainWindow):
             return
 
         promo = f"\nPromo: {info['promo']}" if info.get("promo") else ""
+        export_status = "blocked" if info.get("is_partner_export_blocked") else "ok"
+        block_reason = (
+            f" ({info.get('partner_export_block_reason')})"
+            if info.get("is_partner_export_blocked")
+            else ""
+        )
         self.selection_label.setText(
             f"{info['plan']} | {info['days']} days | {info['gb']} GB\n"
             f"Currency: {self.state.active_currency}\n"
@@ -1087,7 +1093,8 @@ class MainWindow(QMainWindow):
             f"Pricing unit: {info['pricing_unit_id'] or '-'}\n"
             f"Source: {info['pricing_source'] or '-'} | Region: {info['pricing_region'] or '-'}\n"
             f"Unit countries: {info['pricing_unit_countries'] or '-'}\n"
-            f"Countries affected in editor: {info['editor_scope_countries'] or '-'}{promo}"
+            f"Countries affected in editor: {info['editor_scope_countries'] or '-'}\n"
+            f"Partner export: {export_status}{block_reason}{promo}"
         )
 
     def refresh_promo_list(self):

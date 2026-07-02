@@ -135,6 +135,8 @@ def load_table(
         "Cost", "IsBelowCostFloor", "Plan", "PricingUnitIdUsed", "PricingSourceUsed",
         "PricingRegionUsed", "PricingUnitCountriesUsed", "PromoScopeKey", "PromoCode",
         "PromoType", "PromoValue", "PromoCurrency", "PromoLabel", "PromoBasePrice", "FinalPriceAfterPromo",
+        "CostFloor_USD", "CostFloor_EUR", "USD_IsBelowCostFloor", "EUR_IsBelowCostFloor",
+        "IsPartnerExportBlocked", "PartnerExportBlockReason",
     ]
     if "IsBelowCostFloor" not in df.columns:
         if "IsBelowCalculatedCostFloor" in df.columns:
@@ -156,6 +158,7 @@ def load_table(
     for col in [
         "GB", "Days", "Price", "Price_USD", "Price_EUR", "Cost", "PromoValue",
         "PromoBasePrice", "FinalPriceAfterPromo", "EUR_TO_USD", "COST_EUR_TO_USD",
+        "CostFloor_USD", "CostFloor_EUR",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     for col in [
@@ -601,6 +604,10 @@ class EditorState:
         text = str(country_text).strip().upper()
         text = text.replace("[", "").replace("]", "")
         text = text.replace('"', "").replace("'", "")
+        for sep in [";", "/", "|"]:
+            text = text.replace(sep, ",")
+        if "," not in text and "-" in text:
+            text = text.replace("-", ",")
 
         return [
             part.strip()
@@ -650,6 +657,41 @@ class EditorState:
         fee = ipg_fee(price, currency=currency, eur_to_usd=self.cost_eur_to_usd)
 
         return cost_gb + fee + HT_REV_SHARE * price/(1 + VAT)
+
+    def _floor_country_key_for_point(self, point: dict[str, Any]) -> str:
+        covered_countries = str(point.get("pricing_unit_countries", "")).strip()
+        fallback_country = str(point.get("iso", "")).strip() or str(point.get("iso3", "")).strip()
+        return covered_countries or fallback_country
+
+    def _refresh_point_floor_status(self, point: dict[str, Any]) -> None:
+        country_key = self._floor_country_key_for_point(point)
+        floors: dict[str, float] = {}
+        final_prices: dict[str, float] = {}
+        below: dict[str, bool] = {}
+
+        for currency in CURRENCIES:
+            working_price = self.round_regular_price(self._working_price_for_currency(point, currency))
+            final_price = self._final_price_for_currency(point, currency, working_price)
+            floor = self.calculate_cost_floor(
+                point,
+                country_key,
+                currency=currency,
+                price_override=final_price,
+            )
+            floors[currency] = float(floor)
+            final_prices[currency] = float(final_price)
+            below[currency] = bool(final_price < floor)
+
+        active_currency = self.normalize_current_currency()
+        blocked_currencies = [currency for currency in CURRENCIES if below.get(currency)]
+        point["cost_floor_by_currency"] = floors
+        point["final_price_by_currency"] = final_prices
+        point["below_cost_floor_by_currency"] = below
+        point["active_currency"] = active_currency
+        point["cost_floor"] = floors.get(active_currency)
+        point["is_below_cost_floor"] = bool(below.get(active_currency, False))
+        point["is_partner_export_blocked"] = bool(blocked_currencies)
+        point["partner_export_block_reason"] = ",".join(blocked_currencies)
 
 
 
@@ -886,6 +928,7 @@ class EditorState:
             )
         )
         point.setdefault("display_prices", {})[currency] = float(point["y"])
+        self._refresh_point_floor_status(point)
 
     def _refresh_all_display_prices(self) -> None:
         currency = self.normalize_current_currency()
@@ -911,14 +954,8 @@ class EditorState:
             sales = self.sales_by_scope.get(str(p.get("scope_key", "")), {})
             p["last_month_revenue"] = self.revenue_last_month_for_scope(str(p.get("scope_key", "")))
 
-            # Recalculate floor every time the canvas asks for current points.
-            covered_countries = str(p.get("pricing_unit_countries", "")).strip()
-            fallback_country = str(p.get("iso", "")).strip() or str(p.get("iso3", "")).strip()
-
-            p["cost_floor"] = self.calculate_cost_floor(
-                p,
-                covered_countries or fallback_country,
-            )
+            if "cost_floor_by_currency" not in p:
+                self._refresh_point_floor_status(p)
 
         return points
 
@@ -1453,6 +1490,10 @@ class EditorState:
                 currency=currency,
                 price_override=final_price,
             )
+            self._refresh_point_floor_status(point)
+            below_by_currency = point.get("below_cost_floor_by_currency", {}) or {}
+            floors_by_currency = point.get("cost_floor_by_currency", {}) or {}
+            partner_blocked = bool(point.get("is_partner_export_blocked", False))
 
             promo = self.promo_store.get(str(point.get("promo_scope_key", "")))
             promo_value = ""
@@ -1492,6 +1533,12 @@ class EditorState:
 
                 "CalculatedCostFloor": cost_floor,
                 "IsBelowCostFloor": final_price < cost_floor,
+                "CostFloor_USD": floors_by_currency.get("USD", ""),
+                "CostFloor_EUR": floors_by_currency.get("EUR", ""),
+                "USD_IsBelowCostFloor": bool(below_by_currency.get("USD", False)),
+                "EUR_IsBelowCostFloor": bool(below_by_currency.get("EUR", False)),
+                "IsPartnerExportBlocked": partner_blocked,
+                "PartnerExportBlockReason": point.get("partner_export_block_reason", ""),
             })
 
         out = pd.DataFrame(rows)

@@ -23,9 +23,15 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "EUR_TO_USD",
     "COST_EUR_TO_USD",
     "CalculatedCostFloor",
+    "CostFloor_USD",
+    "CostFloor_EUR",
     "IsBelowCostFloor",
     "IsBelowCalculatedCostFloor",
     "Is_Below_Cost_Floor",
+    "USD_IsBelowCostFloor",
+    "EUR_IsBelowCostFloor",
+    "IsPartnerExportBlocked",
+    "PartnerExportBlockReason",
     "ISO3",
     "Reference",
     "ReferenceProvider",
@@ -62,18 +68,57 @@ def _bool_series(series: pd.Series) -> pd.Series:
 
 
 def _below_cost_mask(df: pd.DataFrame) -> pd.Series:
+    masks = []
+    if "IsPartnerExportBlocked" in df.columns:
+        masks.append(_bool_series(df["IsPartnerExportBlocked"]))
+    if "USD_IsBelowCostFloor" in df.columns:
+        masks.append(_bool_series(df["USD_IsBelowCostFloor"]))
+    if "EUR_IsBelowCostFloor" in df.columns:
+        masks.append(_bool_series(df["EUR_IsBelowCostFloor"]))
     if "IsBelowCostFloor" in df.columns:
-        return _bool_series(df["IsBelowCostFloor"])
+        masks.append(_bool_series(df["IsBelowCostFloor"]))
     if "IsBelowCalculatedCostFloor" in df.columns:
-        return _bool_series(df["IsBelowCalculatedCostFloor"])
+        masks.append(_bool_series(df["IsBelowCalculatedCostFloor"]))
     if "Is_Below_Cost_Floor" in df.columns:
-        return _bool_series(df["Is_Below_Cost_Floor"])
+        masks.append(_bool_series(df["Is_Below_Cost_Floor"]))
+    if masks:
+        out = masks[0].copy()
+        for mask in masks[1:]:
+            out = out | mask
+        return out
     raise ValueError("Partner export requires IsBelowCostFloor so below-cost prices can be removed.")
 
 
 def _country_code(value: object) -> str:
     text = str(value if value is not None else "").strip()
     return "" if text.lower() == "nan" else text.upper()
+
+
+def _norm_key_value(value: object) -> str:
+    text = str(value if value is not None else "").strip()
+    if not text or text.lower() == "nan":
+        return ""
+    try:
+        number = float(text)
+        if number.is_integer():
+            return str(int(number))
+        return f"{number:.4f}".rstrip("0").rstrip(".")
+    except ValueError:
+        return text.upper()
+
+
+def _price_scope_keys(df: pd.DataFrame) -> pd.Series:
+    index = df.index
+    iso = df["ISO"] if "ISO" in df.columns else df.get("Country", pd.Series("", index=index))
+    return (
+        iso.map(_country_code)
+        + "|"
+        + df.get("Plan", pd.Series("", index=index)).map(_norm_key_value)
+        + "|"
+        + df.get("Days", pd.Series("", index=index)).map(_norm_key_value)
+        + "|"
+        + df.get("GB", pd.Series("", index=index)).map(_norm_key_value)
+    )
 
 
 def _country_list(value: object) -> list[str]:
@@ -147,6 +192,7 @@ def build_partner_price_pack(
     normalized_currencies = [normalize_currency(currency) for currency in currencies]
     export_tables: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
     shared_excluded_countries: set[str] = set()
+    shared_blocked_price_keys: set[str] = set()
 
     for currency in normalized_currencies:
         currency_dir = local_export_dir / currency
@@ -154,6 +200,13 @@ def build_partner_price_pack(
         region_prices = _read_required_csv(currency_dir / "region_prices_current.csv")
         export_tables[currency] = (country_prices, region_prices)
         shared_excluded_countries.update(_below_cost_country_codes(country_prices))
+        for df in (country_prices, region_prices):
+            below_cost = _below_cost_mask(df)
+            shared_blocked_price_keys.update(
+                key
+                for key in _price_scope_keys(df.loc[below_cost])
+                if key and not key.startswith("|")
+            )
 
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
         for currency in normalized_currencies:
@@ -165,7 +218,7 @@ def build_partner_price_pack(
             if "Plan" not in merged.columns:
                 raise ValueError(f"Missing Plan column in {currency} export.")
 
-            below_cost = _below_cost_mask(merged)
+            below_cost = _below_cost_mask(merged) | _price_scope_keys(merged).isin(shared_blocked_price_keys)
             removed_by_plan = (
                 merged.loc[below_cost]
                 .assign(_plan_key=_plan_key(merged.loc[below_cost, "Plan"]))
