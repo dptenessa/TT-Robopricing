@@ -1,8 +1,8 @@
 metadata:
   coding: ISO2
-  country_count: 154
+  country_count: 155
   region_count: 50
-  total_destinations: 204
+  total_destinations: 205
   note: Country catalog contains ISO2 codes only. Regions contain ISO2 country lists only, with optional product display names.
     Suriname (SR) and Belize (BZ) were added to the catalog and relevant commercial travel regions.
 countries:
@@ -160,6 +160,7 @@ countries:
 - "VN"
 - "XK"
 - "ZA"
+- "PW"
 regions:
   GLOBAL:
     region_product_name: Global
@@ -483,6 +484,7 @@ regions:
     - "PF"
     - "PG"
     - "TO"
+    - "Pw"
   ASIA:
     region_product_name: Asia
     countries:
@@ -837,6 +839,7 @@ regions:
     - "PG"
     - "PF"
     - "TO"
+    - "PW"
   PACIFIC_LONG_HAUL:
     region_product_name: Pacific Explorer
     countries:
@@ -846,6 +849,7 @@ regions:
     - "PF"
     - "PG"
     - "TO"
+    - "PW"
   EAST_EUROPE:
     region_product_name: Eastern Europe
     countries:
