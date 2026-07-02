@@ -8,7 +8,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 import pandas as pd
-from combined_scrapped_data_diffs import (
+from combined_scrape_diffs import (
     build_change_report,
     build_country_summary,
     build_provider_summary,
@@ -17,34 +17,43 @@ from combined_scrapped_data_diffs import (
 
 
 ALLOWED_PATTERNS = (
-    "outputs/*_current.csv",
-    "outputs/*_previous.csv",
-    "workable_data/combined_scrapped_data_latest.csv",
-    "workable_data/market_prices_annotated.csv",
-    "workable_data/market_prices_outlier_audit_log.csv",
-    "workable_data/ht_prices_latest.csv",
-    "workable_data/ht_failed_countries_latest.csv",
-    "workable_data/scrape_status_latest.csv",
-    "workable_data/scrape_status_history/*.csv",
-    "workable_data/logs/*.log",
-    "workable_data/history/combined_scrapped_data_*.csv",
-    "workable_data/history/ht_prices_*.csv",
-    "workable_data/USD/*.csv",
-    "workable_data/USD/history/*.csv",
-    "workable_data/EUR/*.csv",
-    "workable_data/EUR/history/*.csv",
+    "scrapes/*_current.csv",
+    "scrapes/*_previous.csv",
+    "outputs/combined_scrapes/combined_scrape_latest.csv",
+    "outputs/combined_scrapes/history/combined_scrape_*.csv",
+    "outputs/market_analysis/market_prices_annotated_latest.csv",
+    "outputs/market_analysis/outlier_audit_latest.csv",
+    "outputs/model_proposals/USD/model_proposal_latest.csv",
+    "outputs/model_proposals/USD/model_failed_countries_latest.csv",
+    "outputs/model_proposals/USD/history/model_proposal_*.csv",
+    "outputs/model_proposals/EUR/model_proposal_latest.csv",
+    "outputs/model_proposals/EUR/model_failed_countries_latest.csv",
+    "outputs/model_proposals/EUR/history/model_proposal_*.csv",
+    "outputs/model_proposals/USD/*.csv",
+    "outputs/model_proposals/EUR/*.csv",
+    "outputs/diagnostics/scrape_status_latest.csv",
+    "outputs/diagnostics/scrape_status_history/*.csv",
+    "outputs/diagnostics/logs/*.log",
 )
 
 DIAGNOSTIC_PATTERNS = (
-    "workable_data/scrape_status_latest.csv",
-    "workable_data/scrape_status_history/*.csv",
-    "workable_data/logs/*.log",
+    "outputs/diagnostics/scrape_status_latest.csv",
+    "outputs/diagnostics/scrape_status_history/*.csv",
+    "outputs/diagnostics/logs/*.log",
 )
 
 
 PROTECTED_PREFIXES = (
-    "workable_data/exports/",
-    "workable_data/autosave/",
+    "outputs/manual_prices/",
+    "outputs/partner_packs/",
+)
+
+
+NEW_OUTPUT_MARKERS = (
+    "combined_scrapes",
+    "market_analysis",
+    "model_proposals",
+    "diagnostics",
 )
 
 
@@ -67,11 +76,13 @@ def find_pack_root(extracted_or_folder: Path) -> Path:
     with_any: list[Path] = []
 
     for candidate in candidates:
-        has_outputs = (candidate / "outputs").is_dir()
-        has_workable = (candidate / "workable_data").is_dir()
-        if has_outputs and has_workable:
+        has_scrapes = (candidate / "scrapes").is_dir()
+        has_new_outputs = any((candidate / "outputs" / marker).exists() for marker in NEW_OUTPUT_MARKERS)
+        if has_scrapes and has_new_outputs:
             with_both.append(candidate)
-        elif has_outputs or has_workable:
+            continue
+
+        if has_scrapes or has_new_outputs:
             with_any.append(candidate)
 
     if with_both:
@@ -80,7 +91,7 @@ def find_pack_root(extracted_or_folder: Path) -> Path:
         return min(with_any, key=lambda p: len(p.parts))
 
     raise FileNotFoundError(
-        "Could not find outputs/ or workable_data/ inside the weekly pack."
+        "Could not find scrapes/ plus outputs/ inside the weekly pack."
     )
 
 
@@ -95,15 +106,15 @@ def safe_label(label: str) -> str:
 
 
 def latest_combined_history_label(root: Path, fallback: str) -> str:
-    history_dir = root / "workable_data" / "history"
-    files = sorted(history_dir.glob("combined_scrapped_data_*.csv"))
+    history_dir = root / "outputs" / "combined_scrapes" / "history"
+    files = sorted(history_dir.glob("combined_scrape_*.csv"))
     if not files:
         return fallback
-    return files[-1].stem.replace("combined_scrapped_data_", "")
+    return files[-1].stem.replace("combined_scrape_", "")
 
 
 def print_scrape_status(src_root: Path) -> bool:
-    status_path = src_root / "workable_data" / "scrape_status_latest.csv"
+    status_path = src_root / "outputs" / "diagnostics" / "scrape_status_latest.csv"
 
     print()
     print("Scrape Status")
@@ -156,8 +167,8 @@ def compare_incoming_to_local(
     project_root: Path,
     dry_run: bool = False,
 ) -> None:
-    local_latest = project_root / "workable_data" / "combined_scrapped_data_latest.csv"
-    incoming_latest = src_root / "workable_data" / "combined_scrapped_data_latest.csv"
+    local_latest = project_root / "outputs" / "combined_scrapes" / "combined_scrape_latest.csv"
+    incoming_latest = src_root / "outputs" / "combined_scrapes" / "combined_scrape_latest.csv"
 
     print()
     print("Changes Versus Local Latest")
@@ -190,7 +201,7 @@ def compare_incoming_to_local(
         print("Dry run: change reports were not saved.")
         return
 
-    output_dir = project_root / "workable_data" / "diffs"
+    output_dir = project_root / "outputs" / "combined_scrapes" / "diffs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     prev = safe_label(previous_label)
@@ -219,7 +230,7 @@ def copy_pack(
     copied = 0
     skipped = 0
 
-    for top_level in ("outputs", "workable_data"):
+    for top_level in ("scrapes", "outputs"):
         folder = src_root / top_level
         if not folder.exists():
             continue

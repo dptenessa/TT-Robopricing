@@ -15,7 +15,7 @@ try:
 except Exception:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     INPUT_REGIONS = PROJECT_ROOT / "inputs" / "regions.yaml"
-    OUTPUT_NAME = "Region_prices.csv"
+    OUTPUT_NAME = "region_prices_current.csv"
 
 try:
     from currency_support import CURRENCIES, DEFAULT_CURRENCY, DEFAULT_EUR_TO_USD, normalize_currency
@@ -136,6 +136,29 @@ def resolve_region(name: str, regions_data: dict[str, Any], seen: set[str] | Non
     return {name} if name else set()
 
 
+def resolve_region_ordered(name: str, regions_data: dict[str, Any], seen: set[str] | None = None) -> list[str]:
+    seen = seen or set()
+    name = str(name).strip()
+    if name in seen:
+        raise ValueError(f"Circular region reference detected: {name}")
+    seen.add(name)
+
+    regions = regions_data.get("regions") or {}
+    if name in regions:
+        spec = regions[name]
+        items = spec.get("countries", []) if isinstance(spec, dict) else spec
+        return _resolve_region_items_ordered(items or [], regions_data, seen)
+
+    base = regions_data.get("base") or {}
+    derived = regions_data.get("derived") or {}
+    if name in base:
+        return _unique_ordered(str(country).strip() for country in base[name] if str(country).strip())
+    if name in derived:
+        return _resolve_region_items_ordered(derived[name] or [], regions_data, seen)
+
+    return [name] if name else []
+
+
 def _resolve_region_items(items: Iterable[Any], regions_data: dict[str, Any], seen: set[str]) -> set[str]:
     result: set[str] = set()
     region_names = set((regions_data.get("regions") or {}).keys())
@@ -153,6 +176,36 @@ def _resolve_region_items(items: Iterable[Any], regions_data: dict[str, Any], se
         else:
             result.add(item)
     return result
+
+
+def _unique_ordered(items: Iterable[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        value = str(item).strip()
+        if value and value not in seen:
+            out.append(value)
+            seen.add(value)
+    return out
+
+
+def _resolve_region_items_ordered(items: Iterable[Any], regions_data: dict[str, Any], seen: set[str]) -> list[str]:
+    result: list[str] = []
+    region_names = set((regions_data.get("regions") or {}).keys())
+    region_names.update((regions_data.get("base") or {}).keys())
+    region_names.update((regions_data.get("derived") or {}).keys())
+
+    for item in items:
+        item = str(item).strip()
+        if not item:
+            continue
+        if item == "*":
+            result.extend(sorted(_direct_region_countries(regions_data)))
+        elif item in region_names:
+            result.extend(resolve_region_ordered(item, regions_data, seen.copy()))
+        else:
+            result.append(item)
+    return _unique_ordered(result)
 
 
 def region_names(regions_data: dict[str, Any]) -> list[str]:
@@ -179,6 +232,27 @@ def _is_below_cost(row: dict[str, Any]) -> bool:
     )
 
 
+def _country_code(value: Any) -> str:
+    text = str(value if value is not None else "").strip()
+    return "" if not text or text.lower() == "nan" else text.upper()
+
+
+def _excluded_countries_from_rows(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        code
+        for row in rows
+        for code in [_country_code(row.get("ISO", ""))]
+        if code and _is_below_cost(row)
+    }
+
+
+def _read_pricing_rows(path: str | Path) -> tuple[list[dict[str, Any]], list[str]]:
+    dialect = detect_dialect(path)
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f, dialect=dialect)
+        return list(reader), list(reader.fieldnames or [])
+
+
 def _row_final_price(row: dict[str, Any]) -> float:
     final_price = parse_price(row.get("FinalPriceAfterPromo"), default=float("nan"))
     if final_price == final_price:
@@ -203,6 +277,7 @@ def generate_region_prices(
     regions_yaml: str | Path = INPUT_REGIONS,
     output_name: str = OUTPUT_NAME,
     currency: str | None = None,
+    shared_excluded_countries: Iterable[str] | None = None,
 ) -> RegionGenerationResult:
     input_csv = Path(input_csv)
     output_folder = Path(output_folder) if output_folder else input_csv.parent
@@ -214,12 +289,7 @@ def generate_region_prices(
         raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
 
     regions_data = load_yaml(regions_yaml)
-    dialect = detect_dialect(input_csv)
-
-    with open(input_csv, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f, dialect=dialect)
-        rows = list(reader)
-        fieldnames = list(reader.fieldnames or [])
+    rows, fieldnames = _read_pricing_rows(input_csv)
 
     if not rows:
         raise ValueError("Pricing file is empty.")
@@ -227,28 +297,32 @@ def generate_region_prices(
 
     detected_currency = normalize_currency(currency or rows[0].get("Currency") or DEFAULT_CURRENCY)
 
-    excluded_countries = {
-        str(row.get("ISO", "")).strip()
-        for row in rows
-        if str(row.get("ISO", "")).strip() and _is_below_cost(row)
-    }
+    excluded_countries = _excluded_countries_from_rows(rows)
+    if shared_excluded_countries:
+        excluded_countries.update(
+            code for code in (_country_code(country) for country in shared_excluded_countries) if code
+        )
 
     valid_rows = [
         row
         for row in rows
-        if str(row.get("ISO", "")).strip() not in excluded_countries
+        if _country_code(row.get("ISO", "")) not in excluded_countries
     ]
 
     output_rows: list[dict[str, Any]] = []
 
     for region_name in region_names(regions_data):
-        region_countries = resolve_region(region_name, regions_data)
-        eligible_countries = sorted(region_countries - excluded_countries)
+        region_countries = resolve_region_ordered(region_name, regions_data)
+        eligible_countries = _unique_ordered(
+            code for code in (_country_code(country) for country in region_countries)
+            if code and code not in excluded_countries
+        )
+        eligible_country_set = set(eligible_countries)
 
         region_rows = [
             row
             for row in valid_rows
-            if str(row.get("ISO", "")).strip() in eligible_countries
+            if _country_code(row.get("ISO", "")) in eligible_country_set
         ]
         if not region_rows:
             continue
@@ -312,39 +386,36 @@ def generate_region_prices_for_export_folder(
     currencies: Iterable[str] = CURRENCIES,
     regions_yaml: str | Path = INPUT_REGIONS,
     output_name: str = OUTPUT_NAME,
-    include_legacy_usd: bool = True,
 ) -> list[RegionGenerationResult]:
     export_dir = Path(export_dir)
     results: list[RegionGenerationResult] = []
+    currency_inputs: list[tuple[str, Path]] = []
+    shared_excluded_countries: set[str] = set()
 
     for currency in currencies:
         currency = normalize_currency(currency)
-        input_csv = export_dir / currency / "HT_prices_last_export.csv"
+        input_csv = export_dir / currency / "manual_prices_current.csv"
         if input_csv.exists():
-            results.append(
-                generate_region_prices(
-                    input_csv,
-                    input_csv.parent,
-                    regions_yaml=regions_yaml,
-                    output_name=output_name,
-                    currency=currency,
-                )
-            )
+            currency_inputs.append((currency, input_csv))
 
-    legacy_input = export_dir / "HT_prices_last_export.csv"
-    if include_legacy_usd and legacy_input.exists():
+    for _currency, input_csv in currency_inputs:
+        rows, _fieldnames = _read_pricing_rows(input_csv)
+        shared_excluded_countries.update(_excluded_countries_from_rows(rows))
+
+    for currency, input_csv in currency_inputs:
         results.append(
             generate_region_prices(
-                legacy_input,
-                export_dir,
+                input_csv,
+                input_csv.parent,
                 regions_yaml=regions_yaml,
                 output_name=output_name,
-                currency=DEFAULT_CURRENCY,
+                currency=currency,
+                shared_excluded_countries=shared_excluded_countries,
             )
         )
 
     if not results:
-        raise FileNotFoundError(f"No HT_prices_last_export.csv files found under: {export_dir}")
+        raise FileNotFoundError(f"No manual_prices_current.csv files found under: {export_dir}")
     return results
 
 
@@ -377,8 +448,8 @@ def _pick_output_folder() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate region prices from an exported HT prices CSV.")
-    parser.add_argument("--input", dest="input_csv", help="Input HT_prices_last_export.csv")
-    parser.add_argument("--output-folder", help="Folder where Region_prices.csv will be written")
+    parser.add_argument("--input", dest="input_csv", help="Input manual_prices_current.csv")
+    parser.add_argument("--output-folder", help=f"Folder where {OUTPUT_NAME} will be written")
     parser.add_argument("--regions-yaml", default=str(INPUT_REGIONS), help="Path to regions.yaml")
     parser.add_argument("--currency", choices=list(CURRENCIES), help="Currency of the input export")
     args = parser.parse_args()

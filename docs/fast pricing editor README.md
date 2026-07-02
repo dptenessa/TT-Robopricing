@@ -30,16 +30,16 @@ python app.py
 ## Suggested workflow
 1. Run `python automation/pricing_pipeline.py` to prepare the latest proposal from existing scraper outputs.
 2. Or run `python automation/pricing_pipeline.py --scrape --open-editor` for the weekly scrape-to-editor flow.
-3. Review the USD/EUR proposal against the last export/session loaded from `workable_data/exports`.
+3. Review the USD/EUR proposal against the last manual state loaded from `outputs/manual_prices/current`.
 4. Drag points to sculpt the working curve.
 5. Select a point and apply/remove shared promotions.
 6. Save. The editor writes USD and EUR last-export files and timestamped history.
 
 ## File layout
-- Model proposals: `workable_data/USD/ht_prices_latest.csv` and `workable_data/EUR/ht_prices_latest.csv`
-- Last manual exports: `workable_data/exports/USD/HT_prices_last_export.csv` and `workable_data/exports/EUR/HT_prices_last_export.csv`
-- Shared promo exports: `workable_data/exports/USD/promos_last_export.json` and `workable_data/exports/EUR/promos_last_export.json`
-- Compatibility USD export: `workable_data/exports/HT_prices_last_export.csv`
+- Model proposals: `outputs/model_proposals/USD/model_proposal_latest.csv` and `outputs/model_proposals/EUR/model_proposal_latest.csv`
+- Current manual prices: `outputs/manual_prices/current/USD/manual_prices_current.csv` and `outputs/manual_prices/current/EUR/manual_prices_current.csv`
+- Current manual promos: `outputs/manual_prices/current/USD/promos_current.json` and `outputs/manual_prices/current/EUR/promos_current.json`
+- Manual history: `outputs/manual_prices/history/USD/` and `outputs/manual_prices/history/EUR/`
 
 ## Notes
 - This first version is intentionally simpler than the Dash app.

@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = (Resolve-Path (Join-Path $ScriptDir '..')).Path
-$LogDir = Join-Path $Root "workable_data\logs"
+$LogDir = Join-Path $Root "outputs\diagnostics\logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"

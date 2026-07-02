@@ -15,8 +15,8 @@ import requests
 from bs4 import BeautifulSoup
 
 
-OUTPUT_CURRENT_CSV = "outputs/holafly_current.csv"
-OUTPUT_PREVIOUS_CSV = "outputs/holafly_previous.csv"
+OUTPUT_CURRENT_CSV = "scrapes/holafly_current.csv"
+OUTPUT_PREVIOUS_CSV = "scrapes/holafly_previous.csv"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 
 TEST_MODE = False

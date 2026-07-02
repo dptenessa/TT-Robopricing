@@ -8,7 +8,7 @@ from currency_support import CURRENCIES, DEFAULT_CURRENCY
 from pipeline_files import FILES, PipelineFiles
 
 
-HT_PATTERN = "HT_prices_*.csv"
+HT_PATTERN = "manual_prices_*.csv"
 PROMO_PATTERN = "promos_*.json"
 
 HT_KEY_COLS = ["ISO3", "PricingUnitIdUsed", "Plan", "Days", "GB"]
@@ -300,7 +300,7 @@ def history_contexts(paths: PipelineFiles = FILES) -> list[tuple[str, Path]]:
     if contexts:
         return contexts
 
-    return [(DEFAULT_CURRENCY, paths.editor_exports_dir / "history")]
+    return [(DEFAULT_CURRENCY, paths.editor_history_dir(paths.editor_exports_dir, DEFAULT_CURRENCY))]
 
 
 def run_context(currency: str, history_dir: Path, paths: PipelineFiles = FILES) -> None:
@@ -317,8 +317,8 @@ def run_context(currency: str, history_dir: Path, paths: PipelineFiles = FILES) 
     promo_current_data = load_promo_json(promo_current_file)
     promo_report = build_promo_change_report(promo_previous_data, promo_current_data)
 
-    ht_prev_name = Path(ht_previous_file).stem.replace("HT_prices_", "")
-    ht_curr_name = Path(ht_current_file).stem.replace("HT_prices_", "")
+    ht_prev_name = Path(ht_previous_file).stem.replace("manual_prices_", "")
+    ht_curr_name = Path(ht_current_file).stem.replace("manual_prices_", "")
     promo_prev_name = Path(promo_previous_file).stem.replace("promos_", "")
     promo_curr_name = Path(promo_current_file).stem.replace("promos_", "")
 
@@ -328,7 +328,7 @@ def run_context(currency: str, history_dir: Path, paths: PipelineFiles = FILES) 
     suffix = f"_{currency}" if currency else ""
     ht_diff_file = os.path.join(
         output_dir,
-        f"HT_prices_diff{suffix}_{ht_prev_name}_vs_{ht_curr_name}.csv",
+        f"manual_prices_diff{suffix}_{ht_prev_name}_vs_{ht_curr_name}.csv",
     )
     promo_diff_file = os.path.join(
         output_dir,

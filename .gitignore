@@ -14,13 +14,13 @@ __pycache__/
 final_outputs/
 
 # Generated debug/noisy folders
-outputs/Backup/
-outputs/debug/
-outputs/*_debug.html
-outputs/*_http_cache.json
-workable_data/logs/
-workable_data/_currency_smoke/
-workable_data/dropped_rows_debug.csv
+scrapes/Backup/
+scrapes/debug/
+scrapes/*_debug.html
+scrapes/*_http_cache.json
+outputs/diagnostics/logs/
+outputs/_currency_smoke/
+outputs/market_analysis/dropped_rows_debug.csv
 
 # Superseded local input experiments
 inputs/WS_PPG_OLD_delete.csv

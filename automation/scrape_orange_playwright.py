@@ -25,8 +25,8 @@ os.environ.pop("https_proxy", None)
 os.environ.pop("all_proxy", None)
 
 
-OUTPUT_CURRENT_CSV = "outputs/orange_current.csv"
-OUTPUT_PREVIOUS_CSV = "outputs/orange_previous.csv"
+OUTPUT_CURRENT_CSV = "scrapes/orange_current.csv"
+OUTPUT_PREVIOUS_CSV = "scrapes/orange_previous.csv"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 
 TEST_MODE = False

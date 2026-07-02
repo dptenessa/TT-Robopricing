@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -70,6 +71,65 @@ def _below_cost_mask(df: pd.DataFrame) -> pd.Series:
     raise ValueError("Partner export requires IsBelowCostFloor so below-cost prices can be removed.")
 
 
+def _country_code(value: object) -> str:
+    text = str(value if value is not None else "").strip()
+    return "" if text.lower() == "nan" else text.upper()
+
+
+def _country_list(value: object) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        text = str(value if value is not None else "").strip()
+        if not text or text.lower() == "nan":
+            raw_items = []
+        elif text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = ast.literal_eval(text)
+                raw_items = list(parsed) if isinstance(parsed, (list, tuple, set)) else [text]
+            except (ValueError, SyntaxError):
+                raw_items = [text]
+        elif "-" in text:
+            raw_items = text.split("-")
+        elif "," in text:
+            raw_items = text.split(",")
+        else:
+            raw_items = [text]
+
+    countries: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        code = _country_code(item).strip("'\" ")
+        if code and code not in seen:
+            countries.append(code)
+            seen.add(code)
+    return countries
+
+
+def _below_cost_country_codes(country_prices: pd.DataFrame) -> set[str]:
+    if "ISO" not in country_prices.columns:
+        return set()
+    below_cost = _below_cost_mask(country_prices)
+    return {
+        code
+        for code in country_prices.loc[below_cost, "ISO"].map(_country_code)
+        if code
+    }
+
+
+def _format_partner_country_lists(df: pd.DataFrame, excluded_countries: set[str]) -> pd.DataFrame:
+    if "PricingUnitCountriesUsed" not in df.columns:
+        return df
+    df = df.copy()
+    df["PricingUnitCountriesUsed"] = df["PricingUnitCountriesUsed"].map(
+        lambda value: "-".join(
+            country for country in _country_list(value)
+            if country not in excluded_countries
+        )
+    )
+    return df
+
+
 def build_partner_price_pack(
     local_export_dir: str | Path,
     zip_path: str | Path,
@@ -84,13 +144,21 @@ def build_partner_price_pack(
         zip_path = zip_path / f"TT_prices_{run_date.strftime('%y%m%d')}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     results: list[PartnerPackFile] = []
+    normalized_currencies = [normalize_currency(currency) for currency in currencies]
+    export_tables: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    shared_excluded_countries: set[str] = set()
+
+    for currency in normalized_currencies:
+        currency_dir = local_export_dir / currency
+        country_prices = _read_required_csv(currency_dir / "manual_prices_current.csv")
+        region_prices = _read_required_csv(currency_dir / "region_prices_current.csv")
+        export_tables[currency] = (country_prices, region_prices)
+        shared_excluded_countries.update(_below_cost_country_codes(country_prices))
 
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
-        for currency in currencies:
-            currency = normalize_currency(currency)
-            currency_dir = local_export_dir / currency
-            country_prices = _read_required_csv(currency_dir / "HT_prices_last_export.csv")
-            region_prices = _read_required_csv(currency_dir / "Region_prices.csv")
+        for currency in normalized_currencies:
+            country_prices, region_prices = export_tables[currency]
+            region_prices = _format_partner_country_lists(region_prices, shared_excluded_countries)
             frames = [df for df in (country_prices, region_prices) if not df.empty]
             merged = pd.concat(frames, ignore_index=True, sort=False) if frames else country_prices.copy()
 

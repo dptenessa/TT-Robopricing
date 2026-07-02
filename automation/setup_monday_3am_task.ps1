@@ -33,4 +33,4 @@ Register-ScheduledTask `
 
 Write-Host "Scheduled task created or updated: $TaskName"
 Write-Host "It can wake the PC from sleep, but it cannot run if the PC is fully shut down."
-Write-Host "Logs will be written under: $(Join-Path $Root 'workable_data\logs')"
+Write-Host "Logs will be written under: $(Join-Path $Root 'outputs\diagnostics\logs')"

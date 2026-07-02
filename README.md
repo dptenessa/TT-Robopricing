@@ -10,7 +10,7 @@ Automated competitor scraping, market cleaning, USD/EUR pricing proposal generat
 
 Choose the downloaded `weekly-proposal-pack.zip` when the file picker opens.
 
-The importer prints which scrapers worked or failed, compares the incoming combined scrape with your current local combined scrape, and saves fresh change reports in `workable_data/diffs/`.
+The importer prints which scrapers worked or failed, compares the incoming combined scrape with your current local combined scrape, and saves fresh change reports in `outputs/combined_scrapes/diffs/`.
 
 4. In `START_HERE`, double-click `2 Open pricing editor.cmd`.
 
@@ -43,9 +43,9 @@ python automation/pricing_pipeline.py --scrape --open-editor
 ## Important Folders
 
 - `inputs/`: pricing units, promo catalog, wholesale PPG files, scraper reference files.
-- `outputs/`: scraper current/previous CSVs.
-- `workable_data/combined_scrapped_data_latest.csv`: combined competition snapshot.
-- `workable_data/diffs/`: competitor price-change reports.
-- `workable_data/market_prices_annotated.csv`: outlier-annotated market data.
-- `workable_data/USD/` and `workable_data/EUR/`: generated model proposals.
-- `workable_data/exports/USD/` and `workable_data/exports/EUR/`: final manual exports from the editor.
+- `scrapes/`: raw scraper current/previous CSVs.
+- `outputs/combined_scrapes/`: latest and historical combined competition snapshots plus change reports.
+- `outputs/market_analysis/`: outlier-annotated market data and audit files.
+- `outputs/model_proposals/USD/` and `outputs/model_proposals/EUR/`: generated model proposals.
+- `outputs/manual_prices/`: current, autosaved, and historical manually corrected prices/promos.
+- `outputs/partner_packs/`: default folder for clean partner ZIP exports.

@@ -40,14 +40,13 @@ jobs:
 
       - name: Clear generated files from checkout
         run: |
-          rm -f outputs/*_current.csv outputs/*_previous.csv
-          rm -rf workable_data
-          mkdir -p workable_data
+          rm -rf scrapes outputs
+          mkdir -p scrapes outputs
 
       - name: Restore last successful scraper baseline
         uses: actions/cache/restore@v4
         with:
-          path: outputs
+          path: scrapes
           key: scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-
@@ -57,8 +56,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            outputs
-            workable_data/scrape_status_latest.csv
+            scrapes
+            outputs/diagnostics/scrape_status_latest.csv
           key: scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-
@@ -77,7 +76,7 @@ jobs:
         if: success()
         uses: actions/cache/save@v4
         with:
-          path: outputs
+          path: scrapes
           key: scraper-baseline-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save same-day scraper state
@@ -85,8 +84,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            outputs
-            workable_data/scrape_status_latest.csv
+            scrapes
+            outputs/diagnostics/scrape_status_latest.csv
           key: scraper-state-${{ runner.os }}-${{ github.ref_name }}-${{ env.SCRAPE_RUN_DATE }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload proposal pack
@@ -96,19 +95,16 @@ jobs:
           name: weekly-proposal-pack
           retention-days: 30
           path: |
-            outputs/*_current.csv
-            outputs/*_previous.csv
-            workable_data/combined_scrapped_data_latest.csv
-            workable_data/market_prices_annotated.csv
-            workable_data/market_prices_outlier_audit_log.csv
-            workable_data/ht_prices_latest.csv
-            workable_data/ht_failed_countries_latest.csv
-            workable_data/scrape_status_latest.csv
-            workable_data/scrape_status_history/*.csv
-            workable_data/logs/*.log
-            workable_data/history/combined_scrapped_data_*.csv
-            workable_data/history/ht_prices_*.csv
-            workable_data/USD/*.csv
-            workable_data/USD/history/*.csv
-            workable_data/EUR/*.csv
-            workable_data/EUR/history/*.csv
+            scrapes/*_current.csv
+            scrapes/*_previous.csv
+            outputs/combined_scrapes/combined_scrape_latest.csv
+            outputs/combined_scrapes/history/combined_scrape_*.csv
+            outputs/market_analysis/market_prices_annotated_latest.csv
+            outputs/market_analysis/outlier_audit_latest.csv
+            outputs/model_proposals/USD/*.csv
+            outputs/model_proposals/USD/history/*.csv
+            outputs/model_proposals/EUR/*.csv
+            outputs/model_proposals/EUR/history/*.csv
+            outputs/diagnostics/scrape_status_latest.csv
+            outputs/diagnostics/scrape_status_history/*.csv
+            outputs/diagnostics/logs/*.log

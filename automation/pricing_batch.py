@@ -352,19 +352,6 @@ def run_batch_pricing_for_currency(
         print(f"Saved {currency} HT latest CSV: {ht_latest_csv}")
         print(f"Saved {currency} HT history CSV: {ht_history_csv}")
 
-        if currency == DEFAULT_CURRENCY:
-            legacy_latest = paths.legacy_model_latest
-            legacy_history = paths.legacy_model_history()
-            legacy_failed = paths.legacy_failed_countries
-            legacy_latest.parent.mkdir(parents=True, exist_ok=True)
-            legacy_history.parent.mkdir(parents=True, exist_ok=True)
-            ht_df.to_csv(str(legacy_latest), index=False)
-            ht_df.to_csv(str(legacy_history), index=False)
-            if not failed_countries_df.empty:
-                failed_countries_df.to_csv(str(legacy_failed), index=False)
-            elif os.path.exists(legacy_failed):
-                os.remove(legacy_failed)
-            print(f"Updated legacy USD latest CSV: {legacy_latest}")
     except Exception as e:
         print(f"Warning: Error saving {currency} CSV outputs: {e}")
         return

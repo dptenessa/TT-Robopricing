@@ -37,7 +37,7 @@ SCRAPERS: list[ScraperJob] = [
     ("orange", "scrape_orange_playwright.py", 60 * 60),
 ]
 
-COMBINE_SCRIPT = "combine_scrapped_data.py"
+COMBINE_SCRIPT = "combine_scrapes.py"
 EXPECTED_CURRENT_OUTPUTS = {
     name: FILES.scraper_outputs_dir / f"{name}_current.csv"
     for name, _script, _timeout_s in SCRAPERS
@@ -77,7 +77,7 @@ def relative_log_path(path: Path) -> str:
 
 
 def build_log_path(name: str, attempt: int) -> Path:
-    log_dir = FILES.work_dir / "logs"
+    log_dir = FILES.logs_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return log_dir / f"{stamp}_{name}_attempt{attempt}.log"
@@ -95,7 +95,7 @@ def row_run_date(row: dict[str, str]) -> str:
 
 
 def reusable_successful_results(run_date: str) -> list[JobResult]:
-    status_path = FILES.work_dir / "scrape_status_latest.csv"
+    status_path = FILES.scrape_status_latest
     if not status_path.exists():
         return []
 
@@ -483,9 +483,9 @@ def write_status_report(
                 }
             )
 
-    report_dir = FILES.work_dir
-    history_dir = report_dir / "scrape_status_history"
-    latest_path = report_dir / "scrape_status_latest.csv"
+    report_dir = FILES.diagnostics_dir
+    history_dir = FILES.scrape_status_history_dir
+    latest_path = FILES.scrape_status_latest
     history_path = history_dir / f"scrape_status_{report_time.strftime('%Y-%m-%d_%H%M%S')}.csv"
 
     report_dir.mkdir(parents=True, exist_ok=True)

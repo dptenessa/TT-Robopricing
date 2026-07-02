@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright
 
 # --- CONFIGURATION ---
 INPUT_PDF = "inputs/Charges.pdf"
-OUTPUT_CSV = "outputs/vodafone_current.csv"
+OUTPUT_CSV = "scrapes/vodafone_current.csv"
 PDF_URL = "https://travel.vodafone.com/document/charges-guide"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 

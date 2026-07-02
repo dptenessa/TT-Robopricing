@@ -24,8 +24,8 @@ except ImportError:
     sync_playwright = None
 
 
-OUTPUT_CURRENT_CSV = "outputs/saily_current.csv"
-OUTPUT_PREVIOUS_CSV = "outputs/saily_previous.csv"
+OUTPUT_CURRENT_CSV = "scrapes/saily_current.csv"
+OUTPUT_PREVIOUS_CSV = "scrapes/saily_previous.csv"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 COUNTRIES_URL = "https://saily.com/all-destinations/"
 SITEMAP_URL = "https://saily.com/sitemap.xml"

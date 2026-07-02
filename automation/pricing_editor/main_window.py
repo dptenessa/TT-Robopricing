@@ -525,7 +525,7 @@ class MainWindow(QMainWindow):
     def load_promos_from_folder(self, folder: str | Path) -> list[dict]:
         folder = Path(folder)
         for currency in CURRENCIES:
-            path = find_currency_file(folder, currency, ["promos_last_export.json"])
+            path = find_currency_file(folder, currency, ["promos_current.json"])
             if path is None:
                 continue
             try:
@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
     def load_export_prices_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
         df = self.load_currency_tables_from_folder(
             folder,
-            ["HT_prices_last_export.csv", "ht_prices_latest.csv"],
+            ["manual_prices_current.csv", "model_proposal_latest.csv"],
         )
         if df.empty:
             if not silent:
@@ -574,7 +574,7 @@ class MainWindow(QMainWindow):
 
         df = self.load_currency_tables_from_folder(
             folder,
-            ["ht_prices_latest.csv", "HT_prices_last_export.csv"],
+            ["model_proposal_latest.csv", "manual_prices_current.csv"],
         )
         if df.empty:
             QMessageBox.warning(self, "Load failed", "No usable model rows found in that folder.")
@@ -626,7 +626,7 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        df = self.load_currency_tables_from_folder(folder, ["market_prices_annotated.csv"])
+        df = self.load_currency_tables_from_folder(folder, ["market_prices_annotated_latest.csv"])
         if df.empty:
             QMessageBox.warning(self, "Load failed", "No usable market rows found in that folder.")
             return
@@ -677,10 +677,8 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def save_exports_to_folder(self, export_dir: Path, include_history: bool = False, autosave: bool = False) -> str:
+        export_dir = Path(export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
-        history_dir = export_dir / "history"
-        if include_history:
-            history_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -689,28 +687,20 @@ class MainWindow(QMainWindow):
             currency_dir.mkdir(parents=True, exist_ok=True)
 
             if autosave:
-                prices_path = currency_dir / "autosave_prices.csv"
-                promos_path = currency_dir / "autosave_promos.json"
+                prices_path = currency_dir / "manual_prices_autosave.csv"
+                promos_path = currency_dir / "promos_autosave.json"
             else:
-                prices_path = currency_dir / "HT_prices_last_export.csv"
-                promos_path = currency_dir / "promos_last_export.json"
+                prices_path = currency_dir / "manual_prices_current.csv"
+                promos_path = currency_dir / "promos_current.json"
 
             self.state.export_prices_csv(prices_path, currency=currency)
             self.state.export_applied_promos_json(promos_path, currency=currency)
 
             if include_history:
-                currency_history_dir = currency_dir / "history"
+                currency_history_dir = FILES.editor_history_dir(export_dir, currency)
                 currency_history_dir.mkdir(parents=True, exist_ok=True)
-                self.state.export_prices_csv(currency_history_dir / f"HT_prices_{ts}.csv", currency=currency)
+                self.state.export_prices_csv(currency_history_dir / f"manual_prices_{ts}.csv", currency=currency)
                 self.state.export_applied_promos_json(currency_history_dir / f"promos_{ts}.json", currency=currency)
-
-        # Backward-compatible flat USD files for scripts that still read the old paths.
-        if not autosave:
-            self.state.export_prices_csv(export_dir / "HT_prices_last_export.csv", currency=DEFAULT_CURRENCY)
-            self.state.export_applied_promos_json(export_dir / "promos_last_export.json", currency=DEFAULT_CURRENCY)
-            if include_history:
-                self.state.export_prices_csv(history_dir / f"HT_prices_{ts}.csv", currency=DEFAULT_CURRENCY)
-                self.state.export_applied_promos_json(history_dir / f"promos_{ts}.json", currency=DEFAULT_CURRENCY)
 
         return ts
 
@@ -721,13 +711,14 @@ class MainWindow(QMainWindow):
         include_history: bool = False,
         timestamp: str | None = None,
     ):
+        export_dir = Path(export_dir)
         results = generate_region_prices_for_export_folder(export_dir)
         if include_history:
             ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
             for result in results:
-                history_dir = result.output_csv.parent / "history"
+                history_dir = FILES.editor_history_dir(export_dir, result.currency)
                 history_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(result.output_csv, history_dir / f"Region_prices_{ts}.csv")
+                shutil.copy2(result.output_csv, history_dir / f"region_prices_{ts}.csv")
         return results
         
     def quick_save(self):
@@ -735,7 +726,7 @@ class MainWindow(QMainWindow):
             export_dir = FILES.editor_exports_dir
             self.save_exports_to_folder(export_dir)
 
-            self.statusBar().showMessage("Quick saved to workable_data/exports")
+            self.statusBar().showMessage("Quick saved to outputs/manual_prices/current")
 
         except Exception as e:
             print("Quick save failed:", e)
@@ -757,10 +748,11 @@ class MainWindow(QMainWindow):
         cursor_active = False
         try:
             default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
+            FILES.partner_packs_dir.mkdir(parents=True, exist_ok=True)
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save clean price pack ZIP",
-                str(Path.home() / default_zip),
+                str(FILES.partner_packs_dir / default_zip),
                 "Zip files (*.zip)"
             )
             if not path:
@@ -934,7 +926,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Zoom reset")
 
     def load_official_cost_exchange_rate(self) -> None:
-        cache_path = FILES.work_dir / "fx_rates" / "official_eur_usd_latest.json"
+        cache_path = FILES.diagnostics_dir / "fx_rates" / "official_eur_usd_latest.json"
         rate = get_official_eur_usd(
             cache_path,
             fallback_rate=self.state.cost_eur_to_usd,
@@ -1139,8 +1131,8 @@ class MainWindow(QMainWindow):
 
         progress("Loading model proposal...")
         df = self.load_currency_tables_from_folder(
-            FILES.work_dir,
-            ["ht_prices_latest.csv"],
+            FILES.proposals_dir,
+            ["model_proposal_latest.csv"],
         )
         if not df.empty:
             progress("Preparing model proposal...")
@@ -1152,8 +1144,8 @@ class MainWindow(QMainWindow):
 
         progress("Loading competitor market data...")
         df_market = self.load_currency_tables_from_folder(
-            FILES.work_dir,
-            ["market_prices_annotated.csv"],
+            FILES.market_dir,
+            ["market_prices_annotated_latest.csv"],
         )
         if not df_market.empty:
             progress("Preparing competitor market data...")

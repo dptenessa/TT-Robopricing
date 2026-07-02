@@ -25,8 +25,8 @@ os.environ.pop("https_proxy", None)
 os.environ.pop("all_proxy", None)
 
 
-OUTPUT_CURRENT_CSV = "outputs/airalo_current.csv"
-OUTPUT_PREVIOUS_CSV = "outputs/airalo_previous.csv"
+OUTPUT_CURRENT_CSV = "scrapes/airalo_current.csv"
+OUTPUT_PREVIOUS_CSV = "scrapes/airalo_previous.csv"
 WHITELIST_XLSX = "inputs/WS_PPG.csv"
 
 TEST_MODE = False
@@ -588,7 +588,7 @@ def scrape_country(page, url: str, provider_country: str) -> list[dict]:
         print(f"[extract] {provider_country}: data={len(data_rows)}")
 
     if not rows:
-        debug_file = f"outputs/airalo_debug_{provider_country.lower().replace(' ', '_')}.html"
+        debug_file = f"scrapes/airalo_debug_{provider_country.lower().replace(' ', '_')}.html"
         ensure_parent_dir(debug_file)
         with open(debug_file, "w", encoding="utf-8") as f:
             f.write(page.content())
