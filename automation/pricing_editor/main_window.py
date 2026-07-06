@@ -519,7 +519,7 @@ class MainWindow(QMainWindow):
             return None
         timestamp = name[len(prefix):-len(suffix)]
         try:
-            datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
+            datetime.strptime(timestamp, "%Y%m%d")
         except ValueError:
             return None
         return timestamp
@@ -527,7 +527,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _history_timestamp_label(timestamp: str) -> str:
         try:
-            return datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(timestamp, "%Y%m%d").strftime("%Y-%m-%d")
         except ValueError:
             return timestamp
 
@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
         export_dir = Path(export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d")
 
         for currency in CURRENCIES:
             currency_dir = export_dir / currency
@@ -792,7 +792,7 @@ class MainWindow(QMainWindow):
         export_dir = Path(export_dir)
         results = generate_region_prices_for_export_folder(export_dir)
         if include_history:
-            ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+            ts = timestamp or datetime.now().strftime("%Y%m%d")
             for result in results:
                 history_dir = FILES.editor_history_dir(export_dir, result.currency)
                 history_dir.mkdir(parents=True, exist_ok=True)
