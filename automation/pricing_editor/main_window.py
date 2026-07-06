@@ -63,6 +63,7 @@ BASE_DIR = FILES.base_dir
 PPG_PATH = FILES.ppg_csv
 PROMOS_PATH = FILES.promos_json
 SALES_VOLUME_PATH = FILES.sales_volumes_xlsx
+MAX_SAVED_EXPORT_DROPDOWN_DATES = 30
 
 
 class MainWindow(QMainWindow):
@@ -549,7 +550,7 @@ class MainWindow(QMainWindow):
 
         if not timestamp_sets:
             return []
-        return sorted(set.intersection(*timestamp_sets), reverse=True)
+        return sorted(set.intersection(*timestamp_sets), reverse=True)[:MAX_SAVED_EXPORT_DROPDOWN_DATES]
 
     def refresh_saved_state_combo(self, selected_timestamp: str | None = None) -> None:
         if not hasattr(self, "saved_state_combo"):
