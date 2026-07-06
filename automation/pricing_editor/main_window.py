@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -136,25 +135,13 @@ class MainWindow(QMainWindow):
         self.country_combo = QComboBox()
         self.country_combo.currentTextChanged.connect(self.on_country_changed)
 
-        # Top load buttons: 5 buttons fitting nicely in 2 rows
-        self.load_model_btn = QPushButton("Load model\nfolder")
-        self.load_model_btn.setFixedSize(88, 72)
-        self.load_model_btn.clicked.connect(self.load_baseline)
+        self.saved_state_combo = QComboBox()
+        self.saved_state_combo.setPlaceholderText("Select exported date")
+        self.saved_state_combo.setEnabled(False)
+        self.saved_state_combo.currentIndexChanged.connect(self.on_saved_state_selected)
 
-        self.load_saved_state_btn = QPushButton("Load saved\nstate")
-        self.load_saved_state_btn.setFixedSize(88, 72)
-        self.load_saved_state_btn.clicked.connect(self.load_saved_state)
-
-        self.load_market_btn = QPushButton("Load market\nfolder")
-        self.load_market_btn.setFixedSize(88, 72)
-        self.load_market_btn.clicked.connect(self.load_market)
-
-        self.load_promo_btn = QPushButton("Load promo\ncatalog")
-        self.load_promo_btn.setFixedSize(88, 72)
-        self.load_promo_btn.clicked.connect(self.load_promo_catalog)
-
-        self.load_sales_btn = QPushButton("Load sales\nvolumes")
-        self.load_sales_btn.setFixedSize(88, 72)
+        self.load_sales_btn = QPushButton("Load sales volumes")
+        self.load_sales_btn.setFixedHeight(34)
         self.load_sales_btn.clicked.connect(self.load_sales_volumes)
 
         self.impact_label = QLabel("Pricing unit impact: —")
@@ -181,11 +168,9 @@ class MainWindow(QMainWindow):
         load_grid = QGridLayout()
         load_grid.setHorizontalSpacing(6)
         load_grid.setVerticalSpacing(6)
-        load_grid.addWidget(self.load_model_btn, 0, 0)
-        load_grid.addWidget(self.load_saved_state_btn, 0, 1)
-        load_grid.addWidget(self.load_market_btn, 0, 2)
-        load_grid.addWidget(self.load_promo_btn, 1, 0)
-        load_grid.addWidget(self.load_sales_btn, 1, 1)
+        load_grid.addWidget(QLabel("Previous export"), 0, 0)
+        load_grid.addWidget(self.saved_state_combo, 0, 1)
+        load_grid.addWidget(self.load_sales_btn, 1, 0, 1, 2)
 
         self.currency_combo = QComboBox()
         self.currency_combo.addItems(list(CURRENCIES))
@@ -566,6 +551,27 @@ class MainWindow(QMainWindow):
             return []
         return sorted(set.intersection(*timestamp_sets), reverse=True)
 
+    def refresh_saved_state_combo(self, selected_timestamp: str | None = None) -> None:
+        if not hasattr(self, "saved_state_combo"):
+            return
+
+        timestamps = self.saved_state_timestamps()
+        self.saved_state_combo.blockSignals(True)
+        self.saved_state_combo.clear()
+        self.saved_state_combo.setEnabled(bool(timestamps))
+        self.saved_state_combo.setPlaceholderText(
+            "Select exported date" if timestamps else "No exported history"
+        )
+
+        for timestamp in timestamps:
+            self.saved_state_combo.addItem(self._history_timestamp_label(timestamp), timestamp)
+
+        selected_index = -1
+        if selected_timestamp:
+            selected_index = self.saved_state_combo.findData(selected_timestamp)
+        self.saved_state_combo.setCurrentIndex(selected_index)
+        self.saved_state_combo.blockSignals(False)
+
     def read_promos_from_folder(self, folder: str | Path, names: list[str]) -> tuple[bool, list[dict]]:
         folder = Path(folder)
         for currency in CURRENCIES:
@@ -646,7 +652,10 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        df = pd.read_excel(path)
+        if Path(path).suffix.lower() == ".csv":
+            df = pd.read_csv(path)
+        else:
+            df = pd.read_excel(path)
         df.columns = df.columns.astype(str).str.strip()
 
         if df.empty:
@@ -656,34 +665,13 @@ class MainWindow(QMainWindow):
         self.state.preload_sales_volumes(df)
         self.refresh_canvas()
 
-    def load_saved_state(self):
+    def load_saved_state_timestamp(self, timestamp: str, selected_label: str | None = None) -> bool:
         if not self.state.row_index:
             QMessageBox.warning(self, "Load saved state", "Load a model proposal before loading a saved state.")
-            return
+            return False
 
-        timestamps = self.saved_state_timestamps()
-        if not timestamps:
-            QMessageBox.information(
-                self,
-                "Load saved state",
-                "No complete saved states were found in outputs/manual_prices/history.",
-            )
-            return
-
-        labels = [self._history_timestamp_label(ts) for ts in timestamps]
-        label_to_timestamp = dict(zip(labels, timestamps))
-        selected_label, ok = QInputDialog.getItem(
-            self,
-            "Load saved state",
-            "Saved state:",
-            labels,
-            0,
-            False,
-        )
-        if not ok or not selected_label:
-            return
-
-        timestamp = label_to_timestamp[str(selected_label)]
+        timestamp = str(timestamp).strip()
+        selected_label = selected_label or self._history_timestamp_label(timestamp)
         history_root = FILES.editor_history_root
         df = self.load_currency_tables_from_folder(
             history_root,
@@ -691,7 +679,7 @@ class MainWindow(QMainWindow):
         )
         if df.empty:
             QMessageBox.warning(self, "Load saved state", "Could not load saved prices for that date.")
-            return
+            return False
 
         found_promos, promos = self.read_promos_from_folder(
             history_root,
@@ -699,7 +687,7 @@ class MainWindow(QMainWindow):
         )
         if not found_promos:
             QMessageBox.warning(self, "Load saved state", "Could not load saved promos for that date.")
-            return
+            return False
 
         self.state.preload_last_export(df)
         self.state.preload_last_exported_promos(promos)
@@ -707,6 +695,15 @@ class MainWindow(QMainWindow):
         self.autosave_dirty = False
         self.refresh_canvas()
         self.statusBar().showMessage(f"Loaded saved state: {selected_label}")
+        return True
+
+    def on_saved_state_selected(self, index: int) -> None:
+        if index < 0:
+            return
+        timestamp = self.saved_state_combo.itemData(index)
+        if not timestamp:
+            return
+        self.load_saved_state_timestamp(str(timestamp), self.saved_state_combo.itemText(index))
 
     def load_market(self):
         folder = QFileDialog.getExistingDirectory(
@@ -866,6 +863,7 @@ class MainWindow(QMainWindow):
             )
             pack_result = build_partner_price_pack(local_export_dir, zip_path)
             self.autosave_dirty = False
+            self.refresh_saved_state_combo(selected_timestamp=ts)
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
@@ -1264,6 +1262,7 @@ class MainWindow(QMainWindow):
 
         progress("Loading exported promos...")
         self.load_export_promos_from_folder(FILES.editor_exports_dir, silent=True)
+        self.refresh_saved_state_combo()
 
         if self.state.countries():
             progress("Drawing editor...")
@@ -1272,7 +1271,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Auto-loaded available files.")
         else:
             self.statusBar().showMessage(
-                "Auto-load found nothing usable. Use the buttons to load files."
+                "Auto-load found nothing usable. Check imported proposal and market files."
             )
         self.autosave_dirty = False
 
