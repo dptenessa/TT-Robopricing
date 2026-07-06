@@ -221,6 +221,54 @@ def compare_incoming_to_local(
     print(f"- {diff_file}")
 
 
+def _read_iso_set(path: Path, column_candidates: tuple[str, ...]) -> set[str]:
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, low_memory=False)
+    columns = {str(col).strip().upper(): col for col in df.columns}
+    column = next((columns.get(candidate.upper()) for candidate in column_candidates if candidate.upper() in columns), None)
+    if column is None:
+        return set()
+    return {
+        value
+        for value in df[column].dropna().astype(str).str.strip().str.upper()
+        if value and value != "NAN"
+    }
+
+
+def print_model_coverage(src_root: Path, project_root: Path) -> None:
+    ppg_path = project_root / "inputs" / "WS_PPG.csv"
+    ppg_isos = _read_iso_set(ppg_path, ("ISO_Code_A2", "ISO"))
+
+    print()
+    print("Model Proposal Coverage")
+
+    if not ppg_isos:
+        print("Could not read local inputs/WS_PPG.csv, so coverage was not checked.")
+        return
+
+    any_model = False
+    for currency in ("USD", "EUR"):
+        model_path = src_root / "outputs" / "model_proposals" / currency / "model_proposal_latest.csv"
+        model_isos = _read_iso_set(model_path, ("ISO", "ISO3"))
+        if not model_isos:
+            print(f"{currency}: no incoming model proposal file found.")
+            continue
+
+        any_model = True
+        missing = sorted(ppg_isos - model_isos)
+        extra = sorted(model_isos - ppg_isos)
+
+        print(f"{currency}: {len(model_isos)} model countries, {len(missing)} missing from local WS_PPG coverage.")
+        if missing:
+            print(f"  Missing PPG countries: {', '.join(missing)}")
+        if extra:
+            print(f"  Note: {len(extra)} model countries are not in current local WS_PPG.csv.")
+
+    if not any_model:
+        print("No incoming model proposal files were included in this weekly pack.")
+
+
 def copy_pack(
     src_root: Path,
     project_root: Path,
@@ -297,6 +345,7 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
             import_blocked = True
         else:
             compare_incoming_to_local(src_root, project_root, dry_run=dry_run)
+            print_model_coverage(src_root, project_root)
             copied, skipped = copy_pack(src_root, project_root, dry_run=dry_run)
             import_blocked = False
     finally:

@@ -69,6 +69,29 @@ def build_sku_scope_key(pricing_unit_id, package, days) -> str:
     return f"{pricing_unit}|{package}|{days_part}"
 
 
+def _identity_part(value: Any, *, upper: bool = False) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if text.lower() == "nan":
+        return ""
+    try:
+        number = float(text)
+        text = str(int(number)) if number.is_integer() else f"{number:g}"
+    except Exception:
+        pass
+    return text.upper() if upper else text
+
+
+def build_price_row_key(iso: Any, plan: Any, days: Any, gb: Any) -> str:
+    return "|".join([
+        _identity_part(iso, upper=True),
+        _identity_part(plan, upper=True),
+        _identity_part(days),
+        _identity_part(gb),
+    ])
+
+
 def calculate_promo_price(base_price: float, promo_type: str, promo_value: float) -> float:
     promo_type = str(promo_type).strip().lower()
     if promo_type in {"percentage", "%"}:
@@ -447,6 +470,13 @@ class EditorState:
                     "pricing_unit_countries": str(row.get("PricingUnitCountriesUsed", "")).strip(),
                     "source_currency": normalize_currency(row.get("Currency", DEFAULT_CURRENCY)),
                     "editor_scope_countries": ", ".join(sorted(c for c in unit_lookup.get(unit_id, set()) if c)),
+                    "entry_key": build_price_row_key(
+                        row.get("ISO", ""),
+                        row.get("Plan", ""),
+                        row.get("Days", None),
+                        row.get("GB", None),
+                    ),
+                    "is_new_entry": False,
                 }
                 points.append(pt)
                 self.row_index[pt["row_id"]] = pt
@@ -845,14 +875,26 @@ class EditorState:
 
     def preload_last_export(self, df: pd.DataFrame) -> None:
         if df.empty:
+            for q in self.row_index.values():
+                q["is_new_entry"] = True
+                self._apply_point_display(q)
             return
 
         self.loaded_prices = {}
         self.loaded_prices_by_currency = {c: {} for c in CURRENCIES}
         self.loaded_promo_store = {}
+        matched_entry_keys: set[str] = set()
 
         for _, row in df.iterrows():
             scope_key = str(row.get("sku_scope_key", "")).strip()
+            entry_key = build_price_row_key(
+                row.get("ISO", ""),
+                row.get("Plan", ""),
+                row.get("Days", None),
+                row.get("GB", None),
+            )
+            if entry_key.strip("|"):
+                matched_entry_keys.add(entry_key)
 
             if not scope_key:
                 scope_key = build_sku_scope_key(
@@ -895,6 +937,8 @@ class EditorState:
 
         self.loaded_prices = self._loaded_prices_for(self.active_currency)
         for q in self.row_index.values():
+            entry_key = str(q.get("entry_key", "")).strip()
+            q["is_new_entry"] = bool(entry_key) and entry_key not in matched_entry_keys
             self._apply_point_display(q)
 
     def _apply_point_display(self, point: dict[str, Any]) -> None:
@@ -975,8 +1019,17 @@ class EditorState:
             return "No country loaded"
         base = self.country_info_map.get(str(self.selected_country), "No country loaded")
         mode = "Edit active currency only" if self.is_dual_currency_mode() else "Edit USD/EUR together"
+        points = self.points_by_country.get(str(self.selected_country), [])
+        new_count = sum(1 for p in points if p.get("is_new_entry"))
+        if not points or new_count == 0:
+            entry_status = "Existing saved/exported prices"
+        elif new_count == len(points):
+            entry_status = "NEW - no previous saved/exported prices"
+        else:
+            entry_status = f"PARTLY NEW - {new_count}/{len(points)} price points were not previously saved/exported"
         return (
-            f"{base}\nCurrency: {self.normalize_current_currency()} | Mode: {mode} | "
+            f"{base}\nEntry status: {entry_status}\n"
+            f"Currency: {self.normalize_current_currency()} | Mode: {mode} | "
             f"Pricing EUR/USD: {self.eur_to_usd:.4f} | "
             f"Official cost EUR/USD: {self.cost_eur_to_usd:.4f} "
             f"({self.cost_eur_to_usd_source} {self.cost_eur_to_usd_date}, {self.cost_eur_to_usd_status})"

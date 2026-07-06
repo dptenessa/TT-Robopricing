@@ -1110,8 +1110,10 @@ class MainWindow(QMainWindow):
             if info.get("is_partner_export_blocked")
             else ""
         )
+        entry_status = "NEW - no previous saved/exported price" if info.get("is_new_entry") else "Existing"
         self.selection_label.setText(
             f"{display_plan_label(info['plan'])} | {info['days']} days | {info['gb']} GB\n"
+            f"Entry: {entry_status}\n"
             f"Currency: {self.state.active_currency}\n"
             f"Working price: {info['y']:.2f}\n"
             f"Model price: {info['base_y']:.2f}\n"

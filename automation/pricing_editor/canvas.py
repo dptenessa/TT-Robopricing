@@ -607,6 +607,8 @@ class PriceCurveCanvas(QWidget):
                     painter.drawLine(pt.x() - 7, pt.y() + 7, pt.x() + 7, pt.y() - 7)
                 elif floor_state == "other_below":
                     self._draw_marker(painter, pt, "circle", 9 if is_selected else 8, fill, QColor("#1565c0"), 3)
+                elif point.get("is_new_entry"):
+                    self._draw_marker(painter, pt, "circle", 9 if is_selected else 8, fill, QColor("#00897b"), 3)
                 else:
                     self._draw_marker(painter, pt, "circle", 9 if is_selected else 8, fill, outline, width)
 
@@ -680,6 +682,11 @@ class PriceCurveCanvas(QWidget):
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#1565c0"), 3)
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x) + 28, int(y) + 4, "Other currency below")
+        y += 22
+
+        self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#00897b"), 3)
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "New entry")
         y += 22
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#bdbdbd"), 1)
