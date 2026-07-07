@@ -310,6 +310,11 @@ class EditorState:
         self.loaded_prices_by_currency.setdefault(currency, {})
         return self.loaded_prices_by_currency[currency]
 
+    def _currencies_for_current_edit(self) -> tuple[str, ...]:
+        if self.is_dual_currency_mode():
+            return (self.normalize_current_currency(),)
+        return CURRENCIES
+
     def _price_for_currency_from_row(self, row: pd.Series, currency: str) -> float:
         currency = normalize_currency(currency)
         price = pd.to_numeric(row.get(currency_price_column(currency), np.nan), errors="coerce")
@@ -1040,13 +1045,19 @@ class EditorState:
             return None
         return self.row_index.get(str(self.selected_row_id))
 
-    def set_scope_price(self, row_id: str, new_price: float) -> None:
+    def set_scope_prices(self, row_id: str, prices_by_currency: dict[str, float]) -> None:
         row_id = str(row_id)
         p = self.row_index.get(row_id)
         if p is None:
             return
 
-        v = max(self.round_regular_price(new_price), 0.0)
+        updates = {
+            normalize_currency(currency): max(self.round_regular_price(price), 0.0)
+            for currency, price in prices_by_currency.items()
+        }
+        if not updates:
+            return
+
         scope_key = str(p.get("scope_key", "")).strip()
         active_currency = self.normalize_current_currency()
 
@@ -1056,24 +1067,57 @@ class EditorState:
                 continue
 
             prices = q.setdefault("working_prices", {})
-            if self.is_dual_currency_mode():
-                prices[active_currency] = v
-                self.working_prices_by_currency.setdefault(active_currency, {})[str(rid)] = v
-            else:
-                if active_currency == "USD":
-                    usd_value = v
-                    eur_value = self.round_regular_price(convert_price(v, "USD", "EUR", self.eur_to_usd))
-                else:
-                    eur_value = v
-                    usd_value = self.round_regular_price(convert_price(v, "EUR", "USD", self.eur_to_usd))
-                prices["USD"] = usd_value
-                prices["EUR"] = eur_value
-                self.working_prices_by_currency.setdefault("USD", {})[str(rid)] = usd_value
-                self.working_prices_by_currency.setdefault("EUR", {})[str(rid)] = eur_value
+            for currency, value in updates.items():
+                prices[currency] = value
+                self.working_prices_by_currency.setdefault(currency, {})[str(rid)] = value
 
-            q["working_y"] = float(prices[active_currency])
+            q["working_y"] = float(prices.get(active_currency, q.get("working_y", 0.0)))
             self._apply_point_display(q)
         self.working_prices = self._working_prices_for(active_currency)
+
+    def set_scope_price(self, row_id: str, new_price: float) -> None:
+        v = max(self.round_regular_price(new_price), 0.0)
+        active_currency = self.normalize_current_currency()
+
+        if self.is_dual_currency_mode():
+            self.set_scope_prices(row_id, {active_currency: v})
+            return
+
+        if active_currency == "USD":
+            usd_value = v
+            eur_value = self.round_regular_price(convert_price(v, "USD", "EUR", self.eur_to_usd))
+        else:
+            eur_value = v
+            usd_value = self.round_regular_price(convert_price(v, "EUR", "USD", self.eur_to_usd))
+        self.set_scope_prices(row_id, {"USD": usd_value, "EUR": eur_value})
+
+    def _base_price_for_currency(self, point: dict[str, Any], currency: str) -> float:
+        currency = normalize_currency(currency)
+        base_prices = point.get("base_prices", {}) or {}
+        price = base_prices.get(currency)
+        if pd.notna(price):
+            return float(price)
+
+        other_currency = "EUR" if currency == "USD" else "USD"
+        other_price = base_prices.get(other_currency)
+        if pd.notna(other_price):
+            return float(convert_price(other_price, other_currency, currency, self.eur_to_usd))
+
+        return float(point.get("base_y", 0.0))
+
+    def _loaded_or_base_price_for_currency(self, point: dict[str, Any], currency: str) -> float:
+        currency = normalize_currency(currency)
+        scope_key = str(point.get("scope_key", "")).strip()
+        loaded_prices = self._loaded_prices_for(currency)
+        if scope_key in loaded_prices:
+            return float(loaded_prices[scope_key])
+        return self._base_price_for_currency(point, currency)
+
+    def _base_price_updates_for_point(self, point: dict[str, Any], currencies: tuple[str, ...]) -> dict[str, float]:
+        return {currency: self._base_price_for_currency(point, currency) for currency in currencies}
+
+    def _loaded_price_updates_for_point(self, point: dict[str, Any], currencies: tuple[str, ...]) -> dict[str, float]:
+        return {currency: self._loaded_or_base_price_for_currency(point, currency) for currency in currencies}
 
     def _same_plan_points(self, row_id: str) -> list[dict[str, Any]]:
         p = self.row_index.get(str(row_id))
@@ -1297,7 +1341,7 @@ class EditorState:
         if p is None:
             return
 
-        loaded_prices = self._loaded_prices_for()
+        currencies = self._currencies_for_current_edit()
         selected_plan = str(p.get("plan", "")).strip()
         unit_id = str(p.get("pricing_unit_id", "")).strip()
 
@@ -1308,13 +1352,7 @@ class EditorState:
                 continue
 
             rid = str(q["row_id"])
-            scope_key = str(q.get("scope_key", "")).strip()
-
-            if scope_key in loaded_prices:
-                self.set_scope_price(rid, float(loaded_prices[scope_key]))
-            else:
-                base_price = float(q.get("base_prices", {}).get(self.active_currency, q.get("base_y", 0.0)))
-                self.set_scope_price(rid, base_price)
+            self.set_scope_prices(rid, self._loaded_price_updates_for_point(q, currencies))
 
             promo_key = str(q.get("promo_scope_key", "")).strip()
             if promo_key in self.loaded_promo_store:
@@ -1330,7 +1368,7 @@ class EditorState:
         if p is None:
             return
 
-        loaded_prices = self._loaded_prices_for()
+        currencies = self._currencies_for_current_edit()
         unit_id = str(p.get("pricing_unit_id", "")).strip()
         if not unit_id:
             return
@@ -1340,13 +1378,7 @@ class EditorState:
                 continue
 
             rid = str(q["row_id"])
-            scope_key = str(q.get("scope_key", "")).strip()
-
-            if scope_key in loaded_prices:
-                self.set_scope_price(rid, float(loaded_prices[scope_key]))
-            else:
-                base_price = float(q.get("base_prices", {}).get(self.active_currency, q.get("base_y", 0.0)))
-                self.set_scope_price(rid, base_price)
+            self.set_scope_prices(rid, self._loaded_price_updates_for_point(q, currencies))
 
             promo_key = str(q.get("promo_scope_key", "")).strip()
             if promo_key in self.loaded_promo_store:
@@ -1363,10 +1395,10 @@ class EditorState:
 
         selected_plan = str(p["plan"])
         same = [x for x in self.current_points() if str(x["plan"]) == selected_plan]
+        currencies = self._currencies_for_current_edit()
 
         for point in same:
-            base_price = float(point.get("base_prices", {}).get(self.active_currency, point.get("base_y", 0.0)))
-            self.set_scope_price(str(point["row_id"]), base_price)
+            self.set_scope_prices(str(point["row_id"]), self._base_price_updates_for_point(point, currencies))
 
     def reload_pricing_unit_from_baseline(self) -> None:
         """
@@ -1381,13 +1413,13 @@ class EditorState:
         unit_id = str(p.get("pricing_unit_id", "")).strip()
         if not unit_id:
             return
+        currencies = self._currencies_for_current_edit()
 
         for q in self.row_index.values():
             if str(q.get("pricing_unit_id", "")).strip() != unit_id:
                 continue
 
-            base_price = float(q.get("base_prices", {}).get(self.active_currency, q.get("base_y", 0.0)))
-            self.set_scope_price(str(q["row_id"]), base_price)
+            self.set_scope_prices(str(q["row_id"]), self._base_price_updates_for_point(q, currencies))
 
     def reload_working_from_baseline(self) -> None:
         self.working_prices = {}

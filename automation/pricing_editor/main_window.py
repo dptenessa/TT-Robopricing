@@ -102,6 +102,9 @@ class MainWindow(QMainWindow):
         self.reset_zoom_shortcut = QShortcut(QKeySequence("H"), self)
         self.reset_zoom_shortcut.setContext(Qt.ApplicationShortcut)
         self.reset_zoom_shortcut.activated.connect(self.reset_canvas_zoom)
+        self.reset_package_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.reset_package_shortcut.setContext(Qt.ApplicationShortcut)
+        self.reset_package_shortcut.activated.connect(self.reset_current_package_to_loaded)
         self.clear_busy_cursor()
 
     def mark_dirty(self) -> None:
@@ -744,10 +747,16 @@ class MainWindow(QMainWindow):
         self.mark_dirty()
         self.refresh_canvas()
         
-    def use_loaded_for_selected_plan(self):
+    def use_loaded_for_selected_plan(self, show_status: bool = False):
         self.state.reload_selected_plan_from_loaded()
         self.mark_dirty()
         self.refresh_canvas()
+        if show_status:
+            scope = "USD/EUR" if self.state.is_linked_currency_mode() else self.state.active_currency
+            self.statusBar().showMessage(f"Package reset to loaded state ({scope})")
+
+    def reset_current_package_to_loaded(self):
+        self.use_loaded_for_selected_plan(show_status=True)
 
 
     def use_loaded_for_pricing_unit(self):
