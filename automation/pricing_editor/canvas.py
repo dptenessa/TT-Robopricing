@@ -549,7 +549,6 @@ class PriceCurveCanvas(QWidget):
                 break
 
         highlight_blue = QColor("#1565c0")
-        highlight_halo = QColor("#ffffff")
 
         plans = sorted({str(p["plan"]) for p in self.points})
         for plan in plans:
@@ -596,8 +595,7 @@ class PriceCurveCanvas(QWidget):
                 self._draw_polyline(painter, cost_floor_pts, QColor("#c62828"), 2, dashed=True)
 
             if is_selected_plan:
-                self._draw_polyline(painter, package_points, highlight_halo, 8, dashed=False)
-                self._draw_polyline(painter, package_points, highlight_blue, 4, dashed=False)
+                self._draw_polyline(painter, package_points, highlight_blue, 2, dashed=False)
             else:
                 self._draw_polyline(painter, package_points, line_color, line_width, dashed=False)
 
@@ -608,25 +606,18 @@ class PriceCurveCanvas(QWidget):
                 outline = QColor("#198754") if self._is_unlimited(plan) else QColor("#bdbdbd")
                 width = 1 if self._is_unlimited(plan) else 1
                 marker_size = 9 if is_selected else 8
-                if is_selected_plan:
-                    self._draw_marker(painter, pt, "circle", marker_size + 3, QColor("#ffffff"), QColor("#ffffff"), 1)
-                    outline = highlight_blue
-                    width = 3
-                    marker_size += 1 if is_selected else 0
-                elif is_selected and not self._is_unlimited(plan):
+                if is_selected and not self._is_unlimited(plan):
                     outline = QColor("#555555")
                 floor_state = self._floor_marker_state(point)
                 if floor_state in {"active_below", "both_below"}:
-                    if is_selected_plan:
-                        self._draw_marker(painter, pt, "circle", marker_size, fill, outline, width)
                     cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
                     painter.setPen(QPen(cross_color, 3))
                     painter.drawLine(pt.x() - 7, pt.y() - 7, pt.x() + 7, pt.y() + 7)
                     painter.drawLine(pt.x() - 7, pt.y() + 7, pt.x() + 7, pt.y() - 7)
                 elif floor_state == "other_below":
-                    self._draw_marker(painter, pt, "circle", marker_size, fill, outline if is_selected_plan else QColor("#1565c0"), 3)
+                    self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#1565c0"), 3)
                 elif point.get("is_new_entry"):
-                    self._draw_marker(painter, pt, "circle", marker_size, fill, outline if is_selected_plan else QColor("#00897b"), 3)
+                    self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#00897b"), 3)
                 else:
                     self._draw_marker(painter, pt, "circle", marker_size, fill, outline, width)
 
