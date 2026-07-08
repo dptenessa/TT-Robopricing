@@ -536,7 +536,50 @@ class MainWindow(QMainWindow):
         except ValueError:
             return timestamp
 
-    def saved_state_timestamps(self) -> list[str]:
+    def export_metadata_path(self, timestamp: str) -> Path:
+        return FILES.editor_history_root / f"export_{timestamp}.json"
+
+    def read_export_metadata(self, timestamp: str) -> dict:
+        path = self.export_metadata_path(timestamp)
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def export_history_label(self, timestamp: str) -> str:
+        label = self._history_timestamp_label(timestamp)
+        metadata = self.read_export_metadata(timestamp)
+        if metadata.get("official") is True:
+            return f"{label} (Official)"
+        return label
+
+    def save_export_metadata(
+        self,
+        *,
+        timestamp: str,
+        official: bool,
+        partner_zip: Path,
+        compare_timestamp: str | None,
+        pack_result,
+    ) -> None:
+        path = self.export_metadata_path(timestamp)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "date": timestamp,
+            "official": bool(official),
+            "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "partner_zip_name": partner_zip.name,
+            "partner_zip_path": str(partner_zip),
+            "compare_date": compare_timestamp or "",
+            "price_files": [item.member_name for item in pack_result.files],
+            "diff_files": [item.member_name for item in pack_result.diff_files],
+        }
+        path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    def saved_state_timestamps(self, *, official_only: bool = True) -> list[str]:
         timestamp_sets: list[set[str]] = []
         for currency in CURRENCIES:
             history_dir = FILES.editor_history_dir(FILES.editor_exports_dir, currency)
@@ -554,7 +597,13 @@ class MainWindow(QMainWindow):
 
         if not timestamp_sets:
             return []
-        return sorted(set.intersection(*timestamp_sets), reverse=True)[:MAX_SAVED_EXPORT_DROPDOWN_DATES]
+        timestamps = sorted(set.intersection(*timestamp_sets), reverse=True)
+        if official_only:
+            timestamps = [
+                ts for ts in timestamps
+                if self.read_export_metadata(ts).get("official") is True
+            ]
+        return timestamps[:MAX_SAVED_EXPORT_DROPDOWN_DATES]
 
     def refresh_saved_state_combo(self, selected_timestamp: str | None = None) -> None:
         if not hasattr(self, "saved_state_combo"):
@@ -565,11 +614,11 @@ class MainWindow(QMainWindow):
         self.saved_state_combo.clear()
         self.saved_state_combo.setEnabled(bool(timestamps))
         self.saved_state_combo.setPlaceholderText(
-            "Select exported date" if timestamps else "No exported history"
+            "Select official export" if timestamps else "No official export history"
         )
 
         for timestamp in timestamps:
-            self.saved_state_combo.addItem(self._history_timestamp_label(timestamp), timestamp)
+            self.saved_state_combo.addItem(self.export_history_label(timestamp), timestamp)
 
         selected_index = -1
         if selected_timestamp:
@@ -676,7 +725,7 @@ class MainWindow(QMainWindow):
             return False
 
         timestamp = str(timestamp).strip()
-        selected_label = selected_label or self._history_timestamp_label(timestamp)
+        selected_label = selected_label or self.export_history_label(timestamp)
         history_root = FILES.editor_history_root
         df = self.load_currency_tables_from_folder(
             history_root,
@@ -715,12 +764,12 @@ class MainWindow(QMainWindow):
         if not timestamps:
             return None
 
-        labels = [self._history_timestamp_label(ts) for ts in timestamps]
+        labels = [self.export_history_label(ts) for ts in timestamps]
         label_to_timestamp = dict(zip(labels, timestamps))
         selected_label, ok = QInputDialog.getItem(
             self,
             "Compare partner pack",
-            "Compare exported prices with:",
+            "Compare exported prices with official date:",
             labels,
             0,
             False,
@@ -728,6 +777,30 @@ class MainWindow(QMainWindow):
         if not ok or not selected_label:
             return None
         return label_to_timestamp.get(str(selected_label))
+
+    def ask_official_export(self) -> bool | None:
+        message = QMessageBox(self)
+        message.setWindowTitle("Partner pack status")
+        message.setText("Export partner price pack")
+        message.setInformativeText("Tick only if these prices are official.")
+        official_check = QCheckBox("Mark this export as official prices")
+        official_check.setChecked(False)
+        message.setCheckBox(official_check)
+        message.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        message.setDefaultButton(QMessageBox.Ok)
+        if message.exec() != QMessageBox.Ok:
+            return None
+        return official_check.isChecked()
+
+    @staticmethod
+    def partner_zip_path_with_status(zip_path: Path, official: bool) -> Path:
+        status = "OFFICIAL" if official else "DRAFT"
+        if zip_path.suffix.lower() != ".zip":
+            zip_path = zip_path.with_suffix(".zip")
+        stem_upper = zip_path.stem.upper()
+        if stem_upper.endswith("_OFFICIAL") or stem_upper.endswith("_DRAFT"):
+            return zip_path
+        return zip_path.with_name(f"{zip_path.stem}_{status}{zip_path.suffix}")
 
     def load_market(self):
         folder = QFileDialog.getExistingDirectory(
@@ -869,7 +942,12 @@ class MainWindow(QMainWindow):
     def export_prices(self):
         cursor_active = False
         try:
-            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
+            official_export = self.ask_official_export()
+            if official_export is None:
+                return
+            export_status = "OFFICIAL" if official_export else "DRAFT"
+            ts = datetime.now().strftime("%Y%m%d")
+            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}_{export_status}.zip"
             FILES.partner_packs_dir.mkdir(parents=True, exist_ok=True)
             path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -881,10 +959,8 @@ class MainWindow(QMainWindow):
                 return
 
             zip_path = Path(path)
-            if zip_path.suffix.lower() != ".zip":
-                zip_path = zip_path.with_suffix(".zip")
+            zip_path = self.partner_zip_path_with_status(zip_path, official_export)
             local_export_dir = FILES.editor_exports_dir
-            ts = datetime.now().strftime("%Y%m%d")
             compare_timestamp = self.select_partner_compare_timestamp(ts)
 
             self.statusBar().showMessage("Saving local export, history, promos, and regions...")
@@ -905,8 +981,15 @@ class MainWindow(QMainWindow):
                 compare_timestamp=compare_timestamp,
                 current_timestamp=ts,
             )
+            self.save_export_metadata(
+                timestamp=ts,
+                official=official_export,
+                partner_zip=pack_result.zip_path,
+                compare_timestamp=compare_timestamp,
+                pack_result=pack_result,
+            )
             self.autosave_dirty = False
-            self.refresh_saved_state_combo(selected_timestamp=ts)
+            self.refresh_saved_state_combo(selected_timestamp=ts if official_export else None)
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
@@ -929,7 +1012,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Export complete",
                 f"Local latest files and history were saved in:\n{local_export_dir}\n\n"
-                f"The clean partner ZIP was saved as:\n{pack_result.zip_path}\n\n"
+                f"The clean partner ZIP was saved as:\n{pack_result.zip_path}\n"
+                f"Official status: {export_status}\n\n"
                 f"CSV files inside ZIP: {len(pack_result.files)}\n"
                 + "\n".join(pack_lines)
                 + diff_text
