@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -709,6 +710,25 @@ class MainWindow(QMainWindow):
             return
         self.load_saved_state_timestamp(str(timestamp), self.saved_state_combo.itemText(index))
 
+    def select_partner_compare_timestamp(self, current_timestamp: str) -> str | None:
+        timestamps = [ts for ts in self.saved_state_timestamps() if ts != current_timestamp]
+        if not timestamps:
+            return None
+
+        labels = [self._history_timestamp_label(ts) for ts in timestamps]
+        label_to_timestamp = dict(zip(labels, timestamps))
+        selected_label, ok = QInputDialog.getItem(
+            self,
+            "Compare partner pack",
+            "Compare exported prices with:",
+            labels,
+            0,
+            False,
+        )
+        if not ok or not selected_label:
+            return None
+        return label_to_timestamp.get(str(selected_label))
+
     def load_market(self):
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -764,11 +784,17 @@ class MainWindow(QMainWindow):
         self.mark_dirty()
         self.refresh_canvas()
 
-    def save_exports_to_folder(self, export_dir: Path, include_history: bool = False, autosave: bool = False) -> str:
+    def save_exports_to_folder(
+        self,
+        export_dir: Path,
+        include_history: bool = False,
+        autosave: bool = False,
+        timestamp: str | None = None,
+    ) -> str:
         export_dir = Path(export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.now().strftime("%Y%m%d")
+        ts = timestamp or datetime.now().strftime("%Y%m%d")
 
         for currency in CURRENCIES:
             currency_dir = export_dir / currency
@@ -858,6 +884,8 @@ class MainWindow(QMainWindow):
             if zip_path.suffix.lower() != ".zip":
                 zip_path = zip_path.with_suffix(".zip")
             local_export_dir = FILES.editor_exports_dir
+            ts = datetime.now().strftime("%Y%m%d")
+            compare_timestamp = self.select_partner_compare_timestamp(ts)
 
             self.statusBar().showMessage("Saving local export, history, promos, and regions...")
             self.clear_busy_cursor()
@@ -865,13 +893,18 @@ class MainWindow(QMainWindow):
             cursor_active = True
             QApplication.processEvents()
 
-            ts = self.save_exports_to_folder(local_export_dir, include_history=True)
+            ts = self.save_exports_to_folder(local_export_dir, include_history=True, timestamp=ts)
             region_results = self.save_region_prices_to_folder(
                 local_export_dir,
                 include_history=True,
                 timestamp=ts,
             )
-            pack_result = build_partner_price_pack(local_export_dir, zip_path)
+            pack_result = build_partner_price_pack(
+                local_export_dir,
+                zip_path,
+                compare_timestamp=compare_timestamp,
+                current_timestamp=ts,
+            )
             self.autosave_dirty = False
             self.refresh_saved_state_combo(selected_timestamp=ts)
 
@@ -885,8 +918,13 @@ class MainWindow(QMainWindow):
                 )
                 for result in pack_result.files
             ]
+            diff_lines = [
+                f"{result.member_name}: {result.rows_written} changed rows"
+                for result in pack_result.diff_files
+            ]
             excluded = sorted({country for result in region_results for country in result.excluded_countries})
             excluded_text = ", ".join(excluded) if excluded else "none"
+            diff_text = "\n\nDiff CSVs:\n" + "\n".join(diff_lines) if diff_lines else ""
             QMessageBox.information(
                 self,
                 "Export complete",
@@ -894,6 +932,7 @@ class MainWindow(QMainWindow):
                 f"The clean partner ZIP was saved as:\n{pack_result.zip_path}\n\n"
                 f"CSV files inside ZIP: {len(pack_result.files)}\n"
                 + "\n".join(pack_lines)
+                + diff_text
                 + f"\n\nExcluded countries due to cost floor: {excluded_text}",
             )
             self.statusBar().showMessage("Export complete: local history saved and clean ZIP pack created.")
