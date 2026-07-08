@@ -10,7 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pandas as pd
 
 from currency_support import CURRENCIES, normalize_currency
-from plan_labels import PARTNER_PLAN_PACKS, display_plan_label
+from plan_labels import PARTNER_PLAN_PACKS, partner_display_plan_label
 
 
 PARTNER_DROP_COLUMNS: tuple[str, ...] = (
@@ -280,7 +280,7 @@ def _clean_partner_table(
         .to_dict()
     )
     merged = merged.loc[~below_cost].copy()
-    merged["Plan"] = merged["Plan"].map(display_plan_label)
+    merged["Plan"] = merged["Plan"].map(partner_display_plan_label)
     return merged, removed_by_plan
 
 
@@ -432,7 +432,7 @@ def build_partner_price_pack(
             merged, removed_by_plan = clean_tables[currency]
             plan_values = _plan_key(merged["Plan"])
             for pack_name, source_plans in PARTNER_PLAN_PACKS:
-                wanted = {display_plan_label(plan).lower() for plan in source_plans}
+                wanted = {partner_display_plan_label(plan).lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
                 out = _partner_output_columns(out)
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
