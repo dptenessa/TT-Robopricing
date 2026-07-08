@@ -68,6 +68,21 @@ PARTNER_DIFF_OUTPUT_COLUMNS: tuple[str, ...] = (
     "CurrentPricingUnitCountriesUsed",
 )
 
+PARTNER_PRICE_OUTPUT_COLUMNS: tuple[str, ...] = (
+    "Destination",
+    "ocsOfferValidityPeriod",
+    "price",
+    "ocsOfferId",
+    "ocsCountries",
+    "ocsOfferLevelQuota",
+    "ocsOfferLevelQuotaUom",
+    "ocsOfferValidityUnits",
+)
+
+OCS_OFFER_ID_GLOBAL = "190447135"
+OCS_OFFER_ID_REGION = "190447125"
+OCS_OFFER_ID_COUNTRY = "190447115"
+
 
 @dataclass(frozen=True)
 class PartnerPackFile:
@@ -288,6 +303,62 @@ def _partner_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=[col for col in PARTNER_DROP_COLUMNS if col in df.columns])
 
 
+def _partner_ocs_countries(row: pd.Series) -> str:
+    countries = _country_list(row.get("PricingUnitCountriesUsed", ""))
+    if not countries:
+        fallback = _country_code(row.get("ISO", ""))
+        countries = [fallback] if fallback else []
+    return "-".join(countries)
+
+
+def _partner_ocs_offer_id(row: pd.Series) -> str:
+    countries = _country_list(row.get("ocsCountries", row.get("PricingUnitCountriesUsed", "")))
+    row_markers = {
+        _country_code(row.get("ISO", "")),
+        _country_code(row.get("Country", "")),
+        _country_code(row.get("PricingUnitIdUsed", "")),
+        _country_code(row.get("PricingRegionUsed", "")),
+    }
+    if "GLOBAL" in row_markers:
+        return OCS_OFFER_ID_GLOBAL
+    if len(countries) > 1:
+        return OCS_OFFER_ID_REGION
+    return OCS_OFFER_ID_COUNTRY
+
+
+def _partner_number_text(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    number = pd.to_numeric(value, errors="coerce")
+    if pd.notna(number):
+        number = float(number)
+        if number.is_integer():
+            return str(int(number))
+        return f"{number:.4f}".rstrip("0").rstrip(".")
+    text = str(value if value is not None else "").strip()
+    return "" if text.lower() == "nan" else text
+
+
+def _partner_price_value(row: pd.Series) -> str:
+    final_price = pd.to_numeric(row.get("FinalPriceAfterPromo", pd.NA), errors="coerce")
+    if pd.notna(final_price):
+        return _partner_number_text(final_price)
+    return _partner_number_text(row.get("Price", ""))
+
+
+def _partner_price_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    out["Destination"] = df.get("Country", pd.Series("", index=df.index))
+    out["ocsOfferValidityPeriod"] = df.get("Days", pd.Series("", index=df.index)).map(_partner_number_text)
+    out["price"] = df.apply(_partner_price_value, axis=1)
+    out["ocsCountries"] = df.apply(_partner_ocs_countries, axis=1)
+    out["ocsOfferId"] = out.join(df, how="left").apply(_partner_ocs_offer_id, axis=1)
+    out["ocsOfferLevelQuota"] = df.get("GB", pd.Series("", index=df.index)).map(_partner_number_text)
+    out["ocsOfferLevelQuotaUom"] = "G"
+    out["ocsOfferValidityUnits"] = "D"
+    return out.loc[:, list(PARTNER_PRICE_OUTPUT_COLUMNS)]
+
+
 def _diff_compare_value(value: object) -> str:
     text = str(value if value is not None else "").strip()
     if text.lower() == "nan":
@@ -434,7 +505,7 @@ def build_partner_price_pack(
             for pack_name, source_plans in PARTNER_PLAN_PACKS:
                 wanted = {partner_display_plan_label(plan).lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
-                out = _partner_output_columns(out)
+                out = _partner_price_output_columns(out)
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))
                 results.append(
