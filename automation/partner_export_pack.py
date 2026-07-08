@@ -264,7 +264,6 @@ def _clean_partner_table(
     shared_excluded_countries: set[str],
     shared_blocked_price_keys: set[str],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    region_prices = _format_partner_country_lists(region_prices, shared_excluded_countries)
     frames = [df for df in (country_prices, region_prices) if not df.empty]
     merged = pd.concat(frames, ignore_index=True, sort=False) if frames else country_prices.copy()
 
@@ -280,6 +279,7 @@ def _clean_partner_table(
         .to_dict()
     )
     merged = merged.loc[~below_cost].copy()
+    merged = _format_partner_country_lists(merged, shared_excluded_countries)
     merged["Plan"] = merged["Plan"].map(partner_display_plan_label)
     return merged, removed_by_plan
 
