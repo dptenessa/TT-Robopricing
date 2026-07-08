@@ -354,6 +354,8 @@ def _partner_price_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["ocsCountries"] = df.apply(_partner_ocs_countries, axis=1)
     out["ocsOfferId"] = out.join(df, how="left").apply(_partner_ocs_offer_id, axis=1)
     out["ocsOfferLevelQuota"] = df.get("GB", pd.Series("", index=df.index)).map(_partner_number_text)
+    unlimited_mask = df.get("Plan", pd.Series("", index=df.index)).astype(str).str.strip().str.lower().eq("unlimited")
+    out.loc[unlimited_mask, "ocsOfferLevelQuota"] = "Unlimited"
     out["ocsOfferLevelQuotaUom"] = "G"
     out["ocsOfferValidityUnits"] = "D"
     return out.loc[:, list(PARTNER_PRICE_OUTPUT_COLUMNS)]
