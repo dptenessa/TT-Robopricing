@@ -794,13 +794,32 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def partner_zip_path_with_status(zip_path: Path, official: bool) -> Path:
-        status = "OFFICIAL" if official else "DRAFT"
         if zip_path.suffix.lower() != ".zip":
             zip_path = zip_path.with_suffix(".zip")
-        stem_upper = zip_path.stem.upper()
-        if stem_upper.endswith("_OFFICIAL") or stem_upper.endswith("_DRAFT"):
-            return zip_path
-        return zip_path.with_name(f"{zip_path.stem}_{status}{zip_path.suffix}")
+
+        clean_stem = MainWindow._strip_partner_status_suffix(zip_path.stem)
+        if official:
+            return zip_path.with_name(f"{clean_stem}{zip_path.suffix}")
+        return zip_path.with_name(f"{clean_stem}_DRAFT{zip_path.suffix}")
+
+    @staticmethod
+    def _strip_partner_status_suffix(stem: str) -> str:
+        stem_upper = stem.upper()
+        for suffix in ("_OFFICIAL", "_DRAFT"):
+            if stem_upper.endswith(suffix):
+                return stem[: -len(suffix)]
+        return stem
+
+    @staticmethod
+    def partner_pack_dir_for_status(official: bool) -> Path:
+        return FILES.partner_packs_dir / ("official" if official else "draft")
+
+    @staticmethod
+    def partner_zip_path_in_status_folder(zip_path: Path, official: bool) -> Path:
+        zip_path = MainWindow.partner_zip_path_with_status(zip_path, official)
+        target_dir = MainWindow.partner_pack_dir_for_status(official)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / zip_path.name
 
     def load_market(self):
         folder = QFileDialog.getExistingDirectory(
@@ -947,19 +966,22 @@ class MainWindow(QMainWindow):
                 return
             export_status = "OFFICIAL" if official_export else "DRAFT"
             ts = datetime.now().strftime("%Y%m%d")
-            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}_{export_status}.zip"
-            FILES.partner_packs_dir.mkdir(parents=True, exist_ok=True)
+            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
+            if not official_export:
+                default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}_DRAFT.zip"
+            partner_pack_dir = self.partner_pack_dir_for_status(official_export)
+            partner_pack_dir.mkdir(parents=True, exist_ok=True)
             path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Save clean price pack ZIP",
-                str(FILES.partner_packs_dir / default_zip),
+                f"Save {export_status.lower()} price pack ZIP",
+                str(partner_pack_dir / default_zip),
                 "Zip files (*.zip)"
             )
             if not path:
                 return
 
             zip_path = Path(path)
-            zip_path = self.partner_zip_path_with_status(zip_path, official_export)
+            zip_path = self.partner_zip_path_in_status_folder(zip_path, official_export)
             local_export_dir = FILES.editor_exports_dir
             compare_timestamp = self.select_partner_compare_timestamp(ts)
 
