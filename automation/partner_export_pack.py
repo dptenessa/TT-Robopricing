@@ -517,6 +517,48 @@ def build_partner_price_pack(
             for pack_name, source_plans in PARTNER_PLAN_PACKS:
                 wanted = {partner_display_plan_label(plan).lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
+
+                out["_sort_destination"] = out.get(
+                    "Country",
+                    pd.Series("", index=out.index),
+                ).astype(str)
+                out["_sort_plan"] = out.get(
+                    "Plan",
+                    pd.Series("", index=out.index),
+                ).astype(str)
+                out["_sort_days"] = pd.to_numeric(
+                    out.get(
+                        "Days",
+                        pd.Series("", index=out.index),
+                    ),
+                    errors="coerce",
+                )
+                out["_sort_gb"] = pd.to_numeric(
+                    out.get(
+                        "GB",
+                        pd.Series("", index=out.index),
+                    ),
+                    errors="coerce",
+                )
+
+                out = out.sort_values(
+                    [
+                        "_sort_destination",
+                        "_sort_plan",
+                        "_sort_days",
+                        "_sort_gb",
+                    ],
+                    kind="stable",
+                    na_position="last",
+                ).drop(
+                    columns=[
+                        "_sort_destination",
+                        "_sort_plan",
+                        "_sort_days",
+                        "_sort_gb",
+                    ]
+                )
+
                 out = _partner_price_output_columns(out)
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))
