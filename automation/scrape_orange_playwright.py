@@ -88,7 +88,8 @@ def parse_money(text: str) -> Optional[float]:
 def extract_days_from_text(text: str) -> Optional[int]:
     if not text:
         return None
-    m = re.search(r"(\d+)\s*Days", text, flags=re.I)
+    # Accept both singular and plural forms, e.g. "1 Day" and "7 Days".
+    m = re.search(r"\b(\d+)\s*Days?\b", text, flags=re.I)
     return int(m.group(1)) if m else None
 
 
@@ -465,6 +466,49 @@ def print_filter_state(page) -> None:
             print(f"[filter-state] esimFilter{idx} error: {e}")
 
 
+def visible_offer_signature(page) -> tuple[int, tuple[str, ...]]:
+    """Return a lightweight signature of the currently visible offer set."""
+    cards = page.locator("esim-offer-card:visible")
+    texts: list[str] = []
+    for i in range(cards.count()):
+        try:
+            texts.append(clean(cards.nth(i).inner_text()))
+        except Exception:
+            texts.append("")
+    return len(texts), tuple(texts)
+
+
+def wait_for_visible_offers_stable(
+    page,
+    timeout_ms: int = 15000,
+    stable_checks: int = 3,
+    interval_ms: int = 350,
+) -> bool:
+    """Wait until at least one visible card exists and the visible set is stable."""
+    deadline = time.time() + (timeout_ms / 1000)
+    previous: Optional[tuple[int, tuple[str, ...]]] = None
+    same_count = 0
+
+    while time.time() < deadline:
+        try:
+            current = visible_offer_signature(page)
+        except Exception:
+            current = (0, tuple())
+
+        if current[0] > 0 and current == previous:
+            same_count += 1
+            if same_count >= stable_checks:
+                return True
+        else:
+            same_count = 0
+
+        previous = current
+        page.wait_for_timeout(interval_ms)
+
+    print("[offers] visible offer cards did not stabilize before timeout")
+    return False
+
+
 def click_filter(page, idx: int) -> bool:
     print(f"\n[filter] activating esimFilter{idx}")
 
@@ -472,19 +516,52 @@ def click_filter(page, idx: int) -> bool:
     inp = page.locator(f'input#esimFilter{idx}')
 
     try:
+        if inp.count() == 0:
+            print(f"[filter] esimFilter{idx} not found")
+            return False
+
+        # Avoid toggling off a control that is already selected.
+        if inp.first.is_checked():
+            print(f"[filter] esimFilter{idx} already active")
+            wait_for_visible_offers_stable(page)
+            return True
+    except Exception as e:
+        print(f"[filter] initial state read failed for {idx}: {e}")
+
+    clicked = False
+    try:
         if label.count() > 0 and label.first.is_visible():
             label.first.click(timeout=4000, force=True)
-            human_wait(page, 1500, 2500)
+            clicked = True
+        elif inp.first.is_visible():
+            inp.first.click(timeout=4000, force=True)
+            clicked = True
     except Exception as e:
-        print(f"[filter] label click failed for {idx}: {e}")
+        print(f"[filter] click failed for {idx}: {e}")
+
+    if not clicked:
+        return False
 
     try:
-        checked = inp.first.is_checked()
-        print(f"[filter] esimFilter{idx} checked={checked}")
-        return checked
-    except Exception as e:
-        print(f"[filter] state read failed for {idx}: {e}")
-        return False
+        inp.first.wait_for(state="attached", timeout=4000)
+    except Exception:
+        pass
+
+    deadline = time.time() + 8
+    checked = False
+    while time.time() < deadline:
+        try:
+            checked = inp.first.is_checked()
+            if checked:
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(200)
+
+    print(f"[filter] esimFilter{idx} checked={checked}")
+    if checked:
+        wait_for_visible_offers_stable(page)
+    return checked
 
 
 def extract_special_offer(card) -> str:
@@ -671,48 +748,113 @@ def get_country_links(page) -> list[dict[str, str]]:
 
 
 def extract_by_dom_order(page, plan_name: str) -> list[dict]:
-    items = page.locator("esim-offer-card, .mt-1.px-2.mb-0.fw-bold")
-    count = items.count()
+    """Extract visible offers and associate each with its nearest duration.
 
+    The lookup is restricted to the nearest visible offer section/container,
+    preventing unrelated page text from being interpreted as a duration.
+    """
+    wait_for_visible_offers_stable(page)
+    cards = page.locator("esim-offer-card:visible")
+    visible_count = cards.count()
     rows: list[dict] = []
-    current_days: Optional[int] = None
+    skipped = 0
 
-    for i in range(count):
-        item = items.nth(i)
-
-        try:
-            tag = item.evaluate("(el) => el.tagName.toLowerCase()")
-        except Exception:
-            tag = ""
-
-        raw = clean(item.inner_text())
-
-        if tag != "esim-offer-card":
-            days = extract_days_from_text(raw)
-            if days is not None:
-                current_days = days
-            continue
-
-        gb = extract_gb(item)
-        price, currency = extract_price(item)
-        offer = extract_special_offer(item)
-
+    for i in range(visible_count):
+        card = cards.nth(i)
+        raw = clean(card.inner_text())
         card_days = extract_days_from_text(raw)
-        final_days = card_days if card_days is not None else current_days
+
+        preceding_days = card.evaluate(
+            r"""
+            (card) => {
+                const isVisible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.display !== 'none' &&
+                           style.visibility !== 'hidden' &&
+                           style.opacity !== '0' &&
+                           rect.width > 0 && rect.height > 0;
+                };
+
+                const durationRe = /^(\d+)\s*Days?$/i;
+
+                // Prefer a nearby semantic/container ancestor. Stop before
+                // broad layout roots so the scan cannot drift into header/footer.
+                let container = card.parentElement;
+                while (container && container !== document.body) {
+                    const visibleCards = container.querySelectorAll('esim-offer-card');
+                    if (visibleCards.length > 1) break;
+                    container = container.parentElement;
+                }
+                if (!container || container === document.body) {
+                    container = card.closest('main, section, article, form') || card.parentElement;
+                }
+                if (!container) return null;
+
+                const walker = document.createTreeWalker(
+                    container,
+                    NodeFilter.SHOW_ELEMENT,
+                    {
+                        acceptNode: (node) => {
+                            if (!isVisible(node)) return NodeFilter.FILTER_REJECT;
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    }
+                );
+
+                let lastDays = null;
+                let node = walker.currentNode;
+                while (node) {
+                    if (node === card) break;
+
+                    // Only leaf-like text nodes are considered. This avoids a
+                    // parent div whose innerText contains several headings/cards.
+                    const text = (node.innerText || '').replace(/\s+/g, ' ').trim();
+                    const hasVisibleElementChild = Array.from(node.children || []).some(isVisible);
+                    if (!hasVisibleElementChild) {
+                        const match = text.match(durationRe);
+                        if (match) lastDays = Number(match[1]);
+                    }
+                    node = walker.nextNode();
+                }
+                return lastDays;
+            }
+            """
+        )
+
+        final_days = card_days if card_days is not None else preceding_days
+        gb = extract_gb(card)
+        price, currency = extract_price(card)
+        offer = extract_special_offer(card)
 
         if not gb or price is None or final_days is None:
+            skipped += 1
+            print(
+                f"[extract] skipped visible card: plan={plan_name!r}, "
+                f"gb={gb!r}, price={price!r}, days={final_days!r}, raw={raw!r}"
+            )
             continue
 
         rows.append({
             "plan": plan_name + "-" + str(gb),
             "gb": gb,
-            "days": final_days,
+            "days": int(final_days),
             "price": price,
             "currency": currency or detect_currency_from_page(page) or CURRENCY,
             "special_offer": offer,
             "offer_ponder": extract_offer_ponder(offer),
             "raw": raw,
         })
+
+    if skipped:
+        print(
+            f"[validation] {plan_name}: extracted {len(rows)} of "
+            f"{visible_count} visible cards; {skipped} card(s) were incomplete"
+        )
+    elif visible_count:
+        print(f"[validation] {plan_name}: extracted all {visible_count} visible cards")
+    else:
+        print(f"[validation] {plan_name}: no visible offer cards found")
 
     return rows
 
@@ -742,7 +884,7 @@ def dedupe_rows(rows: list[dict]) -> list[dict]:
             return 999999.0
 
     def sort_key(x: dict):
-        plan_order = 0 if x["plan"] == "Data+Calls+SMS" else 1
+        plan_order = 0 if x["plan"].startswith("Data+Calls+SMS") else 1
         return (plan_order, int(x["days"]), gb_sort_value(x["gb"]))
 
     return sorted(dedup.values(), key=sort_key)
