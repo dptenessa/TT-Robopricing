@@ -321,17 +321,64 @@ def _build_region_pricing_decisions(
     dict[str, list[str]],
     set[str],
 ]:
+    """Calculate regional maxima, then validate every country against them.
+
+    The input data is indexed once by currency, country and SKU. This avoids
+    repeatedly scanning the complete CSV for every region/country/SKU check.
+    """
     normalized_rows_by_currency = {
         normalize_currency(currency): rows
         for currency, rows in rows_by_currency.items()
         if rows
     }
 
-    available_currencies = [currency for currency in CURRENCIES if currency in normalized_rows_by_currency]
+    available_currencies = [
+        currency
+        for currency in CURRENCIES
+        if currency in normalized_rows_by_currency
+    ]
     if not available_currencies:
         raise ValueError("No currency pricing rows were supplied.")
 
-    regional_prices_by_region: dict[str, dict[str, dict[tuple[str, str, str], float]]] = {}
+    # Build reusable indexes once.
+    rows_by_currency_country: dict[
+        str,
+        dict[str, list[dict[str, Any]]],
+    ] = {}
+    floor_by_currency_country_sku: dict[
+        str,
+        dict[tuple[str, tuple[str, str, str]], float],
+    ] = {}
+
+    for currency in available_currencies:
+        country_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        floor_index: dict[
+            tuple[str, tuple[str, str, str]],
+            float,
+        ] = {}
+
+        for row in normalized_rows_by_currency[currency]:
+            country = _country_code(row.get("ISO", ""))
+            if not country:
+                continue
+
+            sku_key = _regional_sku_key(row)
+            country_rows[country].append(row)
+
+            floor = _cost_floor_for_currency(row, currency)
+            if floor is not None:
+                index_key = (country, sku_key)
+                previous = floor_index.get(index_key)
+                if previous is None or floor > previous:
+                    floor_index[index_key] = float(floor)
+
+        rows_by_currency_country[currency] = dict(country_rows)
+        floor_by_currency_country_sku[currency] = floor_index
+
+    regional_prices_by_region: dict[
+        str,
+        dict[str, dict[tuple[str, str, str], float]],
+    ] = {}
     regional_source_rows_by_region: dict[
         str,
         dict[str, dict[tuple[str, str, str], dict[str, Any]]],
@@ -344,34 +391,44 @@ def _build_region_pricing_decisions(
             code
             for code in (
                 _country_code(country)
-                for country in resolve_region_ordered(region_name, regions_data)
+                for country in resolve_region_ordered(
+                    region_name,
+                    regions_data,
+                )
             )
             if code
         )
-        configured_country_set = set(configured_countries)
 
-        prices_by_currency: dict[str, dict[tuple[str, str, str], float]] = {}
-        source_rows_by_currency: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {}
+        prices_by_currency: dict[
+            str,
+            dict[tuple[str, str, str], float],
+        ] = {}
+        source_rows_by_currency: dict[
+            str,
+            dict[tuple[str, str, str], dict[str, Any]],
+        ] = {}
 
+        # Calculate regional maxima from every configured country before any
+        # country is excluded.
         for currency in available_currencies:
-            currency_rows = [
-                row
-                for row in normalized_rows_by_currency[currency]
-                if _country_code(row.get("ISO", "")) in configured_country_set
-            ]
+            max_prices: dict[tuple[str, str, str], float] = {}
+            max_rows: dict[
+                tuple[str, str, str],
+                dict[str, Any],
+            ] = {}
 
-            grouped_rows: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-            for row in currency_rows:
-                grouped_rows[_regional_sku_key(row)].append(row)
+            country_index = rows_by_currency_country[currency]
+            for country in configured_countries:
+                for row in country_index.get(country, []):
+                    sku_key = _regional_sku_key(row)
+                    price = round_regular_price(_row_final_price(row))
+                    previous = max_prices.get(sku_key)
+                    if previous is None or price > previous:
+                        max_prices[sku_key] = price
+                        max_rows[sku_key] = row
 
-            prices_by_currency[currency] = {}
-            source_rows_by_currency[currency] = {}
-
-            for sku_key, sku_rows in grouped_rows.items():
-                max_row = max(sku_rows, key=_row_final_price)
-                max_price = round_regular_price(_row_final_price(max_row))
-                prices_by_currency[currency][sku_key] = max_price
-                source_rows_by_currency[currency][sku_key] = max_row
+            prices_by_currency[currency] = max_prices
+            source_rows_by_currency[currency] = max_rows
 
         all_sku_keys: set[tuple[str, str, str]] = set()
         for currency in available_currencies:
@@ -383,40 +440,23 @@ def _build_region_pricing_decisions(
             country_passes = True
 
             for sku_key in all_sku_keys:
+                for currency in available_currencies:
+                    regional_price = prices_by_currency[currency].get(sku_key)
+                    required_floor = floor_by_currency_country_sku[
+                        currency
+                    ].get((country, sku_key))
+
+                    # Missing regional price, country SKU or floor fails safely.
+                    if regional_price is None or required_floor is None:
+                        country_passes = False
+                        break
+
+                    if regional_price < required_floor:
+                        country_passes = False
+                        break
+
                 if not country_passes:
                     break
-
-                for currency in available_currencies:
-                    regional_price = prices_by_currency.get(currency, {}).get(sku_key)
-                    if regional_price is None:
-                        country_passes = False
-                        break
-
-                    matching_country_rows = [
-                        row
-                        for row in normalized_rows_by_currency[currency]
-                        if _country_code(row.get("ISO", "")) == country
-                        and _regional_sku_key(row) == sku_key
-                    ]
-
-                    if not matching_country_rows:
-                        country_passes = False
-                        break
-
-                    floors: list[float] = []
-                    for country_row in matching_country_rows:
-                        floor = _cost_floor_for_currency(country_row, currency)
-                        if floor is None:
-                            country_passes = False
-                            break
-                        floors.append(float(floor))
-
-                    if not country_passes:
-                        break
-
-                    if regional_price < max(floors):
-                        country_passes = False
-                        break
 
             if country_passes:
                 eligible_countries.append(country)
