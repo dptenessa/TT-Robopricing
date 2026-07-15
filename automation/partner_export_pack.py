@@ -79,9 +79,12 @@ PARTNER_PRICE_OUTPUT_COLUMNS: tuple[str, ...] = (
     "ocsOfferValidityUnits",
 )
 
-OCS_OFFER_ID_GLOBAL = "190447135"
-OCS_OFFER_ID_REGION = "190447125"
-OCS_OFFER_ID_COUNTRY = "190447115"
+OCS_OFFER_ID_COUNTRY_LIMITED = "190447115"
+OCS_OFFER_ID_COUNTRY_UNLIMITED = "190447245"
+OCS_OFFER_ID_GLOBAL_LIMITED = "190447135"
+OCS_OFFER_ID_GLOBAL_UNLIMITED = "190447265"
+OCS_OFFER_ID_REGION_LIMITED = "190447125"
+OCS_OFFER_ID_REGION_UNLIMITED = "190447255"
 
 
 @dataclass(frozen=True)
@@ -324,18 +327,34 @@ def _partner_ocs_countries(row: pd.Series) -> str:
 
 
 def _partner_ocs_offer_id(row: pd.Series) -> str:
-    countries = _country_list(row.get("ocsCountries", row.get("PricingUnitCountriesUsed", "")))
+    countries = _country_list(
+        row.get("ocsCountries", row.get("PricingUnitCountriesUsed", ""))
+    )
     row_markers = {
         _country_code(row.get("ISO", "")),
         _country_code(row.get("Country", "")),
         _country_code(row.get("PricingUnitIdUsed", "")),
         _country_code(row.get("PricingRegionUsed", "")),
     }
+    is_unlimited = str(row.get("Plan", "")).strip().lower() == "unlimited"
+
     if "GLOBAL" in row_markers:
-        return OCS_OFFER_ID_GLOBAL
+        return (
+            OCS_OFFER_ID_GLOBAL_UNLIMITED
+            if is_unlimited
+            else OCS_OFFER_ID_GLOBAL_LIMITED
+        )
     if len(countries) > 1:
-        return OCS_OFFER_ID_REGION
-    return OCS_OFFER_ID_COUNTRY
+        return (
+            OCS_OFFER_ID_REGION_UNLIMITED
+            if is_unlimited
+            else OCS_OFFER_ID_REGION_LIMITED
+        )
+    return (
+        OCS_OFFER_ID_COUNTRY_UNLIMITED
+        if is_unlimited
+        else OCS_OFFER_ID_COUNTRY_LIMITED
+    )
 
 
 def _partner_number_text(value: object) -> str:
