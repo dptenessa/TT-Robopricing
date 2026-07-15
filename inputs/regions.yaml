@@ -741,7 +741,7 @@ regions:
     - "ZA"
     - "BW"
     - "RW"
-  SOUTH_ASIA:
+  INDIAN_OCEAN:
     region_product_name: Indian Ocean Islands
     countries:
     - "MU"
