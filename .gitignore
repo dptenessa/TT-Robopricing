@@ -12,8 +12,10 @@ __pycache__/
 0-Old files/
 0-Outputs_shared_with_third_parties/
 final_outputs/
-outputs/
-scrapes/
+# Ignore everything in outputs, then un-ignore the folder we want
+/outputs/*
+!/outputs/combined_scrapes/
+
 
 # Generated debug/noisy folders
 scrapes/Backup/
