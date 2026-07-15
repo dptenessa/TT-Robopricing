@@ -1,7 +1,0 @@
-RunDate,RunTimestamp,Category,Name,Status,Quality,Rows,Countries,PreviousRows,PreviousCountries,ExitCode,Attempt,DurationSeconds,Duration,Script,LogFile,Note,OverallDuration
-2026-06-26,2026-06-26T16:11:18,scraper,airalo,ok,ok,2166,144,0,0,0,0,0.0,0s,scrape_airalo_with_playwright.py,workable_data/logs/20260626_140636_airalo_attempt1.log,reused same-day output from 2026-06-26,1s
-2026-06-26,2026-06-26T16:11:18,scraper,holafly,ok,ok,2750,93,0,0,0,0,0.0,0s,scrape_holafly.py,workable_data/logs/20260626_152718_holafly_attempt1.log,reused same-day output from 2026-06-26,1s
-2026-06-26,2026-06-26T16:11:18,scraper,orange,ok,ok,1767,125,0,0,0,0,0.0,0s,scrape_orange_playwright.py,workable_data/logs/20260626_140636_orange_attempt1.log,reused same-day output from 2026-06-26,1s
-2026-06-26,2026-06-26T16:11:18,scraper,saily,ok,ok,951,138,0,0,0,0,0.0,0s,scrape_saily.py,workable_data/logs/20260626_154749_saily_attempt1.log,reused same-day output from 2026-06-26,1s
-2026-06-26,2026-06-26T16:11:18,scraper,vodafone,ok,ok,512,150,0,0,0,0,0.0,0s,scrape_vodafone_pdf_improved.py,workable_data/logs/20260626_140636_vodafone_attempt1.log,reused same-day output from 2026-06-26,1s
-2026-06-26,2026-06-26T16:11:18,combine,combine,ok,,,,,,0,1,0.5,1s,combine_scrapped_data.py,workable_data/logs/20260626_161118_combine_attempt1.log,,1s

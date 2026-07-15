@@ -1,7 +1,0 @@
-RunDate,RunTimestamp,Category,Name,Status,ExitCode,Attempt,DurationSeconds,Duration,Script,LogFile,Note,OverallDuration
-2026-06-26,2026-06-26T15:31:24,scraper,airalo,ok,0,0,0.0,0s,scrape_airalo_with_playwright.py,workable_data/logs/20260626_140636_airalo_attempt1.log,reused same-day output from 2026-06-26,4m 06s
-2026-06-26,2026-06-26T15:31:24,scraper,holafly,ok,0,1,245.5,4m 05s,scrape_holafly.py,workable_data/logs/20260626_152718_holafly_attempt1.log,,4m 06s
-2026-06-26,2026-06-26T15:31:24,scraper,orange,ok,0,0,0.0,0s,scrape_orange_playwright.py,workable_data/logs/20260626_140636_orange_attempt1.log,reused same-day output from 2026-06-26,4m 06s
-2026-06-26,2026-06-26T15:31:24,scraper,saily,failed,1,2,0.5,1s,scrape_saily.py,workable_data/logs/20260626_153123_saily_attempt2.log,,4m 06s
-2026-06-26,2026-06-26T15:31:24,scraper,vodafone,ok,0,0,0.0,0s,scrape_vodafone_pdf_improved.py,workable_data/logs/20260626_140636_vodafone_attempt1.log,reused same-day output from 2026-06-26,4m 06s
-2026-06-26,2026-06-26T15:31:24,combine,combine,skipped,,1,0.0,0s,combine_scrapped_data.py,workable_data/logs/20260626_153124_combine_attempt1.log,,4m 06s

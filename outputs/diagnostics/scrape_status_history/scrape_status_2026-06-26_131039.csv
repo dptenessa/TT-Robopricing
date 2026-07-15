@@ -1,7 +1,0 @@
-RunTimestamp,Category,Name,Status,ExitCode,DurationSeconds,Duration,Script,OverallDuration
-2026-06-26T13:10:39,scraper,airalo,ok,0,1728.9,28m 48s,scrape_airalo_with_playwright.py,28m 49s
-2026-06-26T13:10:39,scraper,holafly,failed,1,52.0,52s,scrape_holafly.py,28m 49s
-2026-06-26T13:10:39,scraper,orange,ok,0,1595.9,26m 35s,scrape_orange_playwright.py,28m 49s
-2026-06-26T13:10:39,scraper,saily,failed,1,1.4,1s,scrape_saily.py,28m 49s
-2026-06-26T13:10:39,scraper,vodafone,ok,0,45.7,46s,scrape_vodafone_pdf_improved.py,28m 49s
-2026-06-26T13:10:39,combine,combine,failed,1,0.4,0s,combine_scrapped_data.py,28m 49s
