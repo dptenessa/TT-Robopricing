@@ -1,0 +1,88 @@
+ISO3,Provider,Plan,Days,GB,ChangeType,ChangeReason,Price_old,Price_new,Currency_old,Currency_new,usd_price_old,usd_price_new,eur_price_old,eur_price_new,SpecialOffer_old,SpecialOffer_new
+AUS,orange,Data+Calls+SMS-10,14,10,new,,,32.99,,USD,,32.99,,,,
+AUS,orange,Data+Calls+SMS-100,30,100,new,,,57.99,,USD,,57.99,,,,40% OFF
+AUS,orange,Data+Calls+SMS-2,7,2,new,,,13.99,,USD,,13.99,,,,
+AUS,orange,Data+Calls+SMS-20,30,20,new,,,32.99,,USD,,32.99,,,,40% OFF
+AUS,orange,Data+Calls+SMS-5,7,5,new,,,20.99,,USD,,20.99,,,,
+AUS,orange,Data+Calls+SMS-50,30,50,new,,,50.99,,USD,,50.99,,,,30% OFF
+CHE,orange,Data-1,7,1,changed,price+promo,4.99,1.21,USD,USD,4.99,1.21,,,,Clearance Sale
+CHE,orange,Data-10,14,10,changed,price+promo,16.99,3.99,USD,USD,16.99,3.99,,,,Clearance Sale
+CHE,orange,Data-20,30,20,changed,price+promo,22.99,4.99,USD,USD,22.99,4.99,,,,Clearance Sale
+CHE,orange,Data-3,7,3,changed,price+promo,8.99,1.59,USD,USD,8.99,1.59,,,,Clearance Sale
+CHE,orange,Data-5,7,5,changed,price+promo,10.99,2.48,USD,USD,10.99,2.48,,,,Clearance Sale
+CHE,orange,Data-Unlimited,1,3,new,,,2.99,,USD,,2.99,,,,Clearance Sale
+CHE,orange,Data-Unlimited,5,15,deleted,,20.99,,USD,,20.99,,,,30% OFF,
+CUB,orange,Data+Calls+SMS-1,7,1,new,,,7.99,,USD,,7.99,,,,Clearance Sale
+CUB,orange,Data+Calls+SMS-10,14,10,new,,,47.99,,USD,,47.99,,,,Clearance Sale
+CUB,orange,Data+Calls+SMS-20,10,20,new,,,59.99,,USD,,59.99,,,,Clearance Sale
+CUB,orange,Data+Calls+SMS-3,7,3,new,,,14.99,,USD,,14.99,,,,Clearance Sale
+CUB,orange,Data+Calls+SMS-5,7,5,new,,,23.99,,USD,,23.99,,,,Clearance Sale
+DZA,airalo,Unlimited,3,9,changed,price,4.5,18.5,USD,USD,4.5,18.5,18.5,18.5,,
+DZA,airalo,Unlimited,5,15,changed,price,28.5,28.5,USD,USD,,28.5,28.5,28.5,,
+DZA,airalo,Unlimited,7,21,changed,price,9.0,36.5,USD,USD,9.0,36.5,36.5,36.5,,
+DZA,airalo,Unlimited,10,30,changed,price,42.0,42.0,USD,USD,,42.0,42.0,42.0,,
+DZA,airalo,Unlimited,15,45,changed,price,13.0,57.0,USD,USD,13.0,57.0,57.0,57.0,,
+DZA,airalo,Unlimited,30,90,changed,price,14.0,99.0,USD,USD,14.0,99.0,99.0,99.0,,
+HKG,orange,Data-1,7,1,changed,price+promo,4.99,1.36,USD,USD,4.99,1.36,,,,Clearance Sale
+HKG,orange,Data-10,14,10,changed,price+promo,17.99,3.99,USD,USD,17.99,3.99,,,,Clearance Sale
+HKG,orange,Data-20,30,20,changed,price+promo,31.99,7.99,USD,USD,31.99,7.99,,,,Clearance Sale
+HKG,orange,Data-3,7,3,changed,price+promo,8.99,1.99,USD,USD,8.99,1.99,,,,Clearance Sale
+HKG,orange,Data-5,7,5,changed,price+promo,11.99,2.32,USD,USD,11.99,2.32,,,,Clearance Sale
+HKG,orange,Data-Unlimited,1,3,new,,,4.45,,USD,,4.45,,,,Clearance Sale
+KOR,orange,Data-1,7,1,changed,price+promo,4.99,1.36,USD,USD,4.99,1.36,,,,Clearance Sale
+KOR,orange,Data-10,14,10,changed,price+promo,20.99,3.99,USD,USD,20.99,3.99,,,,Clearance Sale
+KOR,orange,Data-20,30,20,changed,price+promo,37.99,5.99,USD,USD,37.99,5.99,,,,Clearance Sale
+KOR,orange,Data-3,7,3,changed,price+promo,9.99,1.22,USD,USD,9.99,1.22,,,,Clearance Sale
+KOR,orange,Data-5,7,5,changed,price+promo,13.99,2.99,USD,USD,13.99,2.99,,,,Clearance Sale
+KOR,orange,Data-Unlimited,1,3,new,,,4.42,,USD,,4.42,,,,Clearance Sale
+KOR,orange,Data-Unlimited,5,15,deleted,,19.99,,USD,,19.99,,,,20% OFF,
+KWT,orange,Data+Calls+SMS-1,7,1,changed,price+promo,4.99,1.99,USD,USD,4.99,1.99,,,,Clearance Sale
+KWT,orange,Data+Calls+SMS-10,14,10,changed,price+promo,25.99,8.99,USD,USD,25.99,8.99,,,,Clearance Sale
+KWT,orange,Data+Calls+SMS-20,30,20,changed,price+promo,40.99,14.99,USD,USD,40.99,14.99,,,,Clearance Sale
+KWT,orange,Data+Calls+SMS-3,7,3,changed,price+promo,11.99,3.99,USD,USD,11.99,3.99,,,,Clearance Sale
+KWT,orange,Data+Calls+SMS-5,7,5,changed,price+promo,15.99,5.99,USD,USD,15.99,5.99,,,,Clearance Sale
+KWT,orange,Data+Calls+SMS-Unlimited,1,3,new,,,7.99,,USD,,7.99,,,,Clearance Sale
+MAR,orange,Data-20,30,20,changed,price+promo,20.99,40.99,USD,USD,20.99,40.99,,,50% OFF,
+MAR,orange,Data-50,30,50,changed,price,16.99,21.99,USD,USD,16.99,21.99,,,60% OFF,60% OFF
+MEX,orange,Data+Calls+SMS-10,14,10,deleted,,47.99,,USD,,47.99,,,,,
+MEX,orange,Data+Calls+SMS-100,30,100,deleted,,57.99,,USD,,57.99,,,,40% OFF,
+MEX,orange,Data+Calls+SMS-2,7,2,deleted,,17.99,,USD,,17.99,,,,,
+MEX,orange,Data+Calls+SMS-20,30,20,deleted,,35.99,,USD,,35.99,,,,40% OFF,
+MEX,orange,Data+Calls+SMS-5,7,5,deleted,,29.99,,USD,,29.99,,,,,
+MEX,orange,Data+Calls+SMS-50,30,50,deleted,,50.99,,USD,,50.99,,,,30% OFF,
+NOR,orange,Data+Calls+SMS-1,7,1,deleted,,5.99,,USD,,5.99,,,,,
+NOR,orange,Data+Calls+SMS-10,7,10,deleted,,19.99,,USD,,19.99,,,,,
+NOR,orange,Data+Calls+SMS-10,14,10,deleted,,20.99,,USD,,20.99,,,,,
+NOR,orange,Data+Calls+SMS-100,45,100,deleted,,51.99,,USD,,51.99,,,,30% OFF,
+NOR,orange,Data+Calls+SMS-20,30,20,deleted,,27.99,,USD,,27.99,,,,,
+NOR,orange,Data+Calls+SMS-200,30,200,new,,,86.99,,USD,,86.99,,,,20% OFF
+NOR,orange,Data+Calls+SMS-200,45,200,deleted,,86.99,,USD,,86.99,,,,20% OFF,
+NOR,orange,Data+Calls+SMS-3,7,3,deleted,,10.99,,USD,,10.99,,,,,
+NOR,orange,Data+Calls+SMS-5,7,5,deleted,,13.99,,USD,,13.99,,,,,
+NOR,orange,Data-Unlimited,5,15,deleted,,20.99,,USD,,20.99,,,,30% OFF,
+SLV,airalo,Standard,3,1,changed,price,6.0,6.0,USD,USD,6.0,6.0,,6.0,,
+SLV,airalo,Standard,3,3,changed,price,15.5,15.5,USD,USD,15.5,15.5,,15.5,,
+SLV,airalo,Standard,3,9,deleted,,20.5,,USD,,,,20.5,,,
+SLV,airalo,Standard,5,15,deleted,,29.5,,USD,,,,29.5,,,
+SLV,airalo,Standard,7,3,changed,price,16.0,16.0,USD,USD,16.0,16.0,,16.0,,
+SLV,airalo,Standard,7,5,changed,price,24.0,24.0,USD,USD,24.0,24.0,,24.0,,
+SLV,airalo,Standard,7,10,changed,price,34.0,34.0,USD,USD,34.0,34.0,,34.0,,
+SLV,airalo,Standard,7,21,deleted,,36.5,,USD,,,,36.5,,,
+SLV,airalo,Standard,10,30,deleted,,38.0,,USD,,,,38.0,,,
+SLV,airalo,Standard,15,5,changed,price,24.5,24.5,USD,USD,24.5,24.5,,24.5,,
+SLV,airalo,Standard,15,10,changed,price,34.5,34.5,USD,USD,34.5,34.5,,34.5,,
+SLV,airalo,Standard,15,20,changed,price,48.0,48.0,USD,USD,48.0,48.0,,48.0,,
+SLV,airalo,Standard,15,45,deleted,,49.0,,USD,,,,49.0,,,
+SLV,airalo,Standard,30,5,changed,price,25.0,25.0,USD,USD,25.0,25.0,,25.0,,
+SLV,airalo,Standard,30,10,changed,price,35.0,35.0,USD,USD,35.0,35.0,,35.0,,
+SLV,airalo,Standard,30,20,changed,price,49.0,49.0,USD,USD,49.0,49.0,,49.0,,
+SLV,airalo,Standard,30,90,deleted,,99.0,,USD,,,,99.0,,,
+THA,orange,Data-1,7,1,deleted,,4.99,,USD,,4.99,,,,,
+THA,orange,Data-10,14,10,changed,price+promo,14.99,3.99,USD,USD,14.99,3.99,,,,Clearance Sale
+THA,orange,Data-20,30,20,changed,price+promo,11.99,5.99,USD,USD,11.99,5.99,,,50% OFF,Clearance Sale
+THA,orange,Data-3,7,3,changed,price+promo,7.99,1.21,USD,USD,7.99,1.21,,,,Clearance Sale
+THA,orange,Data-5,7,5,changed,price+promo,10.99,2.99,USD,USD,10.99,2.99,,,,Clearance Sale
+THA,orange,Data-Unlimited,1,3,new,,,1.99,,USD,,1.99,,,,Clearance Sale
+THA,orange,Data-Unlimited,5,15,deleted,,19.99,,USD,,19.99,,,,20% OFF,
+UZB,airalo,Unlimited,10,30,new,,,35.0,,USD,,35.0,,35.0,,
+VEN,airalo,Standard,3,1,changed,price,4.0,6.5,USD,USD,4.0,6.5,4.0,6.5,,
