@@ -37,8 +37,9 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "ReferenceProvider",
 )
 
-PARTNER_DIFF_KEY_COLUMNS: tuple[str, ...] = ("ISO", "Country", "Plan", "Days", "GB")
+PARTNER_DIFF_KEY_COLUMNS: tuple[str, ...] = ("ISO", "Plan", "Days", "GB")
 PARTNER_DIFF_VALUE_COLUMNS: tuple[str, ...] = (
+    "Country",
     "Price",
     "FinalPriceAfterPromo",
     "PromoCode",
@@ -86,8 +87,29 @@ OCS_OFFER_ID_COUNTRY_LIMITED = "190447115"
 OCS_OFFER_ID_COUNTRY_UNLIMITED = "190447245"
 OCS_OFFER_ID_GLOBAL_LIMITED = "190447135"
 OCS_OFFER_ID_GLOBAL_UNLIMITED = "190447265"
-OCS_OFFER_ID_REGION_LIMITED = "190447125"
-OCS_OFFER_ID_REGION_UNLIMITED = "190447255"
+OCS_OFFER_ID_LARGE_REGION_LIMITED = "190447125"
+OCS_OFFER_ID_LARGE_REGION_UNLIMITED = "190447255"
+OCS_OFFER_ID_MEDIUM_REGION_LIMITED = "190640635"
+OCS_OFFER_ID_MEDIUM_REGION_UNLIMITED = "190640665"
+
+OCS_OFFER_IDS: dict[str, dict[bool, str]] = {
+    "COUNTRY": {
+        False: OCS_OFFER_ID_COUNTRY_LIMITED,
+        True: OCS_OFFER_ID_COUNTRY_UNLIMITED,
+    },
+    "GLOBAL": {
+        False: OCS_OFFER_ID_GLOBAL_LIMITED,
+        True: OCS_OFFER_ID_GLOBAL_UNLIMITED,
+    },
+    "LARGE_REGION": {
+        False: OCS_OFFER_ID_LARGE_REGION_LIMITED,
+        True: OCS_OFFER_ID_LARGE_REGION_UNLIMITED,
+    },
+    "MEDIUM_REGION": {
+        False: OCS_OFFER_ID_MEDIUM_REGION_LIMITED,
+        True: OCS_OFFER_ID_MEDIUM_REGION_UNLIMITED,
+    },
+}
 
 REGION_MEMBERSHIP_CURRENT_NAME = "region_membership_current.json"
 REGION_MEMBERSHIP_HISTORY_PREFIX = "region_membership_"
@@ -157,6 +179,115 @@ def _below_cost_mask(df: pd.DataFrame) -> pd.Series:
 def _country_code(value: object) -> str:
     text = str(value if value is not None else "").strip()
     return "" if text.lower() == "nan" else text.upper()
+
+
+def _read_ppg_country_names(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Authoritative PPG file not found: {path}")
+
+    ppg = pd.read_csv(path)
+    ppg.columns = ppg.columns.astype(str).str.strip()
+
+    iso_col = next(
+        (
+            col for col in ["ISO_Code_A2", "ISO", "ISO_A2", "Country_Code_A2"]
+            if col in ppg.columns
+        ),
+        None,
+    )
+    country_col = next(
+        (
+            col for col in ppg.columns
+            if str(col).strip().lower() in {
+                "country",
+                "country name",
+                "country_name",
+                "destination",
+            }
+        ),
+        None,
+    )
+
+    if iso_col is None or country_col is None:
+        raise ValueError(
+            "PPG must contain an ISO A2 column and a canonical country-name column."
+        )
+
+    ppg["_iso"] = (
+        ppg[iso_col]
+        .astype("string")
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    ppg["_country"] = (
+        ppg[country_col]
+        .astype("string")
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    ppg = ppg[
+        ppg["_iso"].str.len().eq(2)
+        & ppg["_country"].ne("")
+    ].copy()
+
+    conflicts = (
+        ppg.groupby("_iso")["_country"]
+        .nunique(dropna=True)
+        .loc[lambda values: values > 1]
+    )
+    if not conflicts.empty:
+        raise ValueError(
+            "PPG contains conflicting country names for ISO codes: "
+            + ", ".join(conflicts.index.tolist())
+        )
+
+    return (
+        ppg.drop_duplicates(subset=["_iso"], keep="last")
+        .set_index("_iso")["_country"]
+        .to_dict()
+    )
+
+
+def _validate_canonical_country_names(
+    df: pd.DataFrame,
+    ppg_country_names: dict[str, str],
+    *,
+    currency: str,
+) -> None:
+    """Country rows must already carry the current PPG name.
+
+    Region/global rows are deliberately excluded because their ISO field is a
+    region code rather than an ISO-3166 alpha-2 country code.
+    """
+    mismatches: list[str] = []
+
+    for _, row in df.iterrows():
+        iso = _country_code(row.get("ISO", ""))
+        if len(iso) != 2:
+            continue
+
+        expected = str(ppg_country_names.get(iso, "")).strip()
+        actual = str(row.get("Country", "") if row.get("Country", "") is not None else "").strip()
+        if actual.lower() == "nan":
+            actual = ""
+
+        if not expected:
+            mismatches.append(f"{iso}: missing in PPG")
+        elif actual != expected:
+            mismatches.append(f"{iso}: export={actual!r}, PPG={expected!r}")
+
+    if mismatches:
+        preview = "; ".join(mismatches[:12])
+        if len(mismatches) > 12:
+            preview += f"; ... and {len(mismatches) - 12} more"
+        raise ValueError(
+            f"{currency} partner export contains non-canonical country names. "
+            "The pipeline must be corrected upstream; partner export will not "
+            f"silently rewrite them. {preview}"
+        )
 
 
 def _norm_key_value(value: object) -> str:
@@ -344,15 +475,85 @@ def _read_or_rebuild_membership_snapshot(
     )
 
 
-def _managed_region_codes(regions_yaml: Path) -> list[str]:
+def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, str]]:
+    """Load the authoritative commercial metadata for every managed region."""
     if not regions_yaml.exists():
         raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
+
     data = yaml.safe_load(regions_yaml.read_text(encoding="utf-8")) or {}
-    return [
-        str(code).strip()
-        for code in (data.get("regions") or {}).keys()
-        if str(code).strip()
-    ]
+    regions = data.get("regions") or {}
+    if not isinstance(regions, dict):
+        raise ValueError("regions.yaml must contain a 'regions' mapping.")
+
+    allowed_types = {"GLOBAL", "LARGE_REGION", "MEDIUM_REGION"}
+    catalog: dict[str, dict[str, str]] = {}
+
+    for raw_code, raw_spec in regions.items():
+        code = _country_code(raw_code)
+        if not code:
+            continue
+        if not isinstance(raw_spec, dict):
+            raise ValueError(
+                f"Region {code!r} must be a mapping with region_type, "
+                "region_product_name and countries."
+            )
+
+        region_type = str(raw_spec.get("region_type", "")).strip().upper()
+        product_name = str(raw_spec.get("region_product_name", "")).strip()
+
+        if region_type not in allowed_types:
+            raise ValueError(
+                f"Region {code!r} has unsupported region_type {region_type!r}. "
+                f"Expected one of: {', '.join(sorted(allowed_types))}."
+            )
+        if not product_name:
+            raise ValueError(
+                f"Region {code!r} is missing region_product_name in regions.yaml."
+            )
+
+        catalog[code] = {
+            "region_type": region_type,
+            "region_product_name": product_name,
+        }
+
+    return catalog
+
+
+def _managed_region_codes(region_catalog: dict[str, dict[str, str]]) -> list[str]:
+    return list(region_catalog.keys())
+
+
+def _region_code_for_row(
+    row: pd.Series,
+    region_catalog: dict[str, dict[str, str]],
+) -> str:
+    for field in ("ISO", "PricingUnitIdUsed", "PricingRegionUsed", "Country"):
+        candidate = _country_code(row.get(field, ""))
+        if candidate in region_catalog:
+            return candidate
+    return ""
+
+
+def _partner_destination_value(
+    row: pd.Series,
+    region_catalog: dict[str, dict[str, str]],
+) -> str:
+    """Country names come from the validated country pipeline; regions from YAML."""
+    iso = _country_code(row.get("ISO", ""))
+
+    if len(iso) == 2:
+        value = str(row.get("Country", "") if row.get("Country", "") is not None else "").strip()
+        return "" if value.lower() == "nan" else value
+
+    region_code = _region_code_for_row(row, region_catalog)
+    if not region_code:
+        raise ValueError(
+            "Regional partner row could not be matched to regions.yaml. "
+            f"ISO={row.get('ISO', '')!r}, Country={row.get('Country', '')!r}, "
+            f"PricingUnitIdUsed={row.get('PricingUnitIdUsed', '')!r}, "
+            f"PricingRegionUsed={row.get('PricingRegionUsed', '')!r}."
+        )
+    return region_catalog[region_code]["region_product_name"]
 
 
 def _membership_pairs(snapshot: dict[str, object]) -> set[tuple[str, str]]:
@@ -546,36 +747,32 @@ def _partner_ocs_countries(row: pd.Series) -> str:
     return "-".join(countries)
 
 
-def _partner_ocs_offer_id(row: pd.Series) -> str:
-    countries = _country_list(
-        row.get("ocsCountries", row.get("PricingUnitCountriesUsed", ""))
-    )
-    row_markers = {
-        _country_code(row.get("ISO", "")),
-        _country_code(row.get("Country", "")),
-        _country_code(row.get("PricingUnitIdUsed", "")),
-        _country_code(row.get("PricingRegionUsed", "")),
-    }
+def _partner_ocs_offer_id(
+    row: pd.Series,
+    region_catalog: dict[str, dict[str, str]],
+) -> str:
     is_unlimited = str(row.get("Plan", "")).strip().lower() == "unlimited"
+    iso = _country_code(row.get("ISO", ""))
 
-    if "GLOBAL" in row_markers:
-        return (
-            OCS_OFFER_ID_GLOBAL_UNLIMITED
-            if is_unlimited
-            else OCS_OFFER_ID_GLOBAL_LIMITED
-        )
-    if len(countries) > 1:
-        return (
-            OCS_OFFER_ID_REGION_UNLIMITED
-            if is_unlimited
-            else OCS_OFFER_ID_REGION_LIMITED
-        )
-    return (
-        OCS_OFFER_ID_COUNTRY_UNLIMITED
-        if is_unlimited
-        else OCS_OFFER_ID_COUNTRY_LIMITED
-    )
+    if len(iso) == 2:
+        offer_type = "COUNTRY"
+    else:
+        region_code = _region_code_for_row(row, region_catalog)
+        if not region_code:
+            raise ValueError(
+                "Cannot determine OCS offer type for regional row because its "
+                "region code is not present in regions.yaml. "
+                f"ISO={row.get('ISO', '')!r}, Country={row.get('Country', '')!r}."
+            )
+        offer_type = region_catalog[region_code]["region_type"]
 
+    try:
+        return OCS_OFFER_IDS[offer_type][is_unlimited]
+    except KeyError as exc:
+        raise ValueError(
+            f"No OCS offer ID configured for type {offer_type!r}, "
+            f"unlimited={is_unlimited}."
+        ) from exc
 
 def _partner_number_text(value: object) -> str:
     if pd.isna(value):
@@ -613,14 +810,24 @@ def _partner_list_price_value(row: pd.Series) -> str:
     return _partner_number_text(list_price)
 
 
-def _partner_price_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _partner_price_output_columns(
+    df: pd.DataFrame,
+    region_catalog: dict[str, dict[str, str]],
+) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
-    out["Destination"] = df.get("Country", pd.Series("", index=df.index))
+    out["Destination"] = df.apply(
+        lambda row: _partner_destination_value(row, region_catalog),
+        axis=1,
+    )
     out["ocsOfferValidityPeriod"] = df.get("Days", pd.Series("", index=df.index)).map(_partner_number_text)
     out["price"] = df.apply(_partner_price_value, axis=1)
     out["ListPrice"] = df.apply(_partner_list_price_value, axis=1)
     out["ocsCountries"] = df.apply(_partner_ocs_countries, axis=1)
-    out["ocsOfferId"] = out.join(df, how="left").apply(_partner_ocs_offer_id, axis=1)
+    joined = out.join(df, how="left")
+    out["ocsOfferId"] = joined.apply(
+        lambda row: _partner_ocs_offer_id(row, region_catalog),
+        axis=1,
+    )
     out["ocsOfferLevelQuota"] = df.get("GB", pd.Series("", index=df.index)).map(_partner_number_text)
     unlimited_mask = df.get("Plan", pd.Series("", index=df.index)).astype(str).str.strip().str.lower().eq("unlimited")
     out.loc[unlimited_mask, "ocsOfferLevelQuota"] = "Unlimited"
@@ -697,6 +904,7 @@ def _partner_diff_table(
         }
         for col in PARTNER_DIFF_KEY_COLUMNS:
             row[col] = source.get(col, "") if source is not None else ""
+        row["Country"] = source.get("Country", "") if source is not None else ""
         row.update({
             "PreviousPrice": prev_row.get("Price", "") if prev_row is not None else "",
             "CurrentPrice": curr_row.get("Price", "") if curr_row is not None else "",
@@ -734,6 +942,7 @@ def build_partner_price_pack(
     current_timestamp: str | None = None,
     destination_table_json: str | Path | None = None,
     regions_yaml: str | Path | None = None,
+    ppg_csv: str | Path | None = None,
 ) -> PartnerPackResult:
     local_export_dir = Path(local_export_dir)
     zip_path = Path(zip_path)
@@ -748,10 +957,18 @@ def build_partner_price_pack(
         regions_yaml
         or project_root / "inputs" / "regions.yaml"
     )
+    ppg_csv = Path(
+        ppg_csv
+        or project_root / "inputs" / "WS_PPG.csv"
+    )
+    ppg_country_names = _read_ppg_country_names(ppg_csv)
+
+    region_catalog = _region_catalog(regions_yaml)
+
     current_membership = _read_membership_snapshot(
         local_export_dir / REGION_MEMBERSHIP_CURRENT_NAME
     )
-    managed_regions = _managed_region_codes(regions_yaml)
+    managed_regions = _managed_region_codes(region_catalog)
     destination_table = _updated_destination_table(
         destination_table_json,
         current_membership,
@@ -772,6 +989,11 @@ def build_partner_price_pack(
             region_prices,
             currency=currency,
             shared_blocked_price_keys=shared_blocked_price_keys,
+        )
+        _validate_canonical_country_names(
+            clean_tables[currency][0],
+            ppg_country_names,
+            currency=currency,
         )
 
     comparison_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]] = {}
@@ -823,10 +1045,10 @@ def build_partner_price_pack(
                 wanted = {partner_display_plan_label(plan).lower() for plan in source_plans}
                 out = merged.loc[plan_values.isin(wanted)].copy()
 
-                out["_sort_destination"] = out.get(
-                    "Country",
-                    pd.Series("", index=out.index),
-                ).astype(str)
+                out["_sort_destination"] = out.apply(
+                    lambda row: _partner_destination_value(row, region_catalog),
+                    axis=1,
+                )
                 out["_sort_plan"] = out.get(
                     "Plan",
                     pd.Series("", index=out.index),
@@ -864,7 +1086,10 @@ def build_partner_price_pack(
                     ]
                 )
 
-                out = _partner_price_output_columns(out)
+                out = _partner_price_output_columns(
+                    out,
+                    region_catalog,
+                )
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))
                 results.append(

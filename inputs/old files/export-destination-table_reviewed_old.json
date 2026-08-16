@@ -1,138 +1,5 @@
 [
   {
-    "destination": "ADRIATIC",
-    "dictionary": {
-      "destination": {
-        "en": "Adriatic",
-        "hr": "Jadranska regija",
-        "de": "Adria",
-        "fr": "Adriatique",
-        "ja": "アドリア",
-        "it": "Adriatico",
-        "es": "Adriático",
-        "pt": "Adriático"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "ADRIATIC"
-  },
-  {
-    "destination": "AFRICA",
-    "dictionary": {
-      "destination": {
-        "en": "Africa",
-        "hr": "Afrika",
-        "de": "Afrika",
-        "fr": "Afrique",
-        "ja": "アフリカ",
-        "it": "Africa",
-        "es": "África",
-        "pt": "África"
-      }
-    },
-    "regions": [],
-    "code": "AFRICA"
-  },
-  {
-    "destination": "AFRICA_SAFARI",
-    "dictionary": {
-      "destination": {
-        "en": "Africa Safari",
-        "hr": "Afrika safari",
-        "de": "Afrika Safari",
-        "fr": "Safari en Afrique",
-        "ja": "アフリカサファリ",
-        "it": "Safari in Africa",
-        "es": "Safari en África",
-        "pt": "Safari na África"
-      }
-    },
-    "regions": [],
-    "code": "AFRICA_SAFARI"
-  },
-  {
-    "destination": "ALPINE_REGION",
-    "dictionary": {
-      "destination": {
-        "en": "Alpine Region",
-        "hr": "Alpska regija",
-        "de": "Alpenregion",
-        "fr": "Région alpine",
-        "ja": "アルプス地方",
-        "it": "Regione alpina",
-        "es": "Región alpina",
-        "pt": "Região Alpina"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "ALPINE_REGION"
-  },
-  {
-    "destination": "ANDEAN",
-    "dictionary": {
-      "destination": {
-        "en": "Andean",
-        "hr": "Ande",
-        "de": "Anden",
-        "fr": "Andes",
-        "ja": "アンデス",
-        "it": "Ande",
-        "es": "Andes",
-        "pt": "Andino"
-      }
-    },
-    "regions": [
-      "GLOBAL",
-      "LATAM",
-      "SOUTH_AMERICA"
-    ],
-    "code": "ANDEAN"
-  },
-  {
-    "destination": "ASIA",
-    "dictionary": {
-      "destination": {
-        "en": "Asia",
-        "hr": "Azija",
-        "de": "Asien",
-        "fr": "Asie",
-        "ja": "アジア",
-        "it": "Asia",
-        "es": "Asia",
-        "pt": "Ásia"
-      }
-    },
-    "regions": [],
-    "code": "ASIA"
-  },
-  {
-    "destination": "AUS_NZ",
-    "dictionary": {
-      "destination": {
-        "en": "Australia & New Zealand",
-        "hr": "Australija i Novi Zeland",
-        "de": "Australien & Neuseeland",
-        "fr": "Australie & Nouvelle-Zélande",
-        "ja": "オーストラリア・ニュージーランド",
-        "it": "Australia e Nuova Zelanda",
-        "es": "Australia y Nueva Zelanda",
-        "pt": "Austrália e Nova Zelândia"
-      }
-    },
-    "regions": [
-      "GLOBAL",
-      "OCEANIA",
-      "PACIFIC_LONG_HAUL"
-    ],
-    "code": "AUS_NZ"
-  },
-  {
     "destination": "Afghanistan",
     "dictionary": {
       "destination": {
@@ -142,11 +9,11 @@
         "fr": "Afghanistan",
         "ja": "アフガニスタン",
         "it": "Afghanistan",
-        "es": "Afganistán",
-        "pt": "Afeganistão"
+        "es": "Afganistán"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA"
     ],
     "code": "AF"
@@ -161,17 +28,16 @@
         "fr": "Albanie",
         "ja": "アルバニア",
         "it": "Albania",
-        "es": "Albania",
-        "pt": "Albânia"
+        "es": "Albania"
       }
     },
     "regions": [
-      "ADRIATIC",
-      "EUROPA",
       "GLOBAL",
-      "MEDITERRANEAN",
+      "EUROPA",
       "SE_EUROPE",
-      "WEST_BALKANS"
+      "WEST_BALKANS",
+      "ADRIATIC",
+      "MEDITERRANEAN"
     ],
     "code": "AL"
   },
@@ -185,16 +51,35 @@
         "fr": "Algérie",
         "ja": "アルジェリア",
         "it": "Algeria",
-        "es": "Argelia",
-        "pt": "Argélia"
+        "es": "Argelia"
       }
     },
     "regions": [
-      "AFRICA",
       "GLOBAL",
+      "AFRICA",
       "NORTH_AFRICA"
     ],
     "code": "DZ"
+  },
+  {
+    "destination": "Andorra",
+    "dictionary": {
+      "destination": {
+        "en": "Andorra",
+        "hr": "Andora",
+        "de": "Andorra",
+        "fr": "Andorre",
+        "ja": "アンドラ",
+        "it": "Andorra",
+        "es": "Andorra"
+      }
+    },
+    "regions": [
+      "GLOBAL",
+      "EUROPA",
+      "WEST_EUROPE"
+    ],
+    "code": "AD"
   },
   {
     "destination": "Angola",
@@ -206,11 +91,14 @@
         "fr": "Angola",
         "ja": "アンゴラ",
         "it": "Angola",
-        "es": "Angola",
-        "pt": "Angola"
+        "es": "Angola"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "AFRICA",
+      "CENTRAL_AFRICA"
+    ],
     "code": "AO"
   },
   {
@@ -223,11 +111,11 @@
         "fr": "Anguilla",
         "ja": "アンギラ",
         "it": "Anguilla",
-        "es": "Anguila",
-        "pt": "Anguila"
+        "es": "Anguila"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "LESSER_ANTILLES"
     ],
@@ -243,11 +131,11 @@
         "fr": "Antigua-et-Barbuda",
         "ja": "アンティグア・バーブーダ",
         "it": "Antigua e Barbuda",
-        "es": "Antigua y Barbuda",
-        "pt": "Antígua e Barbuda"
+        "es": "Antigua y Barbuda"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
       "LESSER_ANTILLES"
@@ -264,8 +152,7 @@
         "fr": "Argentine",
         "ja": "アルゼンチン",
         "it": "Argentina",
-        "es": "Argentina",
-        "pt": "Argentina"
+        "es": "Argentina"
       }
     },
     "regions": [
@@ -286,16 +173,31 @@
         "fr": "Arménie",
         "ja": "アルメニア",
         "it": "Armenia",
-        "es": "Armenia",
-        "pt": "Arménia"
+        "es": "Armenia"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
-      "CAUCASUS",
-      "GLOBAL"
+      "CAUCASUS"
     ],
     "code": "AM"
+  },
+  {
+    "destination": "Aruba",
+    "dictionary": {
+      "destination": {
+        "en": "Aruba",
+        "hr": "Aruba",
+        "de": "Aruba",
+        "fr": "Aruba",
+        "ja": "アルバ",
+        "it": "Aruba",
+        "es": "Aruba"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "AW"
   },
   {
     "destination": "Australia",
@@ -307,14 +209,13 @@
         "fr": "Australie",
         "ja": "オーストラリア",
         "it": "Australia",
-        "es": "Australia",
-        "pt": "Austrália"
+        "es": "Australia"
       }
     },
     "regions": [
-      "AUS_NZ",
       "GLOBAL",
       "OCEANIA",
+      "AUS_NZ",
       "PACIFIC_LONG_HAUL"
     ],
     "code": "AU"
@@ -329,16 +230,15 @@
         "fr": "Autriche",
         "ja": "オーストリア",
         "it": "Austria",
-        "es": "Austria",
-        "pt": "Áustria"
+        "es": "Austria"
       }
     },
     "regions": [
-      "ALPINE_REGION",
-      "CENTRAL_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "ALPINE_REGION"
     ],
     "code": "AT"
   },
@@ -352,76 +252,15 @@
         "fr": "Azerbaïdjan",
         "ja": "アゼルバイジャン",
         "it": "Azerbaigian",
-        "es": "Azerbaiyán",
-        "pt": "Azerbaijão"
+        "es": "Azerbaiyán"
       }
     },
     "regions": [
+      "GLOBAL",
+      "ASIA",
       "CAUCASUS"
     ],
     "code": "AZ"
-  },
-  {
-    "destination": "BALTICS_FI",
-    "dictionary": {
-      "destination": {
-        "en": "Baltics & Finland",
-        "hr": "Baltik i Finska",
-        "de": "Baltikum & Finnland",
-        "fr": "Pays baltes & Finlande",
-        "ja": "バルト諸国・フィンランド",
-        "it": "Paesi Baltici e Finlandia",
-        "es": "Países bálticos y Finlandia",
-        "pt": "Bálticos e Finlândia"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "EU_UK_NOR",
-      "GLOBAL"
-    ],
-    "code": "BALTICS_FI"
-  },
-  {
-    "destination": "BENELUX_FR",
-    "dictionary": {
-      "destination": {
-        "en": "Benelux & France",
-        "hr": "Beneluks i Francuska",
-        "de": "Benelux & Frankreich",
-        "fr": "Benelux & France",
-        "ja": "ベネルクス・フランス",
-        "it": "Benelux e Francia",
-        "es": "Benelux y Francia",
-        "pt": "Benelux e França"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "EU_UK_NOR",
-      "GLOBAL"
-    ],
-    "code": "BENELUX_FR"
-  },
-  {
-    "destination": "BRITISH_ISLES_IR",
-    "dictionary": {
-      "destination": {
-        "en": "British Isles & Ireland",
-        "hr": "Britanski otoci i Irska",
-        "de": "Britische Inseln & Irland",
-        "fr": "Îles britanniques & Irlande",
-        "ja": "イギリス諸島・アイルランド",
-        "it": "Isole britanniche e Irlanda",
-        "es": "Islas británicas e Irlanda",
-        "pt": "Ilhas Britânicas e Irlanda"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "BRITISH_ISLES_IR"
   },
   {
     "destination": "Bahamas",
@@ -433,14 +272,13 @@
         "fr": "Bahamas",
         "ja": "バハマ",
         "it": "Bahamas",
-        "es": "Bahamas",
-        "pt": "Baamas"
+        "es": "Bahamas"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
-      "GLOBAL",
       "NORTH_ATLANTIC_ISLANDS"
     ],
     "code": "BS"
@@ -455,16 +293,31 @@
         "fr": "Bahreïn",
         "ja": "バーレーン",
         "it": "Bahrain",
-        "es": "Bahrein",
-        "pt": "Barém"
+        "es": "Bahrein"
       }
     },
     "regions": [
       "GLOBAL",
-      "GULF_TRAVEL",
-      "MENA"
+      "MENA",
+      "GULF_TRAVEL"
     ],
     "code": "BH"
+  },
+  {
+    "destination": "Bangladesh",
+    "dictionary": {
+      "destination": {
+        "en": "Bangladesh",
+        "hr": "Bangladeš",
+        "de": "Bangladesch",
+        "fr": "Bangladesh",
+        "ja": "バングラデシュ",
+        "it": "Bangladesh",
+        "es": "Bangladesh"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "BD"
   },
   {
     "destination": "Barbados",
@@ -476,11 +329,11 @@
         "fr": "Barbade",
         "ja": "バルバドス",
         "it": "Barbados",
-        "es": "Barbados",
-        "pt": "Barbados"
+        "es": "Barbados"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
       "LESSER_ANTILLES"
@@ -497,11 +350,11 @@
         "fr": "Biélorussie",
         "ja": "ベラルーシ",
         "it": "Bielorussia",
-        "es": "Bielorrusia",
-        "pt": "Bielorrússia"
+        "es": "Bielorrusia"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA"
     ],
     "code": "BY"
@@ -516,17 +369,32 @@
         "fr": "Belgique",
         "ja": "ベルギー",
         "it": "Belgio",
-        "es": "Bélgica",
-        "pt": "Bélgica"
+        "es": "Bélgica"
       }
     },
     "regions": [
-      "BENELUX_FR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BENELUX_FR"
     ],
     "code": "BE"
+  },
+  {
+    "destination": "Benin",
+    "dictionary": {
+      "destination": {
+        "en": "Benin",
+        "hr": "Benin",
+        "de": "Benin",
+        "fr": "Bénin",
+        "ja": "ベナン",
+        "it": "Benin",
+        "es": "Benin"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "BJ"
   },
   {
     "destination": "Bermuda",
@@ -538,15 +406,31 @@
         "fr": "Bermudes",
         "ja": "バミューダ",
         "it": "Bermuda",
-        "es": "Bermudas",
-        "pt": "Bermudas"
+        "es": "Bermudas"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "NORTH_ATLANTIC_ISLANDS"
     ],
     "code": "BM"
+  },
+  {
+    "destination": "Bolivia, Plurinational State of",
+    "dictionary": {
+      "destination": {
+        "en": "Bolivia",
+        "hr": "Bolivija",
+        "de": "Bolivien",
+        "fr": "Bolivie",
+        "ja": "ボリビア多民族国",
+        "it": "Bolivia",
+        "es": "Bolivia"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "BO"
   },
   {
     "destination": "Bonaire, Sint Eustatius and Saba",
@@ -558,11 +442,11 @@
         "fr": "Bonaire, Saint-Eustache et Saba",
         "ja": "ボネール、シント・ユースタティウスおよびサバ",
         "it": "Isole BES",
-        "es": "Bonaire, San Eustaquio y Saba",
-        "pt": "Bonaire, Santo Eustáquio e Saba"
+        "es": "Bonaire, San Eustaquio y Saba"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "LESSER_ANTILLES"
     ],
@@ -578,13 +462,12 @@
         "fr": "Bosnie-Herzégovine",
         "ja": "ボスニア・ヘルツェゴビナ",
         "it": "Bosnia ed Erzegovina",
-        "es": "Bosnia y Herzegovina",
-        "pt": "Bósnia e Herzegovina"
+        "es": "Bosnia y Herzegovina"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "SE_EUROPE",
       "WEST_BALKANS"
     ],
@@ -600,14 +483,14 @@
         "fr": "Botswana",
         "ja": "ボツワナ",
         "it": "Botswana",
-        "es": "Botswana",
-        "pt": "Botsuana"
+        "es": "Botswana"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
-      "AFRICA_SAFARI",
-      "SOUTHERN_AFRICA"
+      "SOUTHERN_AFRICA",
+      "AFRICA_SAFARI"
     ],
     "code": "BW"
   },
@@ -621,8 +504,7 @@
         "fr": "Brésil",
         "ja": "ブラジル",
         "it": "Brasile",
-        "es": "Brasil",
-        "pt": "Brasil"
+        "es": "Brasil"
       }
     },
     "regions": [
@@ -634,27 +516,6 @@
     "code": "BR"
   },
   {
-    "destination": "Virgin Islands, British",
-    "dictionary": {
-      "destination": {
-        "en": "Virgin Islands, British",
-        "hr": "Britanski Djevičanski otoci",
-        "de": "Britische Jungferninseln",
-        "fr": "Îles vierges britanniques",
-        "ja": "イギリス領ヴァージン諸島",
-        "it": "Isole Vergini Britanniche",
-        "es": "Islas Vírgenes británicas",
-        "pt": "Ilhas Virgens Britânicas"
-      }
-    },
-    "regions": [
-      "CARIBBEAN",
-      "GLOBAL",
-      "LESSER_ANTILLES"
-    ],
-    "code": "VG"
-  },
-  {
     "destination": "Bulgaria",
     "dictionary": {
       "destination": {
@@ -664,147 +525,33 @@
         "fr": "Bulgarie",
         "ja": "ブルガリア",
         "it": "Bulgaria",
-        "es": "Bulgaria",
-        "pt": "Bulgária"
+        "es": "Bulgaria"
       }
     },
     "regions": [
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "SE_EUROPE"
+      "SE_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "BG"
   },
   {
-    "destination": "CARIBBEAN",
+    "destination": "Burkina Faso",
     "dictionary": {
       "destination": {
-        "en": "Caribbean",
-        "hr": "Karibski",
-        "de": "Karibik",
-        "fr": "Caraïbes",
-        "ja": "カリブ海",
-        "it": "Caribbean",
-        "es": "Caribe",
-        "pt": "Caraíbas"
+        "en": "Burkina Faso",
+        "hr": "Burkina Faso",
+        "de": "Burkina Faso",
+        "fr": "Burkina Faso",
+        "ja": "ブルキナファソ",
+        "it": "Burkina Faso",
+        "es": "Burkina Faso"
       }
     },
-    "regions": [],
-    "code": "CARIBBEAN"
-  },
-  {
-    "destination": "CARIBBEAN_CRUISE",
-    "dictionary": {
-      "destination": {
-        "en": "Caribbean Cruise",
-        "hr": "Karipsko krstarenje",
-        "de": "Karibik-Kreuzfahrt",
-        "fr": "Croisière aux Caraïbes",
-        "ja": "カリブ海クルーズ",
-        "it": "Crociera nei Caraibi",
-        "es": "Crucero por el Caribe",
-        "pt": "Cruzeiro nas Caraíbas"
-      }
-    },
-    "regions": [
-      "CARIBBEAN"
-    ],
-    "code": "CARIBBEAN_CRUISE"
-  },
-  {
-    "destination": "CAUCASUS",
-    "dictionary": {
-      "destination": {
-        "en": "Caucasus",
-        "hr": "Kavkaz",
-        "de": "Kaukasus",
-        "fr": "Caucase",
-        "ja": "コーカサス",
-        "it": "Caucaso",
-        "es": "Cáucaso",
-        "pt": "Cáucaso"
-      }
-    },
-    "regions": [],
-    "code": "CAUCASUS"
-  },
-  {
-    "destination": "CENTRAL_AFRICA",
-    "dictionary": {
-      "destination": {
-        "en": "Central Africa",
-        "hr": "Srednja Afrika",
-        "de": "Zentralafrika",
-        "fr": "Afrique centrale",
-        "ja": "中央アフリカ",
-        "it": "Africa centrale",
-        "es": "África Central",
-        "pt": "África Central"
-      }
-    },
-    "regions": [
-      "AFRICA"
-    ],
-    "code": "CENTRAL_AFRICA"
-  },
-  {
-    "destination": "CENTRAL_AMERICA",
-    "dictionary": {
-      "destination": {
-        "en": "Central America",
-        "hr": "Srednja Amerika",
-        "de": "Mittelamerika",
-        "fr": "Amérique centrale",
-        "ja": "中央アメリカ",
-        "it": "America centrale",
-        "es": "América Central",
-        "pt": "América Central"
-      }
-    },
-    "regions": [
-      "GLOBAL",
-      "LATAM"
-    ],
-    "code": "CENTRAL_AMERICA"
-  },
-  {
-    "destination": "CENTRAL_ASIA",
-    "dictionary": {
-      "destination": {
-        "en": "Central Asia",
-        "hr": "Srednja Azija",
-        "de": "Zentralasien",
-        "fr": "Asie centrale",
-        "ja": "中央アジア",
-        "it": "Asia centrale",
-        "es": "Asia Central",
-        "pt": "Ásia Central"
-      }
-    },
-    "regions": [],
-    "code": "CENTRAL_ASIA"
-  },
-  {
-    "destination": "CENTRAL_EUROPE",
-    "dictionary": {
-      "destination": {
-        "en": "Central Europe",
-        "hr": "Srednja Europa",
-        "de": "Mitteleuropa",
-        "fr": "Europe centrale",
-        "ja": "中央ヨーロッパ",
-        "it": "Europa centrale",
-        "es": "Europa Central",
-        "pt": "Europa Central"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "CENTRAL_EUROPE"
+    "regions": ["GLOBAL"],
+    "code": "BF"
   },
   {
     "destination": "Cambodia",
@@ -816,12 +563,31 @@
         "fr": "Cambodge",
         "ja": "カンボジア",
         "it": "Cambogia",
-        "es": "Camboya",
-        "pt": "Camboja"
+        "es": "Camboya"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "ASIA",
+      "INDOCHINA"
+    ],
     "code": "KH"
+  },
+  {
+    "destination": "Cameroon",
+    "dictionary": {
+      "destination": {
+        "en": "Cameroon",
+        "hr": "Kamerun",
+        "de": "Kamerun",
+        "fr": "Cameroun",
+        "ja": "カメルーン",
+        "it": "Camerun",
+        "es": "Camerún"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "CM"
   },
   {
     "destination": "Canada",
@@ -833,8 +599,7 @@
         "fr": "Canada",
         "ja": "カナダ",
         "it": "Canada",
-        "es": "Canadá",
-        "pt": "Canadá"
+        "es": "Canadá"
       }
     },
     "regions": [
@@ -854,11 +619,13 @@
         "fr": "Cap-Vert",
         "ja": "カーボベルデ",
         "it": "Capo Verde",
-        "es": "Cabo Verde",
-        "pt": "Cabo Verde"
+        "es": "Cabo Verde"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "AFRICA"
+    ],
     "code": "CV"
   },
   {
@@ -871,11 +638,11 @@
         "fr": "Îles Caïmans",
         "ja": "ケイマン諸島",
         "it": "Isole Cayman",
-        "es": "Islas Caimán",
-        "pt": "Ilhas Caimão"
+        "es": "Islas Caimán"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE"
     ],
@@ -891,11 +658,11 @@
         "fr": "Tchad",
         "ja": "チャド",
         "it": "Ciad",
-        "es": "Chad",
-        "pt": "Chade"
+        "es": "Chad"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "CENTRAL_AFRICA"
     ],
@@ -911,15 +678,14 @@
         "fr": "Chili",
         "ja": "チリ",
         "it": "Cile",
-        "es": "Chile",
-        "pt": "Chile"
+        "es": "Chile"
       }
     },
     "regions": [
-      "ANDEAN",
       "GLOBAL",
       "LATAM",
       "SOUTH_AMERICA",
+      "ANDEAN",
       "SOUTH_CONE"
     ],
     "code": "CL"
@@ -934,14 +700,13 @@
         "fr": "Chine",
         "ja": "中華人民共和国",
         "it": "Cina",
-        "es": "China",
-        "pt": "China"
+        "es": "China"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
-      "EAST_ASIA_PLUS",
-      "GLOBAL"
+      "EAST_ASIA_PLUS"
     ],
     "code": "CN"
   },
@@ -955,20 +720,19 @@
         "fr": "Colombie",
         "ja": "コロンビア",
         "it": "Colombia",
-        "es": "Colombia",
-        "pt": "Colômbia"
+        "es": "Colombia"
       }
     },
     "regions": [
-      "ANDEAN",
       "GLOBAL",
       "LATAM",
-      "SOUTH_AMERICA"
+      "SOUTH_AMERICA",
+      "ANDEAN"
     ],
     "code": "CO"
   },
   {
-    "destination": "Democratic Republic of the Congo",
+    "destination": "Congo, The Democratic Republic of the",
     "dictionary": {
       "destination": {
         "en": "Democratic Republic of the Congo",
@@ -977,11 +741,11 @@
         "fr": "République démocratique du Congo",
         "ja": "コンゴ民主共和国",
         "it": "Repubblica Democratica del Congo",
-        "es": "Congo (República Democrática del)",
-        "pt": "República Democrática do Congo"
+        "es": "Congo (República Democrática del)"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "CENTRAL_AFRICA"
     ],
@@ -997,16 +761,31 @@
         "fr": "Costa Rica",
         "ja": "コスタリカ",
         "it": "Costa Rica",
-        "es": "Costa Rica",
-        "pt": "Costa Rica"
+        "es": "Costa Rica"
       }
     },
     "regions": [
-      "CENTRAL_AMERICA",
       "GLOBAL",
-      "LATAM"
+      "LATAM",
+      "CENTRAL_AMERICA"
     ],
     "code": "CR"
+  },
+  {
+    "destination": "Côte d'Ivoire",
+    "dictionary": {
+      "destination": {
+        "en": "Cote d'Ivoire",
+        "hr": "Obala Bjelokosti",
+        "de": "Elfenbeinküste",
+        "fr": "Côte-d'Ivoire",
+        "ja": "コートジボワール",
+        "it": "Costa d'Avorio",
+        "es": "Costa de Marfil"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "CI"
   },
   {
     "destination": "Croatia",
@@ -1018,18 +797,17 @@
         "fr": "Croatie",
         "ja": "クロアチア",
         "it": "Croazia",
-        "es": "Croacia",
-        "pt": "Croácia"
+        "es": "Croacia"
       }
     },
     "regions": [
-      "ADRIATIC",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "MEDITERRANEAN",
       "SE_EUROPE",
-      "WEST_BALKANS"
+      "WEST_BALKANS",
+      "ADRIATIC",
+      "MEDITERRANEAN"
     ],
     "code": "HR"
   },
@@ -1043,11 +821,14 @@
         "fr": "Cuba",
         "ja": "キューバ",
         "it": "Cuba",
-        "es": "Cuba",
-        "pt": "Cuba"
+        "es": "Cuba"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "LATAM",
+      "CARIBBEAN"
+    ],
     "code": "CU"
   },
   {
@@ -1060,20 +841,19 @@
         "fr": "Chypre",
         "ja": "キプロス",
         "it": "Cipro",
-        "es": "Chipre",
-        "pt": "Chipre"
+        "es": "Chipre"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "MEDITERRANEAN"
     ],
     "code": "CY"
   },
   {
-    "destination": "Czech Republic",
+    "destination": "Czechia",
     "dictionary": {
       "destination": {
         "en": "Czech Republic",
@@ -1082,16 +862,15 @@
         "fr": "République Tchèque",
         "ja": "チェコ",
         "it": "Repubblica Ceca",
-        "es": "República Checa",
-        "pt": "República Checa"
+        "es": "República Checa"
       }
     },
     "regions": [
-      "CENTRAL_EUROPE",
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "CZ"
   },
@@ -1105,112 +884,64 @@
         "fr": "Danemark",
         "ja": "デンマーク",
         "it": "Danimarca",
-        "es": "Dinamarca",
-        "pt": "Dinamarca"
+        "es": "Dinamarca"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "NORDICS"
     ],
     "code": "DK"
   },
   {
-    "destination": "EAST_AFRICA",
+    "destination": "Dominica",
     "dictionary": {
       "destination": {
-        "en": "East Africa",
-        "hr": "Istočna Afrika",
-        "de": "Ostafrika",
-        "fr": "Afrique de l'Est",
-        "ja": "東アフリカ",
-        "it": "Africa orientale",
-        "es": "África Oriental",
-        "pt": "África Oriental"
+        "en": "Dominica",
+        "hr": "Dominika",
+        "de": "Dominica",
+        "fr": "Dominique",
+        "ja": "ドミニカ国",
+        "it": "Dominica",
+        "es": "Dominica"
       }
     },
-    "regions": [
-      "AFRICA_SAFARI"
-    ],
-    "code": "EAST_AFRICA"
+    "regions": ["GLOBAL"],
+    "code": "DM"
   },
   {
-    "destination": "EAST_ASIA_PLUS",
+    "destination": "Dominican Republic",
     "dictionary": {
       "destination": {
-        "en": "East Asia Plus",
-        "hr": "Istočna Azija Plus",
-        "de": "Ostasien Plus",
-        "fr": "Asie de l'Est Plus",
-        "ja": "東アジアプラス",
-        "it": "Asia orientale Plus",
-        "es": "Asia Oriental Plus",
-        "pt": "Ásia Oriental Plus"
+        "en": "Dominican Republic",
+        "hr": "Dominikanska Republika",
+        "de": "Dominikanische Republik",
+        "fr": "République Dominicaine",
+        "ja": "ドミニカ共和国",
+        "it": "Repubblica Dominicana",
+        "es": "República Dominicana"
       }
     },
-    "regions": [
-      "ASIA"
-    ],
-    "code": "EAST_ASIA_PLUS"
+    "regions": ["GLOBAL"],
+    "code": "DO"
   },
   {
-    "destination": "EAST_EUROPE",
+    "destination": "East Timor",
     "dictionary": {
       "destination": {
-        "en": "Eastern Europe",
-        "hr": "Istočna Europa",
-        "de": "Osteuropa",
-        "fr": "Europe de l'Est",
-        "ja": "東ヨーロッパ",
-        "it": "Europa orientale",
-        "es": "Europa del Este",
-        "pt": "Europa de Leste"
+        "en": "Timor-Leste",
+        "hr": "Timor-Leste",
+        "de": "Osttimor",
+        "fr": "Timor-Leste",
+        "ja": "東ティモール",
+        "it": "Timor Est",
+        "es": "Timor-Leste"
       }
     },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "EAST_EUROPE"
-  },
-  {
-    "destination": "EUROPA",
-    "dictionary": {
-      "destination": {
-        "en": "Europe",
-        "hr": "Evropa",
-        "de": "Europa",
-        "fr": "Europe",
-        "ja": "ヨーロッパ",
-        "it": "Europa",
-        "es": "Europa",
-        "pt": "Europa"
-      }
-    },
-    "regions": [],
-    "code": "EUROPA"
-  },
-  {
-    "destination": "EU_UK_NOR",
-    "dictionary": {
-      "destination": {
-        "en": "EU+UK+NOR",
-        "hr": "EU+UK+NOR",
-        "de": "EU+UK+NOR",
-        "fr": "EU+UK+NOR",
-        "ja": "EU+UK+NOR",
-        "it": "EU+UK+NOR",
-        "es": "EU+UK+NOR",
-        "pt": "EU+UK+NOR"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "EU_UK_NOR"
+    "regions": ["GLOBAL"],
+    "code": "TL"
   },
   {
     "destination": "Ecuador",
@@ -1222,15 +953,14 @@
         "fr": "Équateur",
         "ja": "エクアドル",
         "it": "Ecuador",
-        "es": "Ecuador",
-        "pt": "Equador"
+        "es": "Ecuador"
       }
     },
     "regions": [
-      "ANDEAN",
       "GLOBAL",
       "LATAM",
-      "SOUTH_AMERICA"
+      "SOUTH_AMERICA",
+      "ANDEAN"
     ],
     "code": "EC"
   },
@@ -1244,13 +974,13 @@
         "fr": "Égypte",
         "ja": "エジプト",
         "it": "Egitto",
-        "es": "Egipto",
-        "pt": "Egito"
+        "es": "Egipto"
       }
     },
     "regions": [
-      "AFRICA",
+      "GLOBAL",
       "MENA",
+      "AFRICA",
       "NORTH_AFRICA"
     ],
     "code": "EG"
@@ -1265,14 +995,13 @@
         "fr": "El Salvador",
         "ja": "エルサルバドル",
         "it": "El Salvador",
-        "es": "El Salvador",
-        "pt": "El Salvador"
+        "es": "El Salvador"
       }
     },
     "regions": [
-      "CENTRAL_AMERICA",
       "GLOBAL",
-      "LATAM"
+      "LATAM",
+      "CENTRAL_AMERICA"
     ],
     "code": "SV"
   },
@@ -1286,15 +1015,14 @@
         "fr": "Estonie",
         "ja": "エストニア",
         "it": "Estonia",
-        "es": "Estonia",
-        "pt": "Estónia"
+        "es": "Estonia"
       }
     },
     "regions": [
-      "BALTICS_FI",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BALTICS_FI"
     ],
     "code": "EE"
   },
@@ -1308,11 +1036,14 @@
         "fr": "Éthiopie",
         "ja": "エチオピア",
         "it": "Etiopia",
-        "es": "Etiopía",
-        "pt": "Etiópia"
+        "es": "Etiopía"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "AFRICA",
+      "EAST_AFRICA"
+    ],
     "code": "ET"
   },
   {
@@ -1325,13 +1056,12 @@
         "fr": "Îles Féroé",
         "ja": "フェロー諸島",
         "it": "Isole Fær Øer",
-        "es": "Islas Feroe",
-        "pt": "Ilhas Faroé"
+        "es": "Islas Feroe"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "NORDICS"
     ],
     "code": "FO"
@@ -1346,11 +1076,15 @@
         "fr": "Fidji",
         "ja": "フィジー",
         "it": "Figi",
-        "es": "Fiji",
-        "pt": "Fiji"
+        "es": "Fiji"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "OCEANIA",
+      "SOUTH_PACIFIC",
+      "PACIFIC_LONG_HAUL"
+    ],
     "code": "FJ"
   },
   {
@@ -1363,16 +1097,15 @@
         "fr": "Finlande",
         "ja": "フィンランド",
         "it": "Finlandia",
-        "es": "Finlandia",
-        "pt": "Finlândia"
+        "es": "Finlandia"
       }
     },
     "regions": [
-      "BALTICS_FI",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "NORDICS"
+      "NORDICS",
+      "BALTICS_FI"
     ],
     "code": "FI"
   },
@@ -1386,56 +1119,56 @@
         "fr": "France",
         "ja": "フランス",
         "it": "Francia",
-        "es": "Francia",
-        "pt": "França"
+        "es": "Francia"
       }
     },
     "regions": [
-      "ALPINE_REGION",
-      "BENELUX_FR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
+      "WEST_EUROPE",
+      "BENELUX_FR",
       "MEDITERRANEAN",
-      "WEST_EUROPE"
+      "ALPINE_REGION"
     ],
     "code": "FR"
   },
   {
-    "destination": "GLOBAL",
+    "destination": "French Polynesia",
     "dictionary": {
       "destination": {
-        "en": "Global",
-        "hr": "Global",
-        "de": "Global",
-        "fr": "Global",
-        "ja": "Global",
-        "it": "Global",
-        "es": "Global",
-        "pt": "Global"
-      }
-    },
-    "regions": [],
-    "code": "GLOBAL"
-  },
-  {
-    "destination": "GULF_TRAVEL",
-    "dictionary": {
-      "destination": {
-        "en": "Gulf Travel",
-        "hr": "Putovanje u Zaljev",
-        "de": "Golf-Reise",
-        "fr": "Voyage dans le Golfe",
-        "ja": "湾岸旅行",
-        "it": "Viaggio nel Golfo",
-        "es": "Viaje al Golfo",
-        "pt": "Viagem no Golfo"
+        "en": "French Polynesia",
+        "hr": "Francuska Polinezija",
+        "de": "Französisch-Polynesien",
+        "fr": "Polynésie française",
+        "ja": "フランス領ポリネシア",
+        "it": "Polinesia Francese",
+        "es": "Polinesia Francesa"
       }
     },
     "regions": [
-      "MENA"
+      "GLOBAL",
+      "OCEANIA",
+      "SOUTH_PACIFIC",
+      "PACIFIC_LONG_HAUL"
     ],
-    "code": "GULF_TRAVEL"
+    "code": "PF"
+  },
+  {
+    "destination": "Gabon",
+    "dictionary": {
+      "destination": {
+        "en": "Gabon",
+        "hr": "Gabon",
+        "de": "Gabun",
+        "fr": "Gabon",
+        "ja": "ガボン",
+        "it": "Gabon",
+        "es": "Gabón"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "GA"
   },
   {
     "destination": "Gambia",
@@ -1447,11 +1180,11 @@
         "fr": "Gambie",
         "ja": "ガンビア",
         "it": "Gambia",
-        "es": "Gambia",
-        "pt": "Gâmbia"
+        "es": "Gambia"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
@@ -1467,14 +1200,13 @@
         "fr": "Géorgie",
         "ja": "ジョージア",
         "it": "Georgia",
-        "es": "Georgia",
-        "pt": "Geórgia"
+        "es": "Georgia"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
-      "CAUCASUS",
-      "GLOBAL"
+      "CAUCASUS"
     ],
     "code": "GE"
   },
@@ -1488,16 +1220,15 @@
         "fr": "Allemagne",
         "ja": "ドイツ",
         "it": "Germania",
-        "es": "Alemania",
-        "pt": "Alemanha"
+        "es": "Alemania"
       }
     },
     "regions": [
-      "ALPINE_REGION",
-      "CENTRAL_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "ALPINE_REGION"
     ],
     "code": "DE"
   },
@@ -1511,15 +1242,31 @@
         "fr": "Ghana",
         "ja": "ガーナ",
         "it": "Ghana",
-        "es": "Ghana",
-        "pt": "Gana"
+        "es": "Ghana"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
     "code": "GH"
+  },
+  {
+    "destination": "Gibraltar",
+    "dictionary": {
+      "destination": {
+        "en": "Gibraltar",
+        "hr": "Gibraltar",
+        "de": "Gibraltar",
+        "fr": "Gibraltar",
+        "ja": "ジブラルタル",
+        "it": "Gibilterra",
+        "es": "Gibraltar"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "GI"
   },
   {
     "destination": "Greece",
@@ -1531,16 +1278,15 @@
         "fr": "Grèce",
         "ja": "ギリシャ",
         "it": "Grecia",
-        "es": "Grecia",
-        "pt": "Grécia"
+        "es": "Grecia"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "MEDITERRANEAN",
-      "SE_EUROPE"
+      "SE_EUROPE",
+      "MEDITERRANEAN"
     ],
     "code": "GR"
   },
@@ -1554,12 +1300,30 @@
         "fr": "Groenland",
         "ja": "グリーンランド",
         "it": "Groenlandia",
-        "es": "Groenlandia",
-        "pt": "Gronelândia"
+        "es": "Groenlandia"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "NORDICS"
+    ],
     "code": "GL"
+  },
+  {
+    "destination": "Grenada",
+    "dictionary": {
+      "destination": {
+        "en": "Grenada",
+        "hr": "Grenada",
+        "de": "Grenada",
+        "fr": "Grenade",
+        "ja": "グレナダ",
+        "it": "Grenada",
+        "es": "Granada"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "GD"
   },
   {
     "destination": "Guadeloupe",
@@ -1571,11 +1335,11 @@
         "fr": "Guadeloupe",
         "ja": "グアドループ",
         "it": "Guadalupa",
-        "es": "Guadalupe",
-        "pt": "Guadalupe"
+        "es": "Guadalupe"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "LESSER_ANTILLES"
     ],
@@ -1591,14 +1355,13 @@
         "fr": "Guatemala",
         "ja": "グアテマラ",
         "it": "Guatemala",
-        "es": "Guatemala",
-        "pt": "Guatemala"
+        "es": "Guatemala"
       }
     },
     "regions": [
-      "CENTRAL_AMERICA",
       "GLOBAL",
-      "LATAM"
+      "LATAM",
+      "CENTRAL_AMERICA"
     ],
     "code": "GT"
   },
@@ -1612,16 +1375,63 @@
         "fr": "Guernesey",
         "ja": "ガーンジー",
         "it": "Guernsey",
-        "es": "Guernsey",
-        "pt": "Guernsey"
+        "es": "Guernsey"
       }
     },
     "regions": [
-      "BRITISH_ISLES_IR",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "BRITISH_ISLES_IR"
     ],
     "code": "GG"
+  },
+  {
+    "destination": "Guinea",
+    "dictionary": {
+      "destination": {
+        "en": "Guinea",
+        "hr": "Gvineja",
+        "de": "Guinea",
+        "fr": "Guinée",
+        "ja": "ギニア",
+        "it": "Guinea",
+        "es": "Guinea"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "GN"
+  },
+  {
+    "destination": "Guyana",
+    "dictionary": {
+      "destination": {
+        "en": "Guyana",
+        "hr": "Gvajana",
+        "de": "Guyana",
+        "fr": "Guyana",
+        "ja": "ガイアナ",
+        "it": "Guyana",
+        "es": "Guyana"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "GY"
+  },
+  {
+    "destination": "Haiti",
+    "dictionary": {
+      "destination": {
+        "en": "Haiti",
+        "hr": "Haiti",
+        "de": "Haiti",
+        "fr": "Haïti",
+        "ja": "ハイチ",
+        "it": "Haiti",
+        "es": "Haití"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "HT"
   },
   {
     "destination": "Hong Kong",
@@ -1633,14 +1443,13 @@
         "fr": "Hong Kong",
         "ja": "香港",
         "it": "Hong Kong",
-        "es": "Hong Kong",
-        "pt": "Hong Kong"
+        "es": "Hong Kong"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
-      "EAST_ASIA_PLUS",
-      "GLOBAL"
+      "EAST_ASIA_PLUS"
     ],
     "code": "HK"
   },
@@ -1654,77 +1463,17 @@
         "fr": "Hongrie",
         "ja": "ハンガリー",
         "it": "Ungheria",
-        "es": "Hungría",
-        "pt": "Hungria"
+        "es": "Hungría"
       }
     },
     "regions": [
-      "CENTRAL_EUROPE",
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "HU"
-  },
-  {
-    "destination": "INDIAN_OCEAN",
-    "dictionary": {
-      "destination": {
-        "en": "Indian Ocean",
-        "hr": "Indijski ocean",
-        "de": "Indischer Ozean",
-        "fr": "Océan Indien",
-        "ja": "インド洋",
-        "it": "Oceano Indiano",
-        "es": "Océano Índico",
-        "pt": "Oceano Índico"
-      }
-    },
-    "regions": [],
-    "code": "INDIAN_OCEAN"
-  },
-  {
-    "destination": "INDOCHINA",
-    "dictionary": {
-      "destination": {
-        "en": "Indochina",
-        "hr": "Indokina",
-        "de": "Indochina",
-        "fr": "Indochine",
-        "ja": "インドシナ",
-        "it": "Indocina",
-        "es": "Indochina",
-        "pt": "Indochina"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "GLOBAL",
-      "SOUTHEAST_ASIA"
-    ],
-    "code": "INDOCHINA"
-  },
-  {
-    "destination": "ISLAND_SE_ASIA",
-    "dictionary": {
-      "destination": {
-        "en": "Island Southeast Asia",
-        "hr": "Otočna Jugoistočna Azija",
-        "de": "Insel-Südostasien",
-        "fr": "Asie du Sud-Est insulaire",
-        "ja": "島嶼東南アジア",
-        "it": "Asia sud-orientale insulare",
-        "es": "Sudeste asiático insular",
-        "pt": "Sudeste Asiático Insular"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "GLOBAL",
-      "SOUTHEAST_ASIA"
-    ],
-    "code": "ISLAND_SE_ASIA"
   },
   {
     "destination": "Iceland",
@@ -1736,13 +1485,12 @@
         "fr": "Islande",
         "ja": "アイスランド",
         "it": "Islanda",
-        "es": "Islandia",
-        "pt": "Islândia"
+        "es": "Islandia"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "NORDICS"
     ],
     "code": "IS"
@@ -1757,13 +1505,12 @@
         "fr": "Inde",
         "ja": "インド",
         "it": "India",
-        "es": "India",
-        "pt": "Índia"
+        "es": "India"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
+      "ASIA",
       "SUBCONTINENT"
     ],
     "code": "IN"
@@ -1778,20 +1525,19 @@
         "fr": "Indonésie",
         "ja": "インドネシア",
         "it": "Indonesia",
-        "es": "Indonesia",
-        "pt": "Indonésia"
+        "es": "Indonesia"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
-      "ISLAND_SE_ASIA",
-      "SOUTHEAST_ASIA"
+      "ASIA",
+      "SOUTHEAST_ASIA",
+      "ISLAND_SE_ASIA"
     ],
     "code": "ID"
   },
   {
-    "destination": "Iran",
+    "destination": "Iran, Islamic Republic of",
     "dictionary": {
       "destination": {
         "en": "Islamic Republic of Iran",
@@ -1800,11 +1546,14 @@
         "fr": "Iran",
         "ja": "イラン・イスラム共和国",
         "it": "Iran",
-        "es": "Irán",
-        "pt": "Irão"
+        "es": "Irán"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "MENA",
+      "ASIA"
+    ],
     "code": "IR"
   },
   {
@@ -1817,14 +1566,13 @@
         "fr": "Irak",
         "ja": "イラク",
         "it": "Iraq",
-        "es": "Iraq",
-        "pt": "Iraque"
+        "es": "Iraq"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
-      "MENA"
+      "MENA",
+      "ASIA"
     ],
     "code": "IQ"
   },
@@ -1838,17 +1586,32 @@
         "fr": "Irlande",
         "ja": "アイルランド",
         "it": "Irlanda",
-        "es": "Irlanda",
-        "pt": "Irlanda"
+        "es": "Irlanda"
       }
     },
     "regions": [
-      "BRITISH_ISLES_IR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BRITISH_ISLES_IR"
     ],
     "code": "IE"
+  },
+  {
+    "destination": "Isle of Man",
+    "dictionary": {
+      "destination": {
+        "en": "Isle of Man",
+        "hr": "Otok Man",
+        "de": "Insel Man",
+        "fr": "Île de Man",
+        "ja": "マン島",
+        "it": "Isola di Man",
+        "es": "Isla de Man"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "IM"
   },
   {
     "destination": "Israel",
@@ -1860,14 +1623,13 @@
         "fr": "Israël",
         "ja": "イスラエル",
         "it": "Israele",
-        "es": "Israel",
-        "pt": "Israel"
+        "es": "Israel"
       }
     },
     "regions": [
       "GLOBAL",
-      "LEVANT",
-      "MENA"
+      "MENA",
+      "LEVANT"
     ],
     "code": "IL"
   },
@@ -1881,39 +1643,18 @@
         "fr": "Italie",
         "ja": "イタリア",
         "it": "Italia",
-        "es": "Italia",
-        "pt": "Itália"
+        "es": "Italia"
       }
     },
     "regions": [
-      "ADRIATIC",
-      "ALPINE_REGION",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "MEDITERRANEAN"
+      "ADRIATIC",
+      "MEDITERRANEAN",
+      "ALPINE_REGION"
     ],
     "code": "IT"
-  },
-  {
-    "destination": "JP_KR_TW",
-    "dictionary": {
-      "destination": {
-        "en": "Japan, Korea & Taiwan",
-        "hr": "Japan, Koreja i Tajvan",
-        "de": "Japan, Korea & Taiwan",
-        "fr": "Japon, Corée & Taïwan",
-        "ja": "日本・韓国・台湾",
-        "it": "Giappone, Corea e Taiwan",
-        "es": "Japón, Corea y Taiwán",
-        "pt": "Japão, Coreia e Taiwan"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "GLOBAL"
-    ],
-    "code": "JP_KR_TW"
   },
   {
     "destination": "Jamaica",
@@ -1925,14 +1666,13 @@
         "fr": "Jamaïque",
         "ja": "ジャマイカ",
         "it": "Giamaica",
-        "es": "Jamaica",
-        "pt": "Jamaica"
+        "es": "Jamaica"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
-      "CARIBBEAN_CRUISE",
-      "GLOBAL"
+      "CARIBBEAN_CRUISE"
     ],
     "code": "JM"
   },
@@ -1946,13 +1686,12 @@
         "fr": "Japon",
         "ja": "日本",
         "it": "Giappone",
-        "es": "Japón",
-        "pt": "Japão"
+        "es": "Japón"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
+      "ASIA",
       "JP_KR_TW"
     ],
     "code": "JP"
@@ -1967,14 +1706,13 @@
         "fr": "Jersey",
         "ja": "ジャージー",
         "it": "Jersey",
-        "es": "Jersey",
-        "pt": "Jersey"
+        "es": "Jersey"
       }
     },
     "regions": [
-      "BRITISH_ISLES_IR",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "BRITISH_ISLES_IR"
     ],
     "code": "JE"
   },
@@ -1988,14 +1726,13 @@
         "fr": "Jordanie",
         "ja": "ヨルダン",
         "it": "Giordania",
-        "es": "Jordania",
-        "pt": "Jordânia"
+        "es": "Jordania"
       }
     },
     "regions": [
       "GLOBAL",
-      "LEVANT",
-      "MENA"
+      "MENA",
+      "LEVANT"
     ],
     "code": "JO"
   },
@@ -2009,11 +1746,14 @@
         "fr": "Kazakhstan",
         "ja": "カザフスタン",
         "it": "Kazakistan",
-        "es": "Kazajistán",
-        "pt": "Cazaquistão"
+        "es": "Kazajistán"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "ASIA",
+      "CENTRAL_ASIA"
+    ],
     "code": "KZ"
   },
   {
@@ -2026,12 +1766,36 @@
         "fr": "Kenya",
         "ja": "ケニア",
         "it": "Kenya",
-        "es": "Kenia",
-        "pt": "Quénia"
+        "es": "Kenia"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "AFRICA",
+      "EAST_AFRICA",
+      "AFRICA_SAFARI"
+    ],
     "code": "KE"
+  },
+  {
+    "destination": "Korea, Republic of",
+    "dictionary": {
+      "destination": {
+        "en": "South Korea",
+        "hr": "Južna Koreja",
+        "de": "Südkorea",
+        "fr": "Corée du Sud",
+        "ja": "大韓民国",
+        "it": "Corea del Sud",
+        "es": "República de Corea"
+      }
+    },
+    "regions": [
+      "GLOBAL",
+      "ASIA",
+      "JP_KR_TW"
+    ],
+    "code": "KR"
   },
   {
     "destination": "Kosovo",
@@ -2043,13 +1807,12 @@
         "fr": "Kosovo",
         "ja": "コソボ",
         "it": "Kosovo",
-        "es": "Kosovo",
-        "pt": "Kosovo"
+        "es": "Kosovo"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "SE_EUROPE",
       "WEST_BALKANS"
     ],
@@ -2065,14 +1828,13 @@
         "fr": "Koweït",
         "ja": "クウェート",
         "it": "Kuwait",
-        "es": "Kuwait",
-        "pt": "Kuwait"
+        "es": "Kuwait"
       }
     },
     "regions": [
       "GLOBAL",
-      "GULF_TRAVEL",
-      "MENA"
+      "MENA",
+      "GULF_TRAVEL"
     ],
     "code": "KW"
   },
@@ -2086,72 +1848,15 @@
         "fr": "Kirghizistan",
         "ja": "キルギス",
         "it": "Kirghizistan",
-        "es": "Kirguistán",
-        "pt": "Quirguistão"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "CENTRAL_ASIA",
-      "GLOBAL"
-    ],
-    "code": "KG"
-  },
-  {
-    "destination": "LATAM",
-    "dictionary": {
-      "destination": {
-        "en": "Latin America",
-        "hr": "Latin America",
-        "de": "Latin America",
-        "fr": "Latin America",
-        "ja": "ラテンアメリカ",
-        "it": "America Latina",
-        "es": "América Latina",
-        "pt": "América Latina"
-      }
-    },
-    "regions": [],
-    "code": "LATAM"
-  },
-  {
-    "destination": "LESSER_ANTILLES",
-    "dictionary": {
-      "destination": {
-        "en": "Lesser Antilles",
-        "hr": "Mali Antili",
-        "de": "Kleine Antillen",
-        "fr": "Petites Antilles",
-        "ja": "小アンティル諸島",
-        "it": "Piccole Antille",
-        "es": "Antillas Menores",
-        "pt": "Pequenas Antilhas"
-      }
-    },
-    "regions": [
-      "CARIBBEAN"
-    ],
-    "code": "LESSER_ANTILLES"
-  },
-  {
-    "destination": "LEVANT",
-    "dictionary": {
-      "destination": {
-        "en": "Levant",
-        "hr": "Levant",
-        "de": "Levante",
-        "fr": "Levant",
-        "ja": "レバント",
-        "it": "Levante",
-        "es": "Levante",
-        "pt": "Levante"
+        "es": "Kirguistán"
       }
     },
     "regions": [
       "GLOBAL",
-      "MENA"
+      "ASIA",
+      "CENTRAL_ASIA"
     ],
-    "code": "LEVANT"
+    "code": "KG"
   },
   {
     "destination": "Lao People's Democratic Republic",
@@ -2163,11 +1868,14 @@
         "fr": "Laos",
         "ja": "ラオス人民民主共和国",
         "it": "Laos",
-        "es": "República Democrática Popular de Lao",
-        "pt": "Laos"
+        "es": "República Democrática Popular de Lao"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "ASIA",
+      "INDOCHINA"
+    ],
     "code": "LA"
   },
   {
@@ -2180,17 +1888,36 @@
         "fr": "Lettonie",
         "ja": "ラトビア",
         "it": "Lettonia",
-        "es": "Letonia",
-        "pt": "Letónia"
+        "es": "Letonia"
       }
     },
     "regions": [
-      "BALTICS_FI",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BALTICS_FI"
     ],
     "code": "LV"
+  },
+  {
+    "destination": "Lebanon",
+    "dictionary": {
+      "destination": {
+        "en": "Lebanon",
+        "hr": "Libanon",
+        "de": "Libanon",
+        "fr": "Liban",
+        "ja": "レバノン",
+        "it": "Libano",
+        "es": "Líbano"
+      }
+    },
+    "regions": [
+      "GLOBAL",
+      "MENA",
+      "LEVANT"
+    ],
+    "code": "LB"
   },
   {
     "destination": "Liberia",
@@ -2202,15 +1929,36 @@
         "fr": "Libéria",
         "ja": "リベリア",
         "it": "Liberia",
-        "es": "Liberia",
-        "pt": "Libéria"
+        "es": "Liberia"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
     "code": "LR"
+  },
+  {
+    "destination": "Libya",
+    "dictionary": {
+      "destination": {
+        "en": "Libya",
+        "hr": "Libija",
+        "de": "Libyen",
+        "fr": "Libye",
+        "ja": "リビア",
+        "it": "Libia",
+        "es": "Libia"
+      }
+    },
+    "regions": [
+      "GLOBAL",
+      "MENA",
+      "AFRICA",
+      "NORTH_AFRICA"
+    ],
+    "code": "LY"
   },
   {
     "destination": "Liechtenstein",
@@ -2222,14 +1970,13 @@
         "fr": "Liechtenstein",
         "ja": "リヒテンシュタイン",
         "it": "Liechtenstein",
-        "es": "Liechtenstein",
-        "pt": "Liechtenstein"
+        "es": "Liechtenstein"
       }
     },
     "regions": [
-      "ALPINE_REGION",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "ALPINE_REGION"
     ],
     "code": "LI"
   },
@@ -2243,15 +1990,14 @@
         "fr": "Lituanie",
         "ja": "リトアニア",
         "it": "Lituania",
-        "es": "Lituania",
-        "pt": "Lituânia"
+        "es": "Lituania"
       }
     },
     "regions": [
-      "BALTICS_FI",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BALTICS_FI"
     ],
     "code": "LT"
   },
@@ -2265,54 +2011,16 @@
         "fr": "Luxembourg",
         "ja": "ルクセンブルク",
         "it": "Lussemburgo",
-        "es": "Luxemburgo",
-        "pt": "Luxemburgo"
+        "es": "Luxemburgo"
       }
     },
     "regions": [
-      "BENELUX_FR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BENELUX_FR"
     ],
     "code": "LU"
-  },
-  {
-    "destination": "MEDITERRANEAN",
-    "dictionary": {
-      "destination": {
-        "en": "Mediterranean",
-        "hr": "Mediteran",
-        "de": "Mittelmeer",
-        "fr": "Méditerranée",
-        "ja": "地中海",
-        "it": "Mediterraneo",
-        "es": "Meditáneo",
-        "pt": "Mediterrâneo"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "MEDITERRANEAN"
-  },
-  {
-    "destination": "MENA",
-    "dictionary": {
-      "destination": {
-        "en": "Middle East and North Africa",
-        "hr": "Middle East and North Africa",
-        "de": "Middle East and North Africa",
-        "fr": "Middle East and North Africa",
-        "ja": "中東と北アフリカ",
-        "it": "Middle East and North Africa",
-        "es": "Medio Oriente y Norte de África",
-        "pt": "Médio Oriente e Norte de África"
-      }
-    },
-    "regions": [],
-    "code": "MENA"
   },
   {
     "destination": "Macao",
@@ -2324,15 +2032,31 @@
         "fr": "Macao",
         "ja": "マカオ",
         "it": "Macao",
-        "es": "Macao",
-        "pt": "Macau"
+        "es": "Macao"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
       "EAST_ASIA_PLUS"
     ],
     "code": "MO"
+  },
+  {
+    "destination": "Madagascar",
+    "dictionary": {
+      "destination": {
+        "en": "Madagascar",
+        "hr": "Madagaskar",
+        "de": "Madagaskar",
+        "fr": "Madagascar",
+        "ja": "マダガスカル",
+        "it": "Madagascar",
+        "es": "Madagascar"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "MG"
   },
   {
     "destination": "Malaysia",
@@ -2344,15 +2068,14 @@
         "fr": "Malaisie",
         "ja": "マレーシア",
         "it": "Malesia",
-        "es": "Malasia",
-        "pt": "Malásia"
+        "es": "Malasia"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
-      "ISLAND_SE_ASIA",
-      "SOUTHEAST_ASIA"
+      "ASIA",
+      "SOUTHEAST_ASIA",
+      "ISLAND_SE_ASIA"
     ],
     "code": "MY"
   },
@@ -2366,11 +2089,11 @@
         "fr": "Maldives",
         "ja": "モルディブ",
         "it": "Maldive",
-        "es": "Maldivas",
-        "pt": "Maldivas"
+        "es": "Maldivas"
       }
     },
     "regions": [
+      "GLOBAL",
       "INDIAN_OCEAN"
     ],
     "code": "MV"
@@ -2385,11 +2108,11 @@
         "fr": "Mali",
         "ja": "マリ",
         "it": "Mali",
-        "es": "Malí",
-        "pt": "Mali"
+        "es": "Malí"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
@@ -2405,17 +2128,32 @@
         "fr": "Malte",
         "ja": "マルタ",
         "it": "Malta",
-        "es": "Malta",
-        "pt": "Malta"
+        "es": "Malta"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "MEDITERRANEAN"
     ],
     "code": "MT"
+  },
+  {
+    "destination": "Mauritania",
+    "dictionary": {
+      "destination": {
+        "en": "Mauritania",
+        "hr": "Mauretanija",
+        "de": "Mauretanien",
+        "fr": "Mauritanie",
+        "ja": "モーリタニア",
+        "it": "Mauritania",
+        "es": "Mauritania"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "MR"
   },
   {
     "destination": "Mauritius",
@@ -2427,11 +2165,11 @@
         "fr": "Maurice",
         "ja": "モーリシャス",
         "it": "Mauritius",
-        "es": "Mauricio",
-        "pt": "Maurícia"
+        "es": "Mauricio"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "INDIAN_OCEAN"
     ],
@@ -2447,15 +2185,14 @@
         "fr": "Mexique",
         "ja": "メキシコ",
         "it": "Messico",
-        "es": "México",
-        "pt": "México"
+        "es": "México"
       }
     },
     "regions": [
-      "CENTRAL_AMERICA",
       "GLOBAL",
+      "NORTH_AMERICA",
       "LATAM",
-      "NORTH_AMERICA"
+      "CENTRAL_AMERICA"
     ],
     "code": "MX"
   },
@@ -2469,14 +2206,13 @@
         "fr": "Moldavie",
         "ja": "モルドバ共和国",
         "it": "Moldavia",
-        "es": "Moldavia",
-        "pt": "Moldávia"
+        "es": "Moldavia"
       }
     },
     "regions": [
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "EAST_EUROPE"
     ],
     "code": "MD"
   },
@@ -2490,12 +2226,32 @@
         "fr": "Monaco",
         "ja": "モナコ",
         "it": "Monaco",
-        "es": "Mónaco",
-        "pt": "Mónaco"
+        "es": "Mónaco"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "EUROPA",
+      "WEST_EUROPE",
+      "MEDITERRANEAN"
+    ],
     "code": "MC"
+  },
+  {
+    "destination": "Mongolia",
+    "dictionary": {
+      "destination": {
+        "en": "Mongolia",
+        "hr": "Mongolija",
+        "de": "Mongolei",
+        "fr": "Mongolie",
+        "ja": "モンゴル",
+        "it": "Mongolia",
+        "es": "Mongolia"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "MN"
   },
   {
     "destination": "Montenegro",
@@ -2507,19 +2263,34 @@
         "fr": "Monténégro",
         "ja": "モンテネグロ",
         "it": "Montenegro",
-        "es": "Montenegro",
-        "pt": "Montenegro"
+        "es": "Montenegro"
       }
     },
     "regions": [
-      "ADRIATIC",
-      "EUROPA",
       "GLOBAL",
-      "MEDITERRANEAN",
+      "EUROPA",
       "SE_EUROPE",
-      "WEST_BALKANS"
+      "WEST_BALKANS",
+      "ADRIATIC",
+      "MEDITERRANEAN"
     ],
     "code": "ME"
+  },
+  {
+    "destination": "Montserrat",
+    "dictionary": {
+      "destination": {
+        "en": "Montserrat",
+        "hr": "Montserrat",
+        "de": "Montserrat",
+        "fr": "Montserrat",
+        "ja": "モントセラト",
+        "it": "Montserrat",
+        "es": "Montserrat"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "MS"
   },
   {
     "destination": "Morocco",
@@ -2531,94 +2302,48 @@
         "fr": "Maroc",
         "ja": "モロッコ",
         "it": "Marocco",
-        "es": "Marruecos",
-        "pt": "Marrocos"
+        "es": "Marruecos"
       }
     },
     "regions": [
-      "AFRICA",
       "GLOBAL",
       "MENA",
+      "AFRICA",
       "NORTH_AFRICA"
     ],
     "code": "MA"
   },
   {
-    "destination": "NORDICS",
+    "destination": "Mozambique",
     "dictionary": {
       "destination": {
-        "en": "Nordics",
-        "hr": "Nordijske zemlje",
-        "de": "Nordische Länder",
-        "fr": "Pays nordiques",
-        "ja": "北欧",
-        "it": "Paesi nordici",
-        "es": "Países nórdicos",
-        "pt": "Países Nórdicos"
+        "en": "Mozambique",
+        "hr": "Mozambik",
+        "de": "Mosambik",
+        "fr": "Mozambique",
+        "ja": "モザンビーク",
+        "it": "Mozambico",
+        "es": "Mozambique"
       }
     },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "NORDICS"
+    "regions": ["GLOBAL"],
+    "code": "MZ"
   },
   {
-    "destination": "NORTH_AFRICA",
+    "destination": "Namibia",
     "dictionary": {
       "destination": {
-        "en": "North Africa",
-        "hr": "Sjeverna Afrika",
-        "de": "Nordafrika",
-        "fr": "Afrique du Nord",
-        "ja": "北アフリカ",
-        "it": "Nord Africa",
-        "es": "África del Norte",
-        "pt": "Norte de África"
+        "en": "Namibia",
+        "hr": "Namibija",
+        "de": "Namibia",
+        "fr": "Namibie",
+        "ja": "ナミビア",
+        "it": "Namibia",
+        "es": "Namibia"
       }
     },
-    "regions": [
-      "AFRICA"
-    ],
-    "code": "NORTH_AFRICA"
-  },
-  {
-    "destination": "NORTH_AMERICA",
-    "dictionary": {
-      "destination": {
-        "en": "North America",
-        "hr": "North America",
-        "de": "North America",
-        "fr": "North America",
-        "ja": "北アメリカ",
-        "it": "North America",
-        "es": "América del Norte",
-        "pt": "América do Norte"
-      }
-    },
-    "regions": [
-      "GLOBAL"
-    ],
-    "code": "NORTH_AMERICA"
-  },
-  {
-    "destination": "NORTH_ATLANTIC_ISLANDS",
-    "dictionary": {
-      "destination": {
-        "en": "North Atlantic Islands",
-        "hr": "Sjevernoatlantski otoci",
-        "de": "Nordatlantische Inseln",
-        "fr": "Îles de l'Atlantique Nord",
-        "ja": "北大西洋諸島",
-        "it": "Isole dell'Atlantico settentrionale",
-        "es": "Islas del Atlántico Norte",
-        "pt": "Ilhas do Atlântico Norte"
-      }
-    },
-    "regions": [
-      "CARIBBEAN"
-    ],
-    "code": "NORTH_ATLANTIC_ISLANDS"
+    "regions": ["GLOBAL"],
+    "code": "NA"
   },
   {
     "destination": "Nepal",
@@ -2630,11 +2355,14 @@
         "fr": "Népal",
         "ja": "ネパール",
         "it": "Nepal",
-        "es": "Nepal",
-        "pt": "Nepal"
+        "es": "Nepal"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "ASIA",
+      "SUBCONTINENT"
+    ],
     "code": "NP"
   },
   {
@@ -2647,15 +2375,14 @@
         "fr": "Pays-Bas",
         "ja": "オランダ",
         "it": "Paesi Bassi",
-        "es": "Países Bajos",
-        "pt": "Países Baixos"
+        "es": "Países Bajos"
       }
     },
     "regions": [
-      "BENELUX_FR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BENELUX_FR"
     ],
     "code": "NL"
   },
@@ -2669,14 +2396,13 @@
         "fr": "Nouvelle-Zélande",
         "ja": "ニュージーランド",
         "it": "Nuova Zelanda",
-        "es": "Nueva Zelanda",
-        "pt": "Nova Zelândia"
+        "es": "Nueva Zelanda"
       }
     },
     "regions": [
-      "AUS_NZ",
       "GLOBAL",
       "OCEANIA",
+      "AUS_NZ",
       "PACIFIC_LONG_HAUL"
     ],
     "code": "NZ"
@@ -2691,14 +2417,13 @@
         "fr": "Nicaragua",
         "ja": "ニカラグア",
         "it": "Nicaragua",
-        "es": "Nicaragua",
-        "pt": "Nicarágua"
+        "es": "Nicaragua"
       }
     },
     "regions": [
-      "CENTRAL_AMERICA",
       "GLOBAL",
-      "LATAM"
+      "LATAM",
+      "CENTRAL_AMERICA"
     ],
     "code": "NI"
   },
@@ -2712,11 +2437,11 @@
         "fr": "Nigéria",
         "ja": "ナイジェリア",
         "it": "Nigeria",
-        "es": "Nigeria",
-        "pt": "Nigéria"
+        "es": "Nigeria"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
@@ -2732,13 +2457,12 @@
         "fr": "Macédoine du Nord",
         "ja": "北マケドニア",
         "it": "Macedonia del Nord",
-        "es": "Macedonia del Norte",
-        "pt": "Macedónia do Norte"
+        "es": "Macedonia del Norte"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "SE_EUROPE",
       "WEST_BALKANS"
     ],
@@ -2754,38 +2478,16 @@
         "fr": "Norvège",
         "ja": "ノルウェー",
         "it": "Norvegia",
-        "es": "Noruega",
-        "pt": "Noruega"
+        "es": "Noruega"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "NORDICS"
     ],
     "code": "NO"
-  },
-  {
-    "destination": "OCEANIA",
-    "dictionary": {
-      "destination": {
-        "en": "Oceania",
-        "hr": "Oceania",
-        "de": "Oceania",
-        "fr": "Oceanie",
-        "ja": "オセアニア",
-        "it": "Oceania",
-        "es": "Oceanía",
-        "pt": "Oceânia"
-      }
-    },
-    "regions": [
-      "AUS_NZ",
-      "GLOBAL",
-      "PACIFIC_LONG_HAUL"
-    ],
-    "code": "OCEANIA"
   },
   {
     "destination": "Oman",
@@ -2797,36 +2499,15 @@
         "fr": "Oman",
         "ja": "オマーン",
         "it": "Oman",
-        "es": "Omán",
-        "pt": "Omã"
+        "es": "Omán"
       }
     },
     "regions": [
-      "GULF_TRAVEL",
-      "MENA"
+      "GLOBAL",
+      "MENA",
+      "GULF_TRAVEL"
     ],
     "code": "OM"
-  },
-  {
-    "destination": "PACIFIC_LONG_HAUL",
-    "dictionary": {
-      "destination": {
-        "en": "Pacific Long Haul",
-        "hr": "Daleki Pacifik",
-        "de": "Pazifik Langstrecke",
-        "fr": "Long-courrier Pacifique",
-        "ja": "太平洋長距離",
-        "it": "Lungo raggio Pacifico",
-        "es": "Largo recorrido Pacífico",
-        "pt": "Pacífico Longo Curso"
-      }
-    },
-    "regions": [
-      "AUS_NZ",
-      "GLOBAL",
-      "OCEANIA"
-    ],
-    "code": "PACIFIC_LONG_HAUL"
   },
   {
     "destination": "Pakistan",
@@ -2838,16 +2519,51 @@
         "fr": "Pakistan",
         "ja": "パキスタン",
         "it": "Pakistan",
-        "es": "Pakistán",
-        "pt": "Paquistão"
+        "es": "Pakistán"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
+      "ASIA",
       "SUBCONTINENT"
     ],
     "code": "PK"
+  },
+  {
+    "destination": "Palau",
+    "dictionary": {
+      "destination": {
+        "en": "Palau",
+        "hr": "Palau",
+        "de": "Palau",
+        "fr": "Palaos",
+        "ja": "パラオ",
+        "it": "Palau",
+        "es": "Palau"
+      }
+    },
+    "regions": [
+      "OCEANIA",
+      "SOUTH_PACIFIC",
+      "PACIFIC_LONG_HAUL"
+    ],
+    "code": "PW"
+  },
+  {
+    "destination": "Palestine, State of",
+    "dictionary": {
+      "destination": {
+        "en": "State of Palestine",
+        "hr": "Palestinsko Područje",
+        "de": "Staat Palästina",
+        "fr": "Palestine",
+        "ja": "パレスチナ",
+        "it": "Stato di Palestina",
+        "es": "Palestina"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "PS"
   },
   {
     "destination": "Panama",
@@ -2859,11 +2575,14 @@
         "fr": "Panama",
         "ja": "パナマ",
         "it": "Panamá",
-        "es": "Panamá",
-        "pt": "Panamá"
+        "es": "Panamá"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "LATAM",
+      "CENTRAL_AMERICA"
+    ],
     "code": "PA"
   },
   {
@@ -2876,11 +2595,15 @@
         "fr": "Papouasie-Nouvelle-Guinée",
         "ja": "パプアニューギニア",
         "it": "Papua Nuova Guinea",
-        "es": "Papua Nueva Guinea",
-        "pt": "Papua-Nova Guiné"
+        "es": "Papua Nueva Guinea"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "OCEANIA",
+      "SOUTH_PACIFIC",
+      "PACIFIC_LONG_HAUL"
+    ],
     "code": "PG"
   },
   {
@@ -2893,8 +2616,7 @@
         "fr": "Paraguay",
         "ja": "パラグアイ",
         "it": "Paraguay",
-        "es": "Paraguay",
-        "pt": "Paraguai"
+        "es": "Paraguay"
       }
     },
     "regions": [
@@ -2915,15 +2637,14 @@
         "fr": "Pérou",
         "ja": "ペルー",
         "it": "Perù",
-        "es": "Perú",
-        "pt": "Peru"
+        "es": "Perú"
       }
     },
     "regions": [
-      "ANDEAN",
       "GLOBAL",
       "LATAM",
-      "SOUTH_AMERICA"
+      "SOUTH_AMERICA",
+      "ANDEAN"
     ],
     "code": "PE"
   },
@@ -2937,15 +2658,14 @@
         "fr": "Philippines",
         "ja": "フィリピン",
         "it": "Filippine",
-        "es": "Filipinas",
-        "pt": "Filipinas"
+        "es": "Filipinas"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
-      "ISLAND_SE_ASIA",
-      "SOUTHEAST_ASIA"
+      "ASIA",
+      "SOUTHEAST_ASIA",
+      "ISLAND_SE_ASIA"
     ],
     "code": "PH"
   },
@@ -2959,16 +2679,15 @@
         "fr": "Pologne",
         "ja": "ポーランド",
         "it": "Polonia",
-        "es": "Polonia",
-        "pt": "Polónia"
+        "es": "Polonia"
       }
     },
     "regions": [
-      "CENTRAL_EUROPE",
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "PL"
   },
@@ -2982,14 +2701,13 @@
         "fr": "Portugal",
         "ja": "ポルトガル",
         "it": "Portogallo",
-        "es": "Portugal",
-        "pt": "Portugal"
+        "es": "Portugal"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "WEST_EUROPE"
     ],
     "code": "PT"
@@ -3004,14 +2722,13 @@
         "fr": "Porto Rico",
         "ja": "プエルトリコ",
         "it": "Porto Rico",
-        "es": "Puerto Rico",
-        "pt": "Porto Rico"
+        "es": "Puerto Rico"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
-      "GLOBAL",
       "NORTH_ATLANTIC_ISLANDS"
     ],
     "code": "PR"
@@ -3026,19 +2743,18 @@
         "fr": "Qatar",
         "ja": "カタール",
         "it": "Qatar",
-        "es": "Catar",
-        "pt": "Catar"
+        "es": "Catar"
       }
     },
     "regions": [
       "GLOBAL",
-      "GULF_TRAVEL",
-      "MENA"
+      "MENA",
+      "GULF_TRAVEL"
     ],
     "code": "QA"
   },
   {
-    "destination": "Reunion",
+    "destination": "Réunion",
     "dictionary": {
       "destination": {
         "en": "Reunion",
@@ -3047,13 +2763,12 @@
         "fr": "Réunion",
         "ja": "レユニオン",
         "it": "Réunion",
-        "es": "Reunión",
-        "pt": "Reunião"
+        "es": "Reunión"
       }
     },
     "regions": [
-      "AFRICA",
       "GLOBAL",
+      "AFRICA",
       "INDIAN_OCEAN"
     ],
     "code": "RE"
@@ -3068,21 +2783,20 @@
         "fr": "Roumanie",
         "ja": "ルーマニア",
         "it": "Romania",
-        "es": "Rumanía",
-        "pt": "Roménia"
+        "es": "Rumanía"
       }
     },
     "regions": [
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "SE_EUROPE"
+      "SE_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "RO"
   },
   {
-    "destination": "Russia",
+    "destination": "Russian Federation",
     "dictionary": {
       "destination": {
         "en": "Russian Federation",
@@ -3091,13 +2805,12 @@
         "fr": "Russie",
         "ja": "ロシア連邦",
         "it": "Russia",
-        "es": "Rusia",
-        "pt": "Rússia"
+        "es": "Rusia"
       }
     },
     "regions": [
-      "EUROPA",
-      "GLOBAL"
+      "GLOBAL",
+      "EUROPA"
     ],
     "code": "RU"
   },
@@ -3111,133 +2824,16 @@
         "fr": "Rwanda",
         "ja": "ルワンダ",
         "it": "Ruanda",
-        "es": "Ruanda",
-        "pt": "Ruanda"
-      }
-    },
-    "regions": [
-      "AFRICA",
-      "AFRICA_SAFARI",
-      "EAST_AFRICA"
-    ],
-    "code": "RW"
-  },
-  {
-    "destination": "SE_EUROPE",
-    "dictionary": {
-      "destination": {
-        "en": "South-East Europe",
-        "hr": "Jugoistočna Europa",
-        "de": "Südosteuropa",
-        "fr": "Europe du Sud-Est",
-        "ja": "南欧",
-        "it": "Europa del Sud-Est",
-        "es": "Europa del Sud-Este",
-        "pt": "Sudeste da Europa"
-      }
-    },
-    "regions": [
-      "EUROPA",
-      "GLOBAL"
-    ],
-    "code": "SE_EUROPE"
-  },
-  {
-    "destination": "SOUTHEAST_ASIA",
-    "dictionary": {
-      "destination": {
-        "en": "Southeast Asia",
-        "hr": "Jugoistočna Azija",
-        "de": "Südostasien",
-        "fr": "Asie du Sud-Est",
-        "ja": "東南アジア",
-        "it": "Sud-est asiatico",
-        "es": "Sudeste asiático",
-        "pt": "Sudeste Asiático"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "GLOBAL"
-    ],
-    "code": "SOUTHEAST_ASIA"
-  },
-  {
-    "destination": "SOUTHERN_AFRICA",
-    "dictionary": {
-      "destination": {
-        "en": "Southern Africa",
-        "hr": "Južna Afrika",
-        "de": "Südafrika",
-        "fr": "Afrique australe",
-        "ja": "南アフリカ",
-        "it": "Africa meridionale",
-        "es": "África Austral",
-        "pt": "África Austral"
-      }
-    },
-    "regions": [
-      "AFRICA",
-      "AFRICA_SAFARI"
-    ],
-    "code": "SOUTHERN_AFRICA"
-  },
-  {
-    "destination": "SOUTH_AMERICA",
-    "dictionary": {
-      "destination": {
-        "en": "South America",
-        "hr": "Južna Amerika",
-        "de": "Südamerika",
-        "fr": "Amérique du Sud",
-        "ja": "南アメリカ",
-        "it": "Sudamerica",
-        "es": "América del Sur",
-        "pt": "América do Sul"
-      }
-    },
-    "regions": [
-      "LATAM"
-    ],
-    "code": "SOUTH_AMERICA"
-  },
-  {
-    "destination": "SOUTH_CONE",
-    "dictionary": {
-      "destination": {
-        "en": "Southern Cone",
-        "hr": "Južni stožer",
-        "de": "Südkegel",
-        "fr": "Cône sud",
-        "ja": "南部コーン",
-        "it": "Cono Sud",
-        "es": "Cono Sur",
-        "pt": "Cone Sul"
+        "es": "Ruanda"
       }
     },
     "regions": [
       "GLOBAL",
-      "LATAM",
-      "SOUTH_AMERICA"
+      "AFRICA",
+      "EAST_AFRICA",
+      "AFRICA_SAFARI"
     ],
-    "code": "SOUTH_CONE"
-  },
-  {
-    "destination": "SUBCONTINENT",
-    "dictionary": {
-      "destination": {
-        "en": "Subcontinent",
-        "hr": "Potkontinent",
-        "de": "Subkontinent",
-        "fr": "Sous-continent",
-        "ja": "亜大陸",
-        "it": "Subcontinente",
-        "es": "Subcontinente",
-        "pt": "Subcontinente"
-      }
-    },
-    "regions": [],
-    "code": "SUBCONTINENT"
+    "code": "RW"
   },
   {
     "destination": "Saint Kitts and Nevis",
@@ -3249,11 +2845,11 @@
         "fr": "Saint-Christophe-et-Niévès",
         "ja": "セントクリストファー・ネイビス",
         "it": "Saint Kitts e Nevis",
-        "es": "Saint Kitts y Nevis",
-        "pt": "São Cristóvão e Neves"
+        "es": "Saint Kitts y Nevis"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
       "LESSER_ANTILLES"
@@ -3270,16 +2866,64 @@
         "fr": "Sainte-Lucie",
         "ja": "セントルシア",
         "it": "Santa Lucia",
-        "es": "Santa Lucía",
-        "pt": "Santa Lúcia"
+        "es": "Santa Lucía"
       }
     },
     "regions": [
+      "GLOBAL",
       "CARIBBEAN",
       "CARIBBEAN_CRUISE",
       "LESSER_ANTILLES"
     ],
     "code": "LC"
+  },
+  {
+    "destination": "Saint Vincent and the Grenadines",
+    "dictionary": {
+      "destination": {
+        "en": "Saint Vincent and the Grenadines",
+        "hr": "Sveti Vincent i Grenadini",
+        "de": "St. Vincent und die Grenadinen",
+        "fr": "Saint-Vincent-et-les-Grenadines",
+        "ja": "セントビンセントおよびグレナディーン諸島",
+        "it": "Saint Vincent e Grenadine",
+        "es": "San Vicente y las Granadinas"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "VC"
+  },
+  {
+    "destination": "Samoa",
+    "dictionary": {
+      "destination": {
+        "en": "Samoa",
+        "hr": "Samoa",
+        "de": "Samoa",
+        "fr": "Samoa",
+        "ja": "サモア",
+        "it": "Samoa",
+        "es": "Samoa"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "WS"
+  },
+  {
+    "destination": "Sao Tome and Principe",
+    "dictionary": {
+      "destination": {
+        "en": "Sao Tome and Principe",
+        "hr": "Sveti Toma i Princip",
+        "de": "São Tomé und Príncipe",
+        "fr": "São Tomé-et-Principe",
+        "ja": "サントメ・プリンシペ",
+        "it": "São Tomé e Príncipe",
+        "es": "Santo Tomé y Príncipe"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "ST"
   },
   {
     "destination": "Saudi Arabia",
@@ -3291,13 +2935,13 @@
         "fr": "Arabie Saoudite",
         "ja": "サウジアラビア",
         "it": "Arabia Saudita",
-        "es": "Arabia Saudita",
-        "pt": "Arábia Saudita"
+        "es": "Arabia Saudita"
       }
     },
     "regions": [
-      "GULF_TRAVEL",
-      "MENA"
+      "GLOBAL",
+      "MENA",
+      "GULF_TRAVEL"
     ],
     "code": "SA"
   },
@@ -3311,11 +2955,11 @@
         "fr": "Sénégal",
         "ja": "セネガル",
         "it": "Senegal",
-        "es": "Senegal",
-        "pt": "Senegal"
+        "es": "Senegal"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
       "WEST_AFRICA"
     ],
@@ -3331,37 +2975,32 @@
         "fr": "Serbie",
         "ja": "セルビア",
         "it": "Serbia",
-        "es": "Serbia",
-        "pt": "Sérvia"
+        "es": "Serbia"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "SE_EUROPE",
       "WEST_BALKANS"
     ],
     "code": "RS"
   },
   {
-    "destination": "Sierra Leone",
+    "destination": "Seychelles",
     "dictionary": {
       "destination": {
-        "en": "Sierra Leone",
-        "hr": "Sijera Leone",
-        "de": "Sierra Leone",
-        "fr": "Sierra Leone",
-        "ja": "シエラレオネ",
-        "it": "Sierra Leone",
-        "es": "Sierra Leona",
-        "pt": "Serra Leoa"
+        "en": "Seychelles",
+        "hr": "Sejšeli",
+        "de": "Seychellen",
+        "fr": "Seychelles",
+        "ja": "セーシェル",
+        "it": "Seychelles",
+        "es": "Seychelles"
       }
     },
-    "regions": [
-      "AFRICA",
-      "WEST_AFRICA"
-    ],
-    "code": "SL"
+    "regions": ["GLOBAL"],
+    "code": "SC"
   },
   {
     "destination": "Singapore",
@@ -3373,15 +3012,14 @@
         "fr": "Singapour",
         "ja": "シンガポール",
         "it": "Singapore",
-        "es": "Singapur",
-        "pt": "Singapura"
+        "es": "Singapur"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
-      "ISLAND_SE_ASIA",
-      "SOUTHEAST_ASIA"
+      "ASIA",
+      "SOUTHEAST_ASIA",
+      "ISLAND_SE_ASIA"
     ],
     "code": "SG"
   },
@@ -3395,16 +3033,15 @@
         "fr": "Slovaquie",
         "ja": "スロバキア",
         "it": "Slovacchia",
-        "es": "Eslovaquia",
-        "pt": "Eslováquia"
+        "es": "Eslovaquia"
       }
     },
     "regions": [
-      "CENTRAL_EUROPE",
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "EAST_EUROPE"
     ],
     "code": "SK"
   },
@@ -3418,16 +3055,15 @@
         "fr": "Slovénie",
         "ja": "スロベニア",
         "it": "Slovenia",
-        "es": "Eslovenia",
-        "pt": "Eslovénia"
+        "es": "Eslovenia"
       }
     },
     "regions": [
-      "ADRIATIC",
-      "ALPINE_REGION",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "ADRIATIC",
+      "ALPINE_REGION"
     ],
     "code": "SI"
   },
@@ -3441,37 +3077,16 @@
         "fr": "Afrique du Sud",
         "ja": "南アフリカ",
         "it": "Sudafrica",
-        "es": "Sudáfrica",
-        "pt": "África do Sul"
+        "es": "Sudáfrica"
       }
     },
     "regions": [
+      "GLOBAL",
       "AFRICA",
-      "AFRICA_SAFARI",
-      "SOUTHERN_AFRICA"
+      "SOUTHERN_AFRICA",
+      "AFRICA_SAFARI"
     ],
     "code": "ZA"
-  },
-  {
-    "destination": "South Korea",
-    "dictionary": {
-      "destination": {
-        "en": "South Korea",
-        "hr": "Južna Koreja",
-        "de": "Südkorea",
-        "fr": "Corée du Sud",
-        "ja": "大韓民国",
-        "it": "Corea del Sud",
-        "es": "República de Corea",
-        "pt": "Coreia do Sul"
-      }
-    },
-    "regions": [
-      "ASIA",
-      "GLOBAL",
-      "JP_KR_TW"
-    ],
-    "code": "KR"
   },
   {
     "destination": "Spain",
@@ -3483,16 +3098,15 @@
         "fr": "Espagne",
         "ja": "スペイン",
         "it": "Spagna",
-        "es": "España",
-        "pt": "Espanha"
+        "es": "España"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
-      "MEDITERRANEAN",
-      "WEST_EUROPE"
+      "WEST_EUROPE",
+      "MEDITERRANEAN"
     ],
     "code": "ES"
   },
@@ -3506,52 +3120,15 @@
         "fr": "Sri Lanka",
         "ja": "スリランカ",
         "it": "Sri Lanka",
-        "es": "Sri Lanka",
-        "pt": "Sri Lanca"
+        "es": "Sri Lanka"
       }
     },
     "regions": [
+      "GLOBAL",
+      "ASIA",
       "SUBCONTINENT"
     ],
     "code": "LK"
-  },
-  {
-    "destination": "Sudan",
-    "dictionary": {
-      "destination": {
-        "en": "Sudan",
-        "hr": "Sudan",
-        "de": "Sudan",
-        "fr": "Soudan",
-        "ja": "スーダン",
-        "it": "Sudan",
-        "es": "Sudán",
-        "pt": "Sudão"
-      }
-    },
-    "regions": [],
-    "code": "SD"
-  },
-  {
-    "destination": "Suriname",
-    "dictionary": {
-      "destination": {
-        "en": "Suriname",
-        "hr": "Surinam",
-        "de": "Suriname",
-        "fr": "Suriname",
-        "ja": "スリナム",
-        "it": "Suriname",
-        "es": "Surinam",
-        "pt": "Suriname"
-      }
-    },
-    "regions": [
-      "CARIBBEAN",
-      "LATAM",
-      "SOUTH_AMERICA"
-    ],
-    "code": "SR"
   },
   {
     "destination": "Sweden",
@@ -3563,14 +3140,13 @@
         "fr": "Suède",
         "ja": "スウェーデン",
         "it": "Svezia",
-        "es": "Suecia",
-        "pt": "Suécia"
+        "es": "Suecia"
       }
     },
     "regions": [
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL",
       "NORDICS"
     ],
     "code": "SE"
@@ -3585,20 +3161,19 @@
         "fr": "Suisse",
         "ja": "スイス",
         "it": "Svizzera",
-        "es": "Suiza",
-        "pt": "Suíça"
+        "es": "Suiza"
       }
     },
     "regions": [
-      "ALPINE_REGION",
-      "CENTRAL_EUROPE",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "CENTRAL_EUROPE",
+      "ALPINE_REGION"
     ],
     "code": "CH"
   },
   {
-    "destination": "Taiwan",
+    "destination": "Taiwan, Province of China",
     "dictionary": {
       "destination": {
         "en": "Taiwan, Province of China",
@@ -3607,14 +3182,13 @@
         "fr": "Taïwan",
         "ja": "台湾",
         "it": "Repubblica di Cina",
-        "es": "Taiwán",
-        "pt": "Taiwan"
+        "es": "Taiwán"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
       "EAST_ASIA_PLUS",
-      "GLOBAL",
       "JP_KR_TW"
     ],
     "code": "TW"
@@ -3629,17 +3203,18 @@
         "fr": "Tadjikistan",
         "ja": "タジキスタン",
         "it": "Tagikistan",
-        "es": "Tayikistán",
-        "pt": "Tajiquistão"
+        "es": "Tayikistán"
       }
     },
     "regions": [
+      "GLOBAL",
+      "ASIA",
       "CENTRAL_ASIA"
     ],
     "code": "TJ"
   },
   {
-    "destination": "Tanzania",
+    "destination": "Tanzania, United Republic of",
     "dictionary": {
       "destination": {
         "en": "United Republic of Tanzania",
@@ -3648,13 +3223,14 @@
         "fr": "République unie de Tanzanie",
         "ja": "タンザニア",
         "it": "Tanzania",
-        "es": "Tanzania",
-        "pt": "Tanzânia"
+        "es": "Tanzania"
       }
     },
     "regions": [
-      "AFRICA_SAFARI",
-      "EAST_AFRICA"
+      "GLOBAL",
+      "AFRICA",
+      "EAST_AFRICA",
+      "AFRICA_SAFARI"
     ],
     "code": "TZ"
   },
@@ -3668,53 +3244,16 @@
         "fr": "Thaïlande",
         "ja": "タイ",
         "it": "Thailandia",
-        "es": "Tailandia",
-        "pt": "Tailândia"
+        "es": "Tailandia"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
+      "ASIA",
       "INDOCHINA",
       "SOUTHEAST_ASIA"
     ],
     "code": "TH"
-  },
-  {
-    "destination": "Togo",
-    "dictionary": {
-      "destination": {
-        "en": "Togo",
-        "hr": "Togo",
-        "de": "Togo",
-        "fr": "Togo",
-        "ja": "トーゴ",
-        "it": "Togo",
-        "es": "Togo",
-        "pt": "Togo"
-      }
-    },
-    "regions": [
-      "WEST_AFRICA"
-    ],
-    "code": "TG"
-  },
-  {
-    "destination": "Tonga",
-    "dictionary": {
-      "destination": {
-        "en": "Tonga",
-        "hr": "Tonga",
-        "de": "Tonga",
-        "fr": "Tonga",
-        "ja": "トンガ",
-        "it": "Tonga",
-        "es": "Tonga",
-        "pt": "Tonga"
-      }
-    },
-    "regions": [],
-    "code": "TO"
   },
   {
     "destination": "Tunisia",
@@ -3726,38 +3265,16 @@
         "fr": "Tunisie",
         "ja": "チュニジア",
         "it": "Tunisia",
-        "es": "Túnez",
-        "pt": "Tunísia"
+        "es": "Túnez"
       }
     },
     "regions": [
-      "AFRICA",
+      "GLOBAL",
       "MENA",
+      "AFRICA",
       "NORTH_AFRICA"
     ],
     "code": "TN"
-  },
-  {
-    "destination": "Turks and Caicos Islands",
-    "dictionary": {
-      "destination": {
-        "en": "Turks and Caicos Islands",
-        "hr": "Otoci Turks i Caicos",
-        "de": "Turks- und Caicosinseln",
-        "fr": "Îles Turques-et-Caïques",
-        "ja": "タークス・カイコス諸島",
-        "it": "Isole Turks e Caicos",
-        "es": "Islas Turcas y Caicos",
-        "pt": "Ilhas Turcas e Caicos"
-      }
-    },
-    "regions": [
-      "CARIBBEAN",
-      "CARIBBEAN_CRUISE",
-      "GLOBAL",
-      "NORTH_ATLANTIC_ISLANDS"
-    ],
-    "code": "TC"
   },
   {
     "destination": "Türkiye",
@@ -3769,57 +3286,52 @@
         "fr": "Turquie",
         "ja": "トルコ",
         "it": "Turchia",
-        "es": "Turquía",
-        "pt": "Turquia"
+        "es": "Turquía"
       }
     },
     "regions": [
-      "EUROPA",
       "GLOBAL",
+      "EUROPA",
       "MEDITERRANEAN"
     ],
     "code": "TR"
   },
   {
-    "destination": "USA",
+    "destination": "Turks and Caicos Islands",
     "dictionary": {
       "destination": {
-        "en": "United States of America",
-        "hr": "Sjedinjene Američke Države",
-        "de": "Vereinigte Staaten von Amerika",
-        "fr": "États-Unis d'Amérique",
-        "ja": "アメリカ合衆国",
-        "it": "Stati Uniti d'America",
-        "es": "Estados Unidos",
-        "pt": "Estados Unidos da América"
+        "en": "Turks and Caicos Islands",
+        "hr": "Otoci Turks i Caicos",
+        "de": "Turks- und Caicosinseln",
+        "fr": "Îles Turques-et-Caïques",
+        "ja": "タークス・カイコス諸島",
+        "it": "Isole Turks e Caicos",
+        "es": "Islas Turcas y Caicos"
       }
     },
     "regions": [
       "GLOBAL",
-      "NORTH_AMERICA",
-      "USA_CANADA"
+      "CARIBBEAN",
+      "CARIBBEAN_CRUISE",
+      "NORTH_ATLANTIC_ISLANDS"
     ],
-    "code": "USA"
+    "code": "TC"
   },
   {
-    "destination": "USA_CANADA",
+    "destination": "Uganda",
     "dictionary": {
       "destination": {
-        "en": "USA & Canada",
-        "hr": "SAD i Kanada",
-        "de": "USA & Kanada",
-        "fr": "États-Unis & Canada",
-        "ja": "アメリカ・カナダ",
-        "it": "USA e Canada",
-        "es": "EE. UU. y Canadá",
-        "pt": "EUA e Canadá"
+        "en": "Uganda",
+        "hr": "Uganda",
+        "de": "Uganda",
+        "fr": "Ouganda",
+        "ja": "ウガンダ",
+        "it": "Uganda",
+        "es": "Uganda"
       }
     },
-    "regions": [
-      "GLOBAL",
-      "NORTH_AMERICA"
-    ],
-    "code": "USA_CANADA"
+    "regions": ["GLOBAL"],
+    "code": "UG"
   },
   {
     "destination": "Ukraine",
@@ -3831,14 +3343,13 @@
         "fr": "Ukraine",
         "ja": "ウクライナ",
         "it": "Ucraina",
-        "es": "Ucrania",
-        "pt": "Ucrânia"
+        "es": "Ucrania"
       }
     },
     "regions": [
-      "EAST_EUROPE",
+      "GLOBAL",
       "EUROPA",
-      "GLOBAL"
+      "EAST_EUROPE"
     ],
     "code": "UA"
   },
@@ -3852,11 +3363,14 @@
         "fr": "Émirats Arabes Unis",
         "ja": "アラブ首長国連邦",
         "it": "Emirati Arabi Uniti",
-        "es": "Emiratos Árabes Unidos",
-        "pt": "Emirados Árabes Unidos"
+        "es": "Emiratos Árabes Unidos"
       }
     },
-    "regions": [],
+    "regions": [
+      "GLOBAL",
+      "MENA",
+      "GULF_TRAVEL"
+    ],
     "code": "AE"
   },
   {
@@ -3869,17 +3383,36 @@
         "fr": "Royaume-Uni",
         "ja": "イギリス",
         "it": "Regno Unito",
-        "es": "Reino Unido",
-        "pt": "Reino Unido"
+        "es": "Reino Unido"
       }
     },
     "regions": [
-      "BRITISH_ISLES_IR",
+      "GLOBAL",
       "EUROPA",
       "EU_UK_NOR",
-      "GLOBAL"
+      "BRITISH_ISLES_IR"
     ],
     "code": "GB"
+  },
+  {
+    "destination": "USA",
+    "dictionary": {
+      "destination": {
+        "en": "USA",
+        "hr": "Sjedinjene Američke Države",
+        "de": "Vereinigte Staaten von Amerika",
+        "fr": "États-Unis d'Amérique",
+        "ja": "アメリカ合衆国",
+        "it": "Stati Uniti d'America",
+        "es": "Estados Unidos"
+      }
+    },
+    "regions": [
+      "GLOBAL",
+      "NORTH_AMERICA",
+      "USA_CANADA"
+    ],
+    "code": "US"
   },
   {
     "destination": "Uruguay",
@@ -3891,8 +3424,7 @@
         "fr": "Uruguay",
         "ja": "ウルグアイ",
         "it": "Uruguay",
-        "es": "Uruguay",
-        "pt": "Uruguai"
+        "es": "Uruguay"
       }
     },
     "regions": [
@@ -3913,19 +3445,18 @@
         "fr": "Ouzbékistan",
         "ja": "ウズベキスタン",
         "it": "Uzbekistan",
-        "es": "Uzbekistán",
-        "pt": "Usbequistão"
+        "es": "Uzbekistán"
       }
     },
     "regions": [
+      "GLOBAL",
       "ASIA",
-      "CENTRAL_ASIA",
-      "GLOBAL"
+      "CENTRAL_ASIA"
     ],
     "code": "UZ"
   },
   {
-    "destination": "Venezuela",
+    "destination": "Venezuela, Bolivarian Republic of",
     "dictionary": {
       "destination": {
         "en": "Venezuela",
@@ -3934,18 +3465,18 @@
         "fr": "Venezuela",
         "ja": "ベネズエラ・ボリバル共和国",
         "it": "Venezuela",
-        "es": "Venezuela",
-        "pt": "Venezuela"
+        "es": "Venezuela"
       }
     },
     "regions": [
+      "GLOBAL",
       "LATAM",
       "SOUTH_AMERICA"
     ],
     "code": "VE"
   },
   {
-    "destination": "Vietnam",
+    "destination": "Viet Nam",
     "dictionary": {
       "destination": {
         "en": "Vietnam",
@@ -3954,58 +3485,280 @@
         "fr": "Vietnam",
         "ja": "ベトナム",
         "it": "Vietnam",
-        "es": "Vietnam",
-        "pt": "Vietname"
+        "es": "Vietnam"
       }
     },
     "regions": [
-      "ASIA",
       "GLOBAL",
+      "ASIA",
       "INDOCHINA",
       "SOUTHEAST_ASIA"
     ],
     "code": "VN"
   },
   {
-    "destination": "WEST_AFRICA",
+    "destination": "Virgin Islands, British",
     "dictionary": {
       "destination": {
-        "en": "West Africa",
-        "hr": "Zapadna Afrika",
-        "de": "Westafrika",
-        "fr": "Afrique de l'Ouest",
-        "ja": "西アフリカ",
-        "it": "Africa occidentale",
-        "es": "África Occidental",
-        "pt": "África Ocidental"
+        "en": "Virgin Islands, British",
+        "hr": "Britanski Djevičanski otoci",
+        "de": "Britische Jungferninseln",
+        "fr": "Îles vierges britanniques",
+        "ja": "イギリス領ヴァージン諸島",
+        "it": "Isole Vergini Britanniche",
+        "es": "Islas Vírgenes británicas"
       }
     },
-    "regions": [],
-    "code": "WEST_AFRICA"
+    "regions": [
+      "GLOBAL",
+      "CARIBBEAN",
+      "LESSER_ANTILLES"
+    ],
+    "code": "VG"
   },
   {
-    "destination": "WEST_BALKANS",
+    "destination": "Zimbabwe",
+    "dictionary": {
+      "destination": {
+        "en": "Zimbabwe",
+        "hr": "Zimbabve",
+        "de": "Simbabwe",
+        "fr": "Zimbabwe",
+        "ja": "ジンバブエ",
+        "it": "Zimbabwe",
+        "es": "Zimbabue"
+      }
+    },
+    "regions": ["GLOBAL"],
+    "code": "ZW"
+  },
+  {
+    "destination": "EU",
+    "code": "EU",
+    "dictionary": {
+      "destination": {
+        "en": "EU",
+        "hr": "EU",
+        "de": "EU",
+        "fr": "EU",
+        "ja": "EU",
+        "it": "EU",
+        "es": "EU"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Global",
+    "code": "GLOBAL",
+    "dictionary": {
+      "destination": {
+        "en": "Global",
+        "hr": "Global",
+        "de": "Global",
+        "fr": "Monde",
+        "ja": "グローバル",
+        "it": "Globale",
+        "es": "Global"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Europe",
+    "code": "EUROPA",
+    "dictionary": {
+      "destination": {
+        "en": "Europe",
+        "hr": "Europa",
+        "de": "Europa",
+        "fr": "Europe",
+        "ja": "ヨーロッパ",
+        "it": "Europa",
+        "es": "Europa"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "EU, UK & Norway",
+    "code": "EU_UK_NOR",
+    "dictionary": {
+      "destination": {
+        "en": "EU, UK & Norway",
+        "hr": "EU, UK i Norveška",
+        "de": "EU, UK & Norwegen",
+        "fr": "UE, Royaume-Uni et Norvège",
+        "ja": "EU・英国・ノルウェー",
+        "it": "UE, Regno Unito e Norvegia",
+        "es": "UE, Reino Unido y Noruega"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "North America",
+    "code": "NORTH_AMERICA",
+    "dictionary": {
+      "destination": {
+        "en": "North America",
+        "hr": "Sjeverna Amerika",
+        "de": "Nordamerika",
+        "fr": "Amérique du Nord",
+        "ja": "北アメリカ",
+        "it": "Nord America",
+        "es": "Norteamérica"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Middle East & North Africa",
+    "code": "MENA",
+    "dictionary": {
+      "destination": {
+        "en": "Middle East & North Africa",
+        "hr": "Bliski istok i Sjeverna Afrika",
+        "de": "Naher Osten & Nordafrika",
+        "fr": "Moyen-Orient et Afrique du Nord",
+        "ja": "中東・北アフリカ",
+        "it": "Medio Oriente e Nord Africa",
+        "es": "Oriente Medio y Norte de África"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Africa",
+    "code": "AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "Africa",
+        "hr": "Afrika",
+        "de": "Afrika",
+        "fr": "Afrique",
+        "ja": "アフリカ",
+        "it": "Africa",
+        "es": "África"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Latin America",
+    "code": "LATAM",
+    "dictionary": {
+      "destination": {
+        "en": "Latin America",
+        "hr": "Latinska Amerika",
+        "de": "Lateinamerika",
+        "fr": "Amérique latine",
+        "ja": "ラテンアメリカ",
+        "it": "America Latina",
+        "es": "América Latina"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Oceania & Pacific",
+    "code": "OCEANIA",
+    "dictionary": {
+      "destination": {
+        "en": "Oceania & Pacific",
+        "hr": "Oceanija i Pacifik",
+        "de": "Ozeanien & Pazifik",
+        "fr": "Océanie et Pacifique",
+        "ja": "オセアニア・太平洋",
+        "it": "Oceania e Pacifico",
+        "es": "Oceanía y Pacífico"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Asia",
+    "code": "ASIA",
+    "dictionary": {
+      "destination": {
+        "en": "Asia",
+        "hr": "Azija",
+        "de": "Asien",
+        "fr": "Asie",
+        "ja": "アジア",
+        "it": "Asia",
+        "es": "Asia"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Caribbean",
+    "code": "CARIBBEAN",
+    "dictionary": {
+      "destination": {
+        "en": "Caribbean",
+        "hr": "Karibi",
+        "de": "Karibik",
+        "fr": "Caraïbes",
+        "ja": "カリブ海",
+        "it": "Caraibi",
+        "es": "Caribe"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Southeast Europe",
+    "code": "SE_EUROPE",
+    "dictionary": {
+      "destination": {
+        "en": "Southeast Europe",
+        "hr": "Jugoistočna Europa",
+        "de": "Südosteuropa",
+        "fr": "Europe du Sud-Est",
+        "ja": "南東ヨーロッパ",
+        "it": "Europa sud-orientale",
+        "es": "Europa sudoriental"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Western Balkans",
+    "code": "WEST_BALKANS",
     "dictionary": {
       "destination": {
         "en": "Western Balkans",
         "hr": "Zapadni Balkan",
-        "de": "Westlicher Balkan",
+        "de": "Westbalkan",
         "fr": "Balkans occidentaux",
         "ja": "西バルカン",
         "it": "Balcani occidentali",
-        "es": "Balcanes occidentales",
-        "pt": "Balcãs Ocidentais"
+        "es": "Balcanes occidentales"
       }
     },
-    "regions": [
-      "EUROPA",
-      "GLOBAL",
-      "SE_EUROPE"
-    ],
-    "code": "WEST_BALKANS"
+    "regions": ["GLOBAL"]
   },
   {
-    "destination": "WEST_EUROPE",
+    "destination": "Adriatic Coast",
+    "code": "ADRIATIC",
+    "dictionary": {
+      "destination": {
+        "en": "Adriatic Coast",
+        "hr": "Jadranska obala",
+        "de": "Adriaküste",
+        "fr": "Côte adriatique",
+        "ja": "アドリア海沿岸",
+        "it": "Costa adriatica",
+        "es": "Costa adriática"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Western Europe",
+    "code": "WEST_EUROPE",
     "dictionary": {
       "destination": {
         "en": "Western Europe",
@@ -4014,15 +3767,588 @@
         "fr": "Europe de l'Ouest",
         "ja": "西ヨーロッパ",
         "it": "Europa occidentale",
-        "es": "Europa Occidental",
-        "pt": "Europa Ocidental"
+        "es": "Europa occidental"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "UK & Ireland",
+    "code": "BRITISH_ISLES_IR",
+    "dictionary": {
+      "destination": {
+        "en": "UK & Ireland",
+        "hr": "UK i Irska",
+        "de": "UK & Irland",
+        "fr": "Royaume-Uni et Irlande",
+        "ja": "英国・アイルランド",
+        "it": "Regno Unito e Irlanda",
+        "es": "Reino Unido e Irlanda"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Central Europe",
+    "code": "CENTRAL_EUROPE",
+    "dictionary": {
+      "destination": {
+        "en": "Central Europe",
+        "hr": "Srednja Europa",
+        "de": "Mitteleuropa",
+        "fr": "Europe centrale",
+        "ja": "中央ヨーロッパ",
+        "it": "Europa centrale",
+        "es": "Europa Central"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Nordics",
+    "code": "NORDICS",
+    "dictionary": {
+      "destination": {
+        "en": "Nordics",
+        "hr": "Nordijske zemlje",
+        "de": "Nordische Länder",
+        "fr": "Pays nordiques",
+        "ja": "北欧諸国",
+        "it": "Paesi nordici",
+        "es": "Países nórdicos"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Baltics & Finland",
+    "code": "BALTICS_FI",
+    "dictionary": {
+      "destination": {
+        "en": "Baltics & Finland",
+        "hr": "Baltik i Finska",
+        "de": "Baltikum & Finnland",
+        "fr": "Pays baltes et Finlande",
+        "ja": "バルト諸国・フィンランド",
+        "it": "Paesi baltici e Finlandia",
+        "es": "Países bálticos y Finlandia"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Benelux & France",
+    "code": "BENELUX_FR",
+    "dictionary": {
+      "destination": {
+        "en": "Benelux & France",
+        "hr": "Beneluks i Francuska",
+        "de": "Benelux & Frankreich",
+        "fr": "Benelux et France",
+        "ja": "ベネルクス・フランス",
+        "it": "Benelux e Francia",
+        "es": "Benelux y Francia"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Mediterranean Europe",
+    "code": "MEDITERRANEAN",
+    "dictionary": {
+      "destination": {
+        "en": "Mediterranean Europe",
+        "hr": "Mediteranska Europa",
+        "de": "Mediterranes Europa",
+        "fr": "Europe méditerranéenne",
+        "ja": "地中海ヨーロッパ",
+        "it": "Europa mediterranea",
+        "es": "Europa mediterránea"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Gulf Countries",
+    "code": "GULF_TRAVEL",
+    "dictionary": {
+      "destination": {
+        "en": "Gulf Countries",
+        "hr": "Zaljevske zemlje",
+        "de": "Golfstaaten",
+        "fr": "Pays du Golfe",
+        "ja": "湾岸諸国",
+        "it": "Paesi del Golfo",
+        "es": "Países del Golfo"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Levant",
+    "code": "LEVANT",
+    "dictionary": {
+      "destination": {
+        "en": "Levant",
+        "hr": "Levant",
+        "de": "Levante",
+        "fr": "Levant",
+        "ja": "レバント",
+        "it": "Levante",
+        "es": "Levante"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Caucasus",
+    "code": "CAUCASUS",
+    "dictionary": {
+      "destination": {
+        "en": "Caucasus",
+        "hr": "Kavkaz",
+        "de": "Kaukasus",
+        "fr": "Caucase",
+        "ja": "コーカサス",
+        "it": "Caucaso",
+        "es": "Cáucaso"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Central Asia",
+    "code": "CENTRAL_ASIA",
+    "dictionary": {
+      "destination": {
+        "en": "Central Asia",
+        "hr": "Srednja Azija",
+        "de": "Zentralasien",
+        "fr": "Asie centrale",
+        "ja": "中央アジア",
+        "it": "Asia centrale",
+        "es": "Asia Central"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Indochina",
+    "code": "INDOCHINA",
+    "dictionary": {
+      "destination": {
+        "en": "Indochina",
+        "hr": "Indokina",
+        "de": "Indochina",
+        "fr": "Indochine",
+        "ja": "インドシナ",
+        "it": "Indocina",
+        "es": "Indochina"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Southeast Asia",
+    "code": "SOUTHEAST_ASIA",
+    "dictionary": {
+      "destination": {
+        "en": "Southeast Asia",
+        "hr": "Jugoistočna Azija",
+        "de": "Südostasien",
+        "fr": "Asie du Sud-Est",
+        "ja": "東南アジア",
+        "it": "Sud-est asiatico",
+        "es": "Sudeste Asiático"
       }
     },
     "regions": [
-      "EUROPA",
-      "EU_UK_NOR",
-      "GLOBAL"
-    ],
-    "code": "WEST_EUROPE"
+      "GLOBAL",
+      "ASIA"
+    ]
+  },
+  {
+    "destination": "Island Southeast Asia",
+    "code": "ISLAND_SE_ASIA",
+    "dictionary": {
+      "destination": {
+        "en": "Island Southeast Asia",
+        "hr": "Otočna jugoistočna Azija",
+        "de": "Insel-Südostasien",
+        "fr": "Asie du Sud-Est insulaire",
+        "ja": "島嶼部東南アジア",
+        "it": "Sud-est asiatico insulare",
+        "es": "Sudeste Asiático insular"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "China, Hong Kong, Macao & Taiwan",
+    "code": "EAST_ASIA_PLUS",
+    "dictionary": {
+      "destination": {
+        "en": "China, Hong Kong, Macao & Taiwan",
+        "hr": "Kina, Hong Kong, Makao i Tajvan",
+        "de": "China, Hongkong, Macao & Taiwan",
+        "fr": "Chine, Hong Kong, Macao et Taïwan",
+        "ja": "中国・香港・マカオ・台湾",
+        "it": "Cina, Hong Kong, Macao e Taiwan",
+        "es": "China, Hong Kong, Macao y Taiwán"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Japan, South Korea & Taiwan",
+    "code": "JP_KR_TW",
+    "dictionary": {
+      "destination": {
+        "en": "Japan, South Korea & Taiwan",
+        "hr": "Japan, Južna Koreja i Tajvan",
+        "de": "Japan, Südkorea & Taiwan",
+        "fr": "Japon, Corée du Sud et Taïwan",
+        "ja": "日本・韓国・台湾",
+        "it": "Giappone, Corea del Sud e Taiwan",
+        "es": "Japón, Corea del Sur y Taiwán"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Indian Subcontinent",
+    "code": "SUBCONTINENT",
+    "dictionary": {
+      "destination": {
+        "en": "Indian Subcontinent",
+        "hr": "Indijski potkontinent",
+        "de": "Indischer Subkontinent",
+        "fr": "Sous-continent indien",
+        "ja": "インド亜大陸",
+        "it": "Subcontinente indiano",
+        "es": "Subcontinente indio"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "North Africa",
+    "code": "NORTH_AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "North Africa",
+        "hr": "Sjeverna Afrika",
+        "de": "Nordafrika",
+        "fr": "Afrique du Nord",
+        "ja": "北アフリカ",
+        "it": "Nord Africa",
+        "es": "Norte de África"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "East Africa",
+    "code": "EAST_AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "East Africa",
+        "hr": "Istočna Afrika",
+        "de": "Ostafrika",
+        "fr": "Afrique de l’Est",
+        "ja": "東アフリカ",
+        "it": "Africa orientale",
+        "es": "África Oriental"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Southern Africa",
+    "code": "SOUTHERN_AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "Southern Africa",
+        "hr": "Južna Afrika",
+        "de": "Südliches Afrika",
+        "fr": "Afrique australe",
+        "ja": "南部アフリカ",
+        "it": "Africa australe",
+        "es": "África Austral"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "West Africa",
+    "code": "WEST_AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "West Africa",
+        "hr": "Zapadna Afrika",
+        "de": "Westafrika",
+        "fr": "Afrique de l’Ouest",
+        "ja": "西アフリカ",
+        "it": "Africa occidentale",
+        "es": "África Occidental"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "African Safari",
+    "code": "AFRICA_SAFARI",
+    "dictionary": {
+      "destination": {
+        "en": "African Safari",
+        "hr": "Afrički safari",
+        "de": "Afrika-Safari",
+        "fr": "Safari africain",
+        "ja": "アフリカンサファリ",
+        "it": "Safari africano",
+        "es": "Safari africano"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Indian Ocean Islands",
+    "code": "INDIAN_OCEAN",
+    "dictionary": {
+      "destination": {
+        "en": "Indian Ocean Islands",
+        "hr": "Otoci Indijskog oceana",
+        "de": "Inseln im Indischen Ozean",
+        "fr": "Îles de l’océan Indien",
+        "ja": "インド洋の島々",
+        "it": "Isole dell’Oceano Indiano",
+        "es": "Islas del océano Índico"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Central Africa",
+    "code": "CENTRAL_AFRICA",
+    "dictionary": {
+      "destination": {
+        "en": "Central Africa",
+        "hr": "Srednja Afrika",
+        "de": "Zentralafrika",
+        "fr": "Afrique centrale",
+        "ja": "中央アフリカ",
+        "it": "Africa centrale",
+        "es": "África Central"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Central America",
+    "code": "CENTRAL_AMERICA",
+    "dictionary": {
+      "destination": {
+        "en": "Central America",
+        "hr": "Srednja Amerika",
+        "de": "Mittelamerika",
+        "fr": "Amérique centrale",
+        "ja": "中央アメリカ",
+        "it": "America centrale",
+        "es": "Centroamérica"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "South America",
+    "code": "SOUTH_AMERICA",
+    "dictionary": {
+      "destination": {
+        "en": "South America",
+        "hr": "Južna Amerika",
+        "de": "Südamerika",
+        "fr": "Amérique du Sud",
+        "ja": "南アメリカ",
+        "it": "Sud America",
+        "es": "Sudamérica"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Andean Region",
+    "code": "ANDEAN",
+    "dictionary": {
+      "destination": {
+        "en": "Andean Region",
+        "hr": "Andska regija",
+        "de": "Andenregion",
+        "fr": "Région andine",
+        "ja": "アンデス地域",
+        "it": "Regione andina",
+        "es": "Región andina"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Southern South America",
+    "code": "SOUTH_CONE",
+    "dictionary": {
+      "destination": {
+        "en": "Southern South America",
+        "hr": "Južni dio Južne Amerike",
+        "de": "Südliches Südamerika",
+        "fr": "Amérique du Sud méridionale",
+        "ja": "南部南アメリカ",
+        "it": "Sud del Sud America",
+        "es": "Sur de Sudamérica"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Caribbean Cruise",
+    "code": "CARIBBEAN_CRUISE",
+    "dictionary": {
+      "destination": {
+        "en": "Caribbean Cruise",
+        "hr": "Karipsko krstarenje",
+        "de": "Karibik-Kreuzfahrt",
+        "fr": "Croisière dans les Caraïbes",
+        "ja": "カリブ海クルーズ",
+        "it": "Crociera ai Caraibi",
+        "es": "Crucero por el Caribe"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Lesser Antilles",
+    "code": "LESSER_ANTILLES",
+    "dictionary": {
+      "destination": {
+        "en": "Lesser Antilles",
+        "hr": "Mali Antili",
+        "de": "Kleine Antillen",
+        "fr": "Petites Antilles",
+        "ja": "小アンティル諸島",
+        "it": "Piccole Antille",
+        "es": "Antillas Menores"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "North Atlantic Islands",
+    "code": "NORTH_ATLANTIC_ISLANDS",
+    "dictionary": {
+      "destination": {
+        "en": "North Atlantic Islands",
+        "hr": "Sjevernoatlantski otoci",
+        "de": "Nordatlantische Inseln",
+        "fr": "Îles de l’Atlantique Nord",
+        "ja": "北大西洋の島々",
+        "it": "Isole del Nord Atlantico",
+        "es": "Islas del Atlántico Norte"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "USA & Canada",
+    "code": "USA_CANADA",
+    "dictionary": {
+      "destination": {
+        "en": "USA & Canada",
+        "hr": "SAD i Kanada",
+        "de": "USA & Kanada",
+        "fr": "États-Unis et Canada",
+        "ja": "米国・カナダ",
+        "it": "USA e Canada",
+        "es": "EE. UU. y Canadá"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Australia & New Zealand",
+    "code": "AUS_NZ",
+    "dictionary": {
+      "destination": {
+        "en": "Australia & New Zealand",
+        "hr": "Australija i Novi Zeland",
+        "de": "Australien & Neuseeland",
+        "fr": "Australie et Nouvelle-Zélande",
+        "ja": "オーストラリア・ニュージーランド",
+        "it": "Australia e Nuova Zelanda",
+        "es": "Australia y Nueva Zelanda"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "South Pacific",
+    "code": "SOUTH_PACIFIC",
+    "dictionary": {
+      "destination": {
+        "en": "South Pacific",
+        "hr": "Južni Pacifik",
+        "de": "Südpazifik",
+        "fr": "Pacifique Sud",
+        "ja": "南太平洋",
+        "it": "Pacifico del Sud",
+        "es": "Pacífico Sur"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Pacific Explorer",
+    "code": "PACIFIC_LONG_HAUL",
+    "dictionary": {
+      "destination": {
+        "en": "Pacific Explorer",
+        "hr": "Pacific Explorer",
+        "de": "Pacific Explorer",
+        "fr": "Pacific Explorer",
+        "ja": "Pacific Explorer",
+        "it": "Pacific Explorer",
+        "es": "Pacific Explorer"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Eastern Europe",
+    "code": "EAST_EUROPE",
+    "dictionary": {
+      "destination": {
+        "en": "Eastern Europe",
+        "hr": "Istočna Europa",
+        "de": "Osteuropa",
+        "fr": "Europe de l’Est",
+        "ja": "東ヨーロッパ",
+        "it": "Europa orientale",
+        "es": "Europa del Este"
+      }
+    },
+    "regions": ["GLOBAL"]
+  },
+  {
+    "destination": "Alpine Europe",
+    "code": "ALPINE_REGION",
+    "dictionary": {
+      "destination": {
+        "en": "Alpine Europe",
+        "hr": "Alpska Europa",
+        "de": "Alpenregion",
+        "fr": "Europe alpine",
+        "ja": "アルプス地域",
+        "it": "Europa alpina",
+        "es": "Europa alpina"
+      }
+    },
+    "regions": ["GLOBAL"]
   }
 ]

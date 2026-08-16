@@ -1027,6 +1027,7 @@ class MainWindow(QMainWindow):
                 current_timestamp=ts,
                 destination_table_json=FILES.destination_table_json,
                 regions_yaml=FILES.regions_yaml,
+                ppg_csv=FILES.ppg_csv,
             )
             self.save_export_metadata(
                 timestamp=ts,

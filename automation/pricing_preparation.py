@@ -161,6 +161,30 @@ def prepare_ppg_data(ppg_file: str) -> pd.DataFrame:
             + ", ".join(missing_isos)
         )
 
+    # PPG is the canonical source of country display names. Multiple PPG rows
+    # for one ISO are fine only when they all carry the same country name.
+    conflicting_names = (
+        df.groupby("ISO")["country"]
+        .nunique(dropna=True)
+        .loc[lambda values: values > 1]
+    )
+    if not conflicting_names.empty:
+        details = []
+        for iso in conflicting_names.index:
+            names = sorted(
+                df.loc[df["ISO"] == iso, "country"]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .unique()
+                .tolist()
+            )
+            details.append(f"{iso}: {names}")
+        raise ValueError(
+            "PPG contains conflicting canonical country names for the same ISO: "
+            + "; ".join(details)
+        )
+
     return df
 
 

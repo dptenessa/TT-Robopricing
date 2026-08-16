@@ -198,7 +198,7 @@ def load_table(
     df["ISO3"] = df["ISO3"].astype(str).replace("nan", "").str.strip().str.upper()
 
     df = df[
-        df["Country"].ne("")
+        (df["Country"].ne("") | df["ISO"].ne(""))
         & (df["Price_USD"].notna() | df["Price_EUR"].notna() | df["Price"].notna())
     ].copy().reset_index(drop=True)
     df["row_id"] = df.index.astype(str)
@@ -367,6 +367,116 @@ class EditorState:
             if str(k).strip()
         }
 
+    def ppg_country_name_map(self) -> dict[str, str]:
+        """Return the authoritative ISO A2 -> country display-name mapping."""
+        if self.ppg_df.empty:
+            return {}
+
+        ppg = self.ppg_df.copy()
+        ppg.columns = ppg.columns.astype(str).str.strip()
+
+        iso_col = next(
+            (
+                col for col in ["ISO_Code_A2", "ISO", "ISO_A2", "Country_Code_A2"]
+                if col in ppg.columns
+            ),
+            None,
+        )
+        country_col = next(
+            (
+                col for col in ppg.columns
+                if str(col).strip().lower() in {
+                    "country",
+                    "country name",
+                    "country_name",
+                    "destination",
+                }
+            ),
+            None,
+        )
+        if iso_col is None or country_col is None:
+            raise ValueError(
+                "PPG must contain an ISO A2 column and a canonical country-name column."
+            )
+
+        ppg["_iso"] = (
+            ppg[iso_col]
+            .astype("string")
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        ppg["_country"] = (
+            ppg[country_col]
+            .astype("string")
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+        ppg = ppg[
+            ppg["_iso"].str.len().eq(2)
+            & ppg["_country"].ne("")
+        ].copy()
+
+        conflicts = (
+            ppg.groupby("_iso")["_country"]
+            .nunique(dropna=True)
+            .loc[lambda values: values > 1]
+        )
+        if not conflicts.empty:
+            raise ValueError(
+                "PPG contains conflicting country names for ISO codes: "
+                + ", ".join(conflicts.index.tolist())
+            )
+
+        return (
+            ppg.drop_duplicates(subset=["_iso"], keep="last")
+            .set_index("_iso")["_country"]
+            .to_dict()
+        )
+
+    def _canonicalize_baseline_country_names(self) -> None:
+        """Force model/editor country names to the current PPG value by ISO."""
+        if self.baseline_df.empty or "ISO" not in self.baseline_df.columns:
+            return
+
+        country_names = self.ppg_country_name_map()
+        if not country_names:
+            return
+
+        self.baseline_df["ISO"] = (
+            self.baseline_df["ISO"]
+            .astype("string")
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        mapped = self.baseline_df["ISO"].map(country_names)
+
+        ht_mask = self.baseline_df.get(
+            "Provider",
+            pd.Series("", index=self.baseline_df.index),
+        ).astype(str).str.strip().eq("HT")
+        missing_ht = sorted(
+            self.baseline_df.loc[
+                ht_mask & self.baseline_df["ISO"].str.len().eq(2) & mapped.isna(),
+                "ISO",
+            ]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        if missing_ht:
+            raise ValueError(
+                "HT model rows contain ISO codes without a canonical PPG country name: "
+                + ", ".join(missing_ht)
+            )
+
+        replace_mask = mapped.notna()
+        self.baseline_df.loc[replace_mask, "Country"] = mapped.loc[replace_mask]
+
     def set_selection_defaults(self) -> None:
         countries = self.countries()
         if countries and self.selected_country not in countries:
@@ -414,6 +524,7 @@ class EditorState:
     def preload_baseline(self, df: pd.DataFrame) -> None:
         self.clear_runtime()
         self.baseline_df = df.copy()
+        self._canonicalize_baseline_country_names()
         allowed_isos = self.allowed_ppg_isos()
 
         if allowed_isos and "ISO" in self.baseline_df.columns:
