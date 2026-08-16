@@ -114,11 +114,52 @@ def prepare_ppg_data(ppg_file: str) -> pd.DataFrame:
         raise ValueError(f"PPG file missing required columns: {missing}")
 
     df = df.copy()
+    df.columns = df.columns.astype(str).str.strip()
     df["ISO"] = normalize_iso(df[iso_col])
     df["iso_key"] = normalize_iso(df["ISO"])
 
-    if "country" not in df.columns:
-        df["country"] = df["ISO"]
+    # Resolve the PPG country-name column case-insensitively and normalize it
+    # to the internal lowercase name expected by the pricing model.
+    country_col = next(
+        (
+            col for col in df.columns
+            if str(col).strip().lower() in {
+                "country",
+                "country name",
+                "country_name",
+                "destination",
+            }
+        ),
+        None,
+    )
+
+    if country_col is None:
+        raise ValueError(
+            "PPG file must contain a country-name column such as "
+            "'country', 'Country', 'Country Name', or 'Destination'."
+        )
+
+    df["country"] = (
+        df[country_col]
+        .astype(str)
+        .str.strip()
+        .replace({"": pd.NA, "nan": pd.NA})
+    )
+
+    missing_country = df["country"].isna()
+    if missing_country.any():
+        missing_isos = sorted(
+            df.loc[missing_country, "ISO"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+        raise ValueError(
+            "PPG country-name column contains blank values for ISO codes: "
+            + ", ".join(missing_isos)
+        )
 
     return df
 

@@ -80,6 +80,18 @@ class PipelineFiles:
         return self.inputs_dir / "sales_volumes_last_month_test.xlsx"
 
     @property
+    def regions_yaml(self) -> Path:
+        return self.inputs_dir / "regions.yaml"
+
+    @property
+    def destination_table_json(self) -> Path:
+        return self.inputs_dir / "export-destination-table_reviewed.json"
+
+    @property
+    def region_country_exclusions_json(self) -> Path:
+        return self.inputs_dir / "region_country_exclusions.json"
+
+    @property
     def combined_latest(self) -> Path:
         return self.combined_dir / "combined_scrape_latest.csv"
 

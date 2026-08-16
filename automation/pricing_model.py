@@ -859,14 +859,14 @@ def build_ht_prices(
     n_unit = len(unit_competition)
     n_region = len(region_competition)
 
-    print(f"  Output country: {iso}")
-    print(f"  Pricing source: {pricing_source}")
-    print(f"  Pricing unit id: {pricing_unit_id}")
-    print(f"  Unit countries: {unit_countries}")
-    print(f"  Region: {region_name}")
-    print(f"  Region countries: {region_countries}")
-    print(f"  Competition rows in unit scope: {n_unit}")
-    print(f"  Competition rows in region scope: {n_region}")
+    # print(f"  Output country: {iso}")
+    # print(f"  Pricing source: {pricing_source}")
+    # print(f"  Pricing unit id: {pricing_unit_id}")
+    # print(f"  Unit countries: {unit_countries}")
+    # print(f"  Region: {region_name}")
+    # print(f"  Region countries: {region_countries}")
+    # print(f"  Competition rows in unit scope: {n_unit}")
+    # print(f"  Competition rows in region scope: {n_region}")
 
     unit_coef = None
     unit_feature_means = None
@@ -875,23 +875,23 @@ def build_ht_prices(
 
     if n_unit >= COUNTRY_SURFACE_MIN_ROWS:
         surface_mode = "unit"
-        print("  Surface mode: unit")
+        # print("  Surface mode: unit")
         unit_coef, unit_feature_means = fit_log_price_surface(unit_competition)
 
     elif n_unit >= BLEND_SURFACE_MIN_ROWS and n_region >= BLEND_SURFACE_MIN_ROWS:
         surface_mode = "blend_unit_region"
-        print("  Surface mode: blended unit / region")
+        # print("  Surface mode: blended unit / region")
         unit_coef, unit_feature_means = fit_log_price_surface(unit_competition)
         region_coef, region_feature_means = fit_log_price_surface(region_competition)
 
     elif n_region >= BLEND_SURFACE_MIN_ROWS:
         surface_mode = "region"
-        print("  Surface mode: region")
+        # print("  Surface mode: region")
         region_coef, region_feature_means = fit_log_price_surface(region_competition)
 
     elif n_unit > 0 or n_region > 0:
         surface_mode = "global"
-        print("  Sparse unit/region data — using global surface")
+        # print("  Sparse unit/region data — using global surface")
 
     else:
         surface_mode = "cost_plus"

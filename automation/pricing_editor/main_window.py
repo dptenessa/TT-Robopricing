@@ -34,9 +34,21 @@ from PySide6.QtWidgets import (
 from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
 try:
-    from define_region_prices import generate_region_prices_for_export_folder
+    from define_region_prices import (
+        configured_regions_for_country,
+        generate_region_prices_for_export_folder,
+        load_region_country_exclusions,
+        load_yaml,
+        save_region_country_exclusions,
+    )
 except ImportError:
-    from automation.define_region_prices import generate_region_prices_for_export_folder
+    from automation.define_region_prices import (
+        configured_regions_for_country,
+        generate_region_prices_for_export_folder,
+        load_region_country_exclusions,
+        load_yaml,
+        save_region_country_exclusions,
+    )
 try:
     from partner_export_pack import build_partner_price_pack
 except ImportError:
@@ -78,6 +90,14 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
         self.autosave_dirty = False
         self.autosave_in_progress = False
+        self.regions_data = (
+            load_yaml(FILES.regions_yaml)
+            if FILES.regions_yaml.exists()
+            else {}
+        )
+        self.region_country_exclusions = load_region_country_exclusions(
+            FILES.region_country_exclusions_json
+        )
 
         self._build_ui()
         self.statusBar().showMessage("Opening editor...")
@@ -139,6 +159,25 @@ class MainWindow(QMainWindow):
 
         self.country_combo = QComboBox()
         self.country_combo.currentTextChanged.connect(self.on_country_changed)
+
+        self.exclude_all_regions_check = QCheckBox("Exclude from all regions")
+        self.exclude_all_regions_check.setTristate(False)
+        self.exclude_all_regions_check.setToolTip(
+            "Exclude the selected country from every regional pack in which it is configured."
+        )
+        self.exclude_all_regions_check.stateChanged.connect(
+            self.on_exclude_all_regions_changed
+        )
+
+        self.region_exclusion_list = QListWidget()
+        self.region_exclusion_list.setMinimumHeight(260)
+        self.region_exclusion_list.setMaximumHeight(420)
+        self.region_exclusion_list.setToolTip(
+            "Checked regions will not include the selected country in regional packs."
+        )
+        self.region_exclusion_list.itemChanged.connect(
+            self.on_region_exclusion_changed
+        )
 
         self.saved_state_combo = QComboBox()
         self.saved_state_combo.setPlaceholderText("Select exported date")
@@ -291,29 +330,6 @@ class MainWindow(QMainWindow):
         baseline_grid.addWidget(use_baseline_unit_btn, 1, 0)
         baseline_grid.addWidget(use_loaded_unit_btn, 1, 1)
 
-        brush_start_btn = QPushButton("Set brush\nstart")
-        brush_start_btn.clicked.connect(self.set_brush_start)
-
-        brush_end_btn = QPushButton("Set brush\nend")
-        brush_end_btn.clicked.connect(self.set_brush_end)
-
-        brush_clear_btn = QPushButton("Clear brush\nrange")
-        brush_clear_btn.clicked.connect(self.clear_brush_range)
-
-        brush_start_btn.setToolTip("Select a point, then click to mark the brush start.")
-        brush_end_btn.setToolTip("Select another point on the same plan, then click to mark the brush end.")
-        brush_clear_btn.setToolTip("Clear the current brush range.")
-
-        for btn in [brush_start_btn, brush_end_btn, brush_clear_btn]:
-            btn.setFixedSize(96, 72)
-            btn.setToolTipDuration(8000)
-            btn.setMouseTracking(True)
-
-        brush_btn_row = QHBoxLayout()
-        brush_btn_row.addWidget(brush_start_btn)
-        brush_btn_row.addWidget(brush_end_btn)
-        brush_btn_row.addWidget(brush_clear_btn)
-
         export_btn = QPushButton("💾 Export HT prices csv")
         export_btn.clicked.connect(self.export_prices)
 
@@ -326,9 +342,6 @@ class MainWindow(QMainWindow):
         # Info widgets
         self.country_info_label = QLabel("No country loaded")
         self.country_info_label.setWordWrap(True)
-
-        self.brush_label = QLabel("Brush range: not set")
-        self.brush_label.setWordWrap(True)
 
         # self.tool_help_label = QLabel(
         #     "How to use tools:\n"
@@ -353,6 +366,9 @@ class MainWindow(QMainWindow):
 
         side_layout.addWidget(QLabel("Country"))
         side_layout.addWidget(self.country_combo)
+        side_layout.addWidget(QLabel("Exclude country from regional packs"))
+        side_layout.addWidget(self.exclude_all_regions_check)
+        side_layout.addWidget(self.region_exclusion_list, 1)
 
         side_layout.addWidget(QLabel("Drag tools"))
         side_layout.addLayout(mode_row_1)
@@ -396,14 +412,9 @@ class MainWindow(QMainWindow):
 
         side_layout.addLayout(baseline_grid)
 
-        # 👇 ADD THE ROW HERE (just above remove promo)
-        side_layout.addLayout(brush_btn_row)
-
-        # 👇 THEN continue
         for widget in [
             export_btn,
             export_pdf_btn,
-            self.brush_label,
             # self.tool_help_label,
             QLabel("Selected point info"), self.selection_label,
             QLabel("Promo options"), self.promo_list,
@@ -918,13 +929,25 @@ class MainWindow(QMainWindow):
         timestamp: str | None = None,
     ):
         export_dir = Path(export_dir)
-        results = generate_region_prices_for_export_folder(export_dir)
+        results = generate_region_prices_for_export_folder(
+            export_dir,
+            regions_yaml=FILES.regions_yaml,
+            region_exclusions_json=FILES.region_country_exclusions_json,
+        )
         if include_history:
             ts = timestamp or datetime.now().strftime("%Y%m%d")
             for result in results:
                 history_dir = FILES.editor_history_dir(export_dir, result.currency)
                 history_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(result.output_csv, history_dir / f"region_prices_{ts}.csv")
+
+            membership_current = export_dir / "region_membership_current.json"
+            if membership_current.exists():
+                FILES.editor_history_root.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(
+                    membership_current,
+                    FILES.editor_history_root / f"region_membership_{ts}.json",
+                )
         return results
         
     def quick_save(self):
@@ -1002,6 +1025,8 @@ class MainWindow(QMainWindow):
                 zip_path,
                 compare_timestamp=compare_timestamp,
                 current_timestamp=ts,
+                destination_table_json=FILES.destination_table_json,
+                regions_yaml=FILES.regions_yaml,
             )
             self.save_export_metadata(
                 timestamp=ts,
@@ -1184,8 +1209,139 @@ class MainWindow(QMainWindow):
         )
         self.official_cost_rate_label.setText(rate.label)
 
+    def selected_country_iso(self) -> str:
+        points = self.state.current_points()
+        if not points:
+            return ""
+        return str(points[0].get("iso", "")).strip().upper()
+
+    def refresh_region_exclusion_list(self) -> None:
+        if not hasattr(self, "region_exclusion_list"):
+            return
+
+        country_code = self.selected_country_iso()
+        self.region_exclusion_list.blockSignals(True)
+        self.exclude_all_regions_check.blockSignals(True)
+        self.region_exclusion_list.clear()
+
+        if not country_code or not self.regions_data:
+            self.region_exclusion_list.setEnabled(False)
+            self.exclude_all_regions_check.setEnabled(False)
+            self.exclude_all_regions_check.setChecked(False)
+            self.region_exclusion_list.blockSignals(False)
+            self.exclude_all_regions_check.blockSignals(False)
+            return
+
+        configured_regions = configured_regions_for_country(
+            country_code,
+            self.regions_data,
+        )
+        excluded_regions = set(
+            self.region_country_exclusions.get(country_code, [])
+        )
+
+        has_regions = bool(configured_regions)
+        self.region_exclusion_list.setEnabled(has_regions)
+        self.exclude_all_regions_check.setEnabled(has_regions)
+        for region_name in configured_regions:
+            item = QListWidgetItem(region_name)
+            item.setData(Qt.UserRole, region_name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.Checked
+                if region_name in excluded_regions
+                else Qt.Unchecked
+            )
+            self.region_exclusion_list.addItem(item)
+
+        self.exclude_all_regions_check.setChecked(
+            has_regions and set(configured_regions).issubset(excluded_regions)
+        )
+        self.region_exclusion_list.blockSignals(False)
+        self.exclude_all_regions_check.blockSignals(False)
+
+    def on_region_exclusion_changed(self, item: QListWidgetItem) -> None:
+        country_code = self.selected_country_iso()
+        region_name = str(item.data(Qt.UserRole) or item.text()).strip()
+        if not country_code or not region_name:
+            return
+
+        excluded = set(self.region_country_exclusions.get(country_code, []))
+        if item.checkState() == Qt.Checked:
+            excluded.add(region_name)
+        else:
+            excluded.discard(region_name)
+
+        if excluded:
+            self.region_country_exclusions[country_code] = sorted(excluded)
+        else:
+            self.region_country_exclusions.pop(country_code, None)
+
+        save_region_country_exclusions(
+            FILES.region_country_exclusions_json,
+            self.region_country_exclusions,
+        )
+        action = "excluded from" if item.checkState() == Qt.Checked else "allowed in"
+        self.statusBar().showMessage(
+            f"{country_code} {action} {region_name}; setting saved permanently."
+        )
+
+        configured_regions = {
+            str(self.region_exclusion_list.item(index).data(Qt.UserRole) or "").strip()
+            for index in range(self.region_exclusion_list.count())
+        }
+        self.exclude_all_regions_check.blockSignals(True)
+        self.exclude_all_regions_check.setChecked(
+            bool(configured_regions) and configured_regions.issubset(excluded)
+        )
+        self.exclude_all_regions_check.blockSignals(False)
+
+    def on_exclude_all_regions_changed(self, state: int) -> None:
+        country_code = self.selected_country_iso()
+        if not country_code:
+            return
+
+        configured_regions = [
+            str(self.region_exclusion_list.item(index).data(Qt.UserRole) or "").strip()
+            for index in range(self.region_exclusion_list.count())
+        ]
+        configured_regions = [region for region in configured_regions if region]
+        if not configured_regions:
+            return
+
+        # Read the checkbox directly. PySide6's stateChanged signal supplies an
+        # integer, while Qt.Checked may be an enum depending on the Qt version.
+        exclude_all = self.exclude_all_regions_check.isChecked()
+        excluded = set(self.region_country_exclusions.get(country_code, []))
+        if exclude_all:
+            excluded.update(configured_regions)
+        else:
+            excluded.difference_update(configured_regions)
+
+        if excluded:
+            self.region_country_exclusions[country_code] = sorted(excluded)
+        else:
+            self.region_country_exclusions.pop(country_code, None)
+
+        self.region_exclusion_list.blockSignals(True)
+        for index in range(self.region_exclusion_list.count()):
+            self.region_exclusion_list.item(index).setCheckState(
+                Qt.Checked if exclude_all else Qt.Unchecked
+            )
+        self.region_exclusion_list.blockSignals(False)
+
+        save_region_country_exclusions(
+            FILES.region_country_exclusions_json,
+            self.region_country_exclusions,
+        )
+        action = "excluded from all configured regions" if exclude_all else "allowed in all configured regions"
+        self.statusBar().showMessage(
+            f"{country_code} {action}; setting saved permanently."
+        )
+
     def on_country_changed(self, country: str):
         self.state.selected_country = country
+        self.refresh_region_exclusion_list()
         self.refresh_canvas()
 
     def refresh_canvas(self):
@@ -1201,10 +1357,10 @@ class MainWindow(QMainWindow):
             title=f"{self.state.selected_country or ''} ({self.state.active_currency})",
         )
         self.refresh_currency_visuals()
+        self.refresh_region_exclusion_list()
         self.refresh_promo_list()
         self.refresh_selection_label()
         self.country_info_label.setText(self.state.country_info())
-        self.brush_label.setText(self.state.brush_summary())
         self.refresh_impact_labels()
         
 
@@ -1335,15 +1491,12 @@ class MainWindow(QMainWindow):
     
     def set_brush_start(self):
         self.state.set_brush_start()
-        self.brush_label.setText(self.state.brush_summary())
 
     def set_brush_end(self):
         self.state.set_brush_end()
-        self.brush_label.setText(self.state.brush_summary())
 
     def clear_brush_range(self):
         self.state.clear_brush()
-        self.brush_label.setText(self.state.brush_summary())
 
     def remove_selected_promo(self):
         self.state.remove_selected_promo()

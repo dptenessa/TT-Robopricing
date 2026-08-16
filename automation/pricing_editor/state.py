@@ -232,6 +232,7 @@ class EditorState:
     
 
     country_info_map: dict[str, str] = field(default_factory=dict)
+    country_iso_map: dict[str, str] = field(default_factory=dict)
     points_by_country: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     competitors_by_country: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     row_index: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -373,6 +374,7 @@ class EditorState:
 
     def clear_runtime(self) -> None:
         self.country_info_map = {}
+        self.country_iso_map = {}
         self.points_by_country = {}
         self.competitors_by_country = {}
         self.row_index = {}
@@ -491,6 +493,10 @@ class EditorState:
             self.points_by_country[country] = points
 
             row0 = ht.iloc[0] if not ht.empty else cdf.iloc[0]
+            country_iso = str(row0.get("ISO", "")).strip().upper()
+            if country_iso:
+                self.country_iso_map[country] = country_iso
+
             self.country_info_map[country] = (
                 f"Country: {country} | ISO: {str(row0.get('ISO','')).strip() or '-'}\n"
                 f"Pricing unit: {str(row0.get('PricingUnitIdUsed','')).strip() or '-'} | "
@@ -506,14 +512,30 @@ class EditorState:
         self.market_df = df.copy()
         allowed_isos = self.allowed_ppg_isos()
 
+        if "ISO" in self.market_df.columns:
+            self.market_df["ISO"] = (
+                self.market_df["ISO"]
+                .astype(str)
+                .replace("nan", "")
+                .str.strip()
+                .str.upper()
+            )
+
         if allowed_isos and "ISO" in self.market_df.columns:
-            self.market_df["ISO"] = self.market_df["ISO"].astype(str).str.strip().str.upper()
             self.market_df = self.market_df[self.market_df["ISO"].isin(allowed_isos)].copy()
+
+        # Competitor data is indexed by ISO, not by display country name.
+        # This avoids mismatches such as "USA" versus "United States".
         self.competitors_by_country = {}
         if self.market_df.empty:
             return
-        for country, cdf in self.market_df.groupby("Country", sort=True):
-            country = str(country).strip()
+
+        market_with_iso = self.market_df[
+            self.market_df["ISO"].astype(str).str.strip().ne("")
+        ].copy()
+
+        for iso_code, cdf in market_with_iso.groupby("ISO", sort=True):
+            iso_code = str(iso_code).strip().upper()
             cdf = cdf[pd.to_numeric(cdf["Days"], errors="coerce").le(self.max_days)].copy()
             pts = []
             for _, row in cdf.iterrows():
@@ -531,8 +553,9 @@ class EditorState:
                     "plan": str(row.get("Plan", "")).strip(),
                     "days": float(row["Days"]) if pd.notna(row["Days"]) else None,
                     "country": str(row.get("Country", "")).strip(),
+                    "iso": iso_code,
                 })
-            self.competitors_by_country[country] = pts
+            self.competitors_by_country[iso_code] = pts
 
     def preload_last_exported_promos(self, data: list[dict[str, Any]]) -> None:
         self.promo_store = {}
@@ -1011,8 +1034,16 @@ class EditorState:
     def current_competitors(self) -> list[dict[str, Any]]:
         if not self.selected_country:
             return []
+
         currency = self.normalize_current_currency()
-        points = self.competitors_by_country.get(str(self.selected_country), [])
+        selected_name = str(self.selected_country).strip()
+        iso_code = str(self.country_iso_map.get(selected_name, "")).strip().upper()
+
+        if not iso_code:
+            points = []
+        else:
+            points = self.competitors_by_country.get(iso_code, [])
+
         for point in points:
             prices = point.get("price_by_currency", {})
             if currency in prices and pd.notna(prices[currency]):

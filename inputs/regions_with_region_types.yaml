@@ -3,7 +3,7 @@ metadata:
   country_count: 155
   region_count: 50
   total_destinations: 205
-  note: Country catalog contains ISO2 codes only. Regions contain a region_type classification, an optional product display name, and ISO2 country lists. Suriname (SR) and Belize (BZ) were added to the catalog and relevant commercial travel regions.
+  note: Country catalog contains ISO2 codes only. Regions contain a four-character region_code, a region_type classification, an optional product display name, and ISO2 country lists. Suriname (SR) and Belize (BZ) were added to the catalog and relevant commercial travel regions.
 countries:
 - "AD"
 - "AE"
@@ -162,6 +162,7 @@ countries:
 - "PW"
 regions:
   GLOBAL:
+    region_code: GLBL
     region_type: GLOBAL
     region_product_name: Global
     countries:
@@ -318,7 +319,8 @@ regions:
     - "XK"
     - "ZA"
   EUROPA:
-    region_type: LARGE_REGION
+    region_code: EURP
+    region_type: OLD_REGION
     region_product_name: Europe
     countries:
     - "AD"
@@ -370,7 +372,8 @@ regions:
     - "UA"
     - "XK"
   EU_UK_NOR:
-    region_type: LARGE_REGION
+    region_code: EUNR
+    region_type: OLD_REGION
     region_product_name: EU, UK & Norway
     countries:
     - "AT"
@@ -403,14 +406,16 @@ regions:
     - "NO"
     - "GB"
   NORTH_AMERICA:
-    region_type: LARGE_REGION
+    region_code: NOAM
+    region_type: OLD_REGION
     region_product_name: North America
     countries:
     - "CA"
     - "MX"
     - "US"
   MENA:
-    region_type: LARGE_REGION
+    region_code: MENA
+    region_type: OLD_REGION
     region_product_name: Middle East & North Africa
     countries:
     - "AE"
@@ -429,7 +434,8 @@ regions:
     - "SA"
     - "TN"
   AFRICA:
-    region_type: LARGE_REGION
+    region_code: AFRI
+    region_type: OLD_REGION
     region_product_name: Africa
     countries:
     - "AO"
@@ -460,7 +466,8 @@ regions:
     - "TZ"
     - "ZA"
   LATAM:
-    region_type: LARGE_REGION
+    region_code: LATM
+    region_type: OLD_REGION
     region_product_name: Latin America
     countries:
     - "AR"
@@ -482,7 +489,8 @@ regions:
     - "UY"
     - "VE"
   OCEANIA:
-    region_type: LARGE_REGION
+    region_code: OCEA
+    region_type: OLD_REGION
     region_product_name: Oceania & Pacific
     countries:
     - "AU"
@@ -493,7 +501,8 @@ regions:
     - "TO"
     - "Pw"
   ASIA:
-    region_type: LARGE_REGION
+    region_code: ASIA
+    region_type: OLD_REGION
     region_product_name: Asia
     countries:
     - "AF"
@@ -525,7 +534,8 @@ regions:
     - "UZ"
     - "VN"
   CARIBBEAN:
-    region_type: LARGE_REGION
+    region_code: CARB
+    region_type: OLD_REGION
     region_product_name: Caribbean
     countries:
     - "AG"
@@ -546,7 +556,8 @@ regions:
     - "TC"
     - "VG"
   SE_EUROPE:
-    region_type: MEDIUM_REGION
+    region_code: SEEU
+    region_type: NEW_REGION
     region_product_name: Southeast Europe
     countries:
     - "GR"
@@ -560,7 +571,8 @@ regions:
     - "MK"
     - "XK"
   WEST_BALKANS:
-    region_type: MEDIUM_REGION
+    region_code: WBAL
+    region_type: NEW_REGION
     region_product_name: Western Balkans
     countries:
     - "HR"
@@ -571,7 +583,8 @@ regions:
     - "MK"
     - "XK"
   ADRIATIC:
-    region_type: MEDIUM_REGION
+    region_code: ADRI
+    region_type: NEW_REGION
     region_product_name: Adriatic Coast
     countries:
     - "IT"
@@ -580,7 +593,8 @@ regions:
     - "ME"
     - "AL"
   WEST_EUROPE:
-    region_type: MEDIUM_REGION
+    region_code: WEUR
+    region_type: NEW_REGION
     region_product_name: Western Europe
     countries:
     - "FR"
@@ -589,7 +603,8 @@ regions:
     - "AD"
     - "MC"
   BRITISH_ISLES_IR:
-    region_type: MEDIUM_REGION
+    region_code: UKIR
+    region_type: NEW_REGION
     region_product_name: UK & Ireland
     countries:
     - "GB"
@@ -597,7 +612,8 @@ regions:
     - "GG"
     - "JE"
   CENTRAL_EUROPE:
-    region_type: MEDIUM_REGION
+    region_code: CEUR
+    region_type: NEW_REGION
     region_product_name: Central Europe
     countries:
     - "DE"
@@ -608,7 +624,8 @@ regions:
     - "HU"
     - "PL"
   NORDICS:
-    region_type: MEDIUM_REGION
+    region_code: NORD
+    region_type: NEW_REGION
     region_product_name: Nordics
     countries:
     - "DK"
@@ -619,7 +636,8 @@ regions:
     - "FO"
     - "GL"
   BALTICS_FI:
-    region_type: MEDIUM_REGION
+    region_code: BAFI
+    region_type: NEW_REGION
     region_product_name: Baltics & Finland
     countries:
     - "EE"
@@ -627,7 +645,8 @@ regions:
     - "LT"
     - "FI"
   BENELUX_FR:
-    region_type: MEDIUM_REGION
+    region_code: BEFR
+    region_type: NEW_REGION
     region_product_name: Benelux & France
     countries:
     - "BE"
@@ -635,7 +654,8 @@ regions:
     - "LU"
     - "FR"
   MEDITERRANEAN:
-    region_type: MEDIUM_REGION
+    region_code: MEDI
+    region_type: NEW_REGION
     region_product_name: Mediterranean Europe
     countries:
     - "ES"
@@ -650,7 +670,8 @@ regions:
     - "AL"
     - "MC"
   EAST_EUROPE:
-    region_type: MEDIUM_REGION
+    region_code: EEUR
+    region_type: NEW_REGION
     region_product_name: Eastern Europe
     countries:
     - "PL"
@@ -662,7 +683,8 @@ regions:
     - "MD"
     - "UA"
   ALPINE_REGION:
-    region_type: MEDIUM_REGION
+    region_code: ALPN
+    region_type: NEW_REGION
     region_product_name: Alpine Europe
     countries:
     - "AT"
@@ -673,7 +695,8 @@ regions:
     - "FR"
     - "DE"
   GULF_TRAVEL:
-    region_type: MEDIUM_REGION
+    region_code: GULF
+    region_type: NEW_REGION
     region_product_name: Gulf Countries
     countries:
     - "AE"
@@ -683,21 +706,24 @@ regions:
     - "QA"
     - "SA"
   LEVANT:
-    region_type: MEDIUM_REGION
+    region_code: LEVA
+    region_type: NEW_REGION
     region_product_name: Levant
     countries:
     - "IL"
     - "JO"
     - "LB"
   CAUCASUS:
-    region_type: MEDIUM_REGION
+    region_code: CAUC
+    region_type: NEW_REGION
     region_product_name: Caucasus
     countries:
     - "AM"
     - "AZ"
     - "GE"
   CENTRAL_ASIA:
-    region_type: MEDIUM_REGION
+    region_code: CASI
+    region_type: NEW_REGION
     region_product_name: Central Asia
     countries:
     - "KZ"
@@ -705,7 +731,8 @@ regions:
     - "TJ"
     - "UZ"
   INDOCHINA:
-    region_type: MEDIUM_REGION
+    region_code: INDO
+    region_type: NEW_REGION
     region_product_name: Indochina
     countries:
     - "TH"
@@ -713,7 +740,8 @@ regions:
     - "KH"
     - "LA"
   SOUTHEAST_ASIA:
-    region_type: MEDIUM_REGION
+    region_code: SEAS
+    region_type: NEW_REGION
     region_product_name: Southeast Asia
     countries:
     - "SG"
@@ -723,7 +751,8 @@ regions:
     - "VN"
     - "PH"
   ISLAND_SE_ASIA:
-    region_type: MEDIUM_REGION
+    region_code: ISEA
+    region_type: NEW_REGION
     region_product_name: Island Southeast Asia
     countries:
     - "SG"
@@ -731,7 +760,8 @@ regions:
     - "ID"
     - "PH"
   EAST_ASIA_PLUS:
-    region_type: MEDIUM_REGION
+    region_code: EASP
+    region_type: NEW_REGION
     region_product_name: China, Hong Kong, Macao & Taiwan
     countries:
     - "CN"
@@ -739,14 +769,16 @@ regions:
     - "MO"
     - "TW"
   JP_KR_TW:
-    region_type: MEDIUM_REGION
+    region_code: JKTW
+    region_type: NEW_REGION
     region_product_name: Japan, South Korea & Taiwan
     countries:
     - "JP"
     - "KR"
     - "TW"
   SUBCONTINENT:
-    region_type: MEDIUM_REGION
+    region_code: SUBC
+    region_type: NEW_REGION
     region_product_name: Indian Subcontinent
     countries:
     - "IN"
@@ -754,7 +786,8 @@ regions:
     - "LK"
     - "NP"
   NORTH_AFRICA:
-    region_type: MEDIUM_REGION
+    region_code: NAFR
+    region_type: NEW_REGION
     region_product_name: North Africa
     countries:
     - "MA"
@@ -763,7 +796,8 @@ regions:
     - "EG"
     - "LY"
   EAST_AFRICA:
-    region_type: MEDIUM_REGION
+    region_code: EAFR
+    region_type: NEW_REGION
     region_product_name: East Africa
     countries:
     - "KE"
@@ -771,14 +805,16 @@ regions:
     - "RW"
     - "ET"
   SOUTHERN_AFRICA:
-    region_type: MEDIUM_REGION
+    region_code: SAFR
+    region_type: NEW_REGION
     region_product_name: Southern Africa
     countries:
     - "ZA"
     - "BW"
     - "LS"
   WEST_AFRICA:
-    region_type: MEDIUM_REGION
+    region_code: WAFR
+    region_type: NEW_REGION
     region_product_name: West Africa
     countries:
     - "GH"
@@ -790,7 +826,8 @@ regions:
     - "ML"
     - "LR"
   AFRICA_SAFARI:
-    region_type: MEDIUM_REGION
+    region_code: SAFI
+    region_type: NEW_REGION
     region_product_name: African Safari
     countries:
     - "KE"
@@ -799,21 +836,24 @@ regions:
     - "BW"
     - "RW"
   INDIAN_OCEAN:
-    region_type: MEDIUM_REGION
+    region_code: INOC
+    region_type: NEW_REGION
     region_product_name: Indian Ocean Islands
     countries:
     - "MU"
     - "RE"
     - "MV"
   CENTRAL_AFRICA:
-    region_type: MEDIUM_REGION
+    region_code: CAFR
+    region_type: NEW_REGION
     region_product_name: Central Africa
     countries:
     - "AO"
     - "CD"
     - "TD"
   CENTRAL_AMERICA:
-    region_type: MEDIUM_REGION
+    region_code: CAMR
+    region_type: NEW_REGION
     region_product_name: Central America
     countries:
     - "BZ"
@@ -824,7 +864,8 @@ regions:
     - "PA"
     - "SV"
   SOUTH_AMERICA:
-    region_type: MEDIUM_REGION
+    region_code: SAMR
+    region_type: NEW_REGION
     region_product_name: South America
     countries:
     - "AR"
@@ -838,7 +879,8 @@ regions:
     - "UY"
     - "VE"
   ANDEAN:
-    region_type: MEDIUM_REGION
+    region_code: ANDS
+    region_type: NEW_REGION
     region_product_name: Andean Region
     countries:
     - "CO"
@@ -846,7 +888,8 @@ regions:
     - "PE"
     - "CL"
   SOUTH_CONE:
-    region_type: MEDIUM_REGION
+    region_code: SCON
+    region_type: NEW_REGION
     region_product_name: Southern South America
     countries:
     - "BR"
@@ -855,7 +898,8 @@ regions:
     - "UY"
     - "PY"
   CARIBBEAN_CRUISE:
-    region_type: MEDIUM_REGION
+    region_code: CCRU
+    region_type: NEW_REGION
     region_product_name: Caribbean Cruise
     countries:
     - "AG"
@@ -869,7 +913,8 @@ regions:
     - "PR"
     - "TC"
   LESSER_ANTILLES:
-    region_type: MEDIUM_REGION
+    region_code: LANT
+    region_type: NEW_REGION
     region_product_name: Lesser Antilles
     countries:
     - "AG"
@@ -881,7 +926,8 @@ regions:
     - "LC"
     - "VG"
   NORTH_ATLANTIC_ISLANDS:
-    region_type: MEDIUM_REGION
+    region_code: NATL
+    region_type: NEW_REGION
     region_product_name: North Atlantic Islands
     countries:
     - "BM"
@@ -889,19 +935,22 @@ regions:
     - "TC"
     - "PR"
   USA_CANADA:
-    region_type: MEDIUM_REGION
+    region_code: USCA
+    region_type: NEW_REGION
     region_product_name: USA & Canada
     countries:
     - "US"
     - "CA"
   AUS_NZ:
-    region_type: MEDIUM_REGION
+    region_code: AUNZ
+    region_type: NEW_REGION
     region_product_name: Australia & New Zealand
     countries:
     - "AU"
     - "NZ"
   SOUTH_PACIFIC:
-    region_type: MEDIUM_REGION
+    region_code: SPAC
+    region_type: NEW_REGION
     region_product_name: South Pacific
     countries:
     - "FJ"
@@ -910,7 +959,8 @@ regions:
     - "TO"
     - "PW"
   PACIFIC_LONG_HAUL:
-    region_type: MEDIUM_REGION
+    region_code: PLON
+    region_type: NEW_REGION
     region_product_name: Pacific Explorer
     countries:
     - "AU"

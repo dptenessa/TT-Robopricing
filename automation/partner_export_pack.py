@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Iterable
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
+import yaml
 
 from currency_support import CURRENCIES, normalize_currency
 from plan_labels import PARTNER_PLAN_PACKS, partner_display_plan_label
@@ -77,6 +79,7 @@ PARTNER_PRICE_OUTPUT_COLUMNS: tuple[str, ...] = (
     "ocsOfferLevelQuota",
     "ocsOfferLevelQuotaUom",
     "ocsOfferValidityUnits",
+    "ListPrice",
 )
 
 OCS_OFFER_ID_COUNTRY_LIMITED = "190447115"
@@ -85,6 +88,11 @@ OCS_OFFER_ID_GLOBAL_LIMITED = "190447135"
 OCS_OFFER_ID_GLOBAL_UNLIMITED = "190447265"
 OCS_OFFER_ID_REGION_LIMITED = "190447125"
 OCS_OFFER_ID_REGION_UNLIMITED = "190447255"
+
+REGION_MEMBERSHIP_CURRENT_NAME = "region_membership_current.json"
+REGION_MEMBERSHIP_HISTORY_PREFIX = "region_membership_"
+REGION_CHANGES_MEMBER_NAME = "TT_region_changes.csv"
+DESTINATION_TABLE_MEMBER_NAME = "export-destination-table.json"
 
 
 @dataclass(frozen=True)
@@ -236,6 +244,218 @@ def _history_root_for(local_export_dir: Path) -> Path:
     return local_export_dir.parent / "history"
 
 
+def _membership_history_path(local_export_dir: Path, timestamp: str) -> Path:
+    return _history_root_for(local_export_dir) / f"{REGION_MEMBERSHIP_HISTORY_PREFIX}{timestamp}.json"
+
+
+def _read_membership_snapshot(path: Path) -> dict[str, object]:
+    if not path.exists():
+        raise FileNotFoundError(f"Required region membership snapshot not found: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid region membership snapshot: {path}")
+    return data
+
+
+def _membership_snapshot_from_region_prices(
+    local_export_dir: Path,
+    timestamp: str,
+    currencies: list[str],
+) -> dict[str, object]:
+    """Reconstruct legacy membership history from saved regional price CSVs.
+
+    This is used for exports created before region_membership_YYYYMMDD.json
+    snapshots existed. The first available currency history file is enough
+    because regional membership is generated consistently across currencies.
+    """
+    history_root = _history_root_for(local_export_dir)
+    region_members: dict[str, set[str]] = {}
+
+    for currency in currencies:
+        path = history_root / currency / f"region_prices_{timestamp}.csv"
+        if not path.exists():
+            continue
+
+        df = pd.read_csv(path)
+        if df.empty:
+            continue
+
+        for _, row in df.iterrows():
+            region = _country_code(
+                row.get("ISO", "")
+                or row.get("Country", "")
+                or row.get("PricingRegionUsed", "")
+            )
+            if not region:
+                continue
+
+            countries = _country_list(row.get("PricingUnitCountriesUsed", ""))
+            if countries:
+                region_members.setdefault(region, set()).update(countries)
+
+        if region_members:
+            break
+
+    if not region_members:
+        raise FileNotFoundError(
+            "No historical region membership snapshot or usable regional "
+            f"price CSV was found for {timestamp}."
+        )
+
+    regions = {
+        region: sorted(countries)
+        for region, countries in sorted(region_members.items())
+    }
+    country_members: dict[str, list[str]] = {}
+    for region, countries in regions.items():
+        for country in countries:
+            country_members.setdefault(country, []).append(region)
+
+    snapshot: dict[str, object] = {
+        "generated_from": f"historical region_prices_{timestamp}.csv",
+        "regions": regions,
+        "countries": {
+            country: sorted(region_list)
+            for country, region_list in sorted(country_members.items())
+        },
+    }
+
+    history_path = _membership_history_path(local_export_dir, timestamp)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(
+        json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return snapshot
+
+
+def _read_or_rebuild_membership_snapshot(
+    local_export_dir: Path,
+    timestamp: str,
+    currencies: list[str],
+) -> dict[str, object]:
+    path = _membership_history_path(local_export_dir, timestamp)
+    if path.exists():
+        return _read_membership_snapshot(path)
+    return _membership_snapshot_from_region_prices(
+        local_export_dir,
+        timestamp,
+        currencies,
+    )
+
+
+def _managed_region_codes(regions_yaml: Path) -> list[str]:
+    if not regions_yaml.exists():
+        raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
+    data = yaml.safe_load(regions_yaml.read_text(encoding="utf-8")) or {}
+    return [
+        str(code).strip()
+        for code in (data.get("regions") or {}).keys()
+        if str(code).strip()
+    ]
+
+
+def _membership_pairs(snapshot: dict[str, object]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    regions = snapshot.get("regions", {})
+    if not isinstance(regions, dict):
+        return pairs
+    for region, countries in regions.items():
+        if not isinstance(countries, list):
+            continue
+        for country in countries:
+            region_code = _country_code(region)
+            country_code = _country_code(country)
+            if region_code and country_code:
+                pairs.add((region_code, country_code))
+    return pairs
+
+
+def _region_change_table(
+    previous: dict[str, object],
+    current: dict[str, object],
+    *,
+    previous_date: str,
+    current_date: str,
+) -> pd.DataFrame:
+    previous_pairs = _membership_pairs(previous)
+    current_pairs = _membership_pairs(current)
+    rows: list[dict[str, str]] = []
+
+    for region, country in sorted(current_pairs - previous_pairs):
+        rows.append({
+            "ChangeType": "Added",
+            "Region": region,
+            "CountryCode": country,
+            "PreviousDate": previous_date,
+            "CurrentDate": current_date,
+        })
+    for region, country in sorted(previous_pairs - current_pairs):
+        rows.append({
+            "ChangeType": "Removed",
+            "Region": region,
+            "CountryCode": country,
+            "PreviousDate": previous_date,
+            "CurrentDate": current_date,
+        })
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "ChangeType",
+            "Region",
+            "CountryCode",
+            "PreviousDate",
+            "CurrentDate",
+        ],
+    )
+
+
+def _updated_destination_table(
+    source_path: Path,
+    membership_snapshot: dict[str, object],
+    managed_regions: list[str],
+) -> list[object]:
+    if not source_path.exists():
+        raise FileNotFoundError(f"Destination table JSON not found: {source_path}")
+    data = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Destination table JSON must contain a list.")
+
+    countries_map = membership_snapshot.get("countries", {})
+    if not isinstance(countries_map, dict):
+        countries_map = {}
+
+    managed_set = set(managed_regions)
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        code = _country_code(item.get("code", ""))
+        if code:
+            item["destination"] = code
+
+        if len(code) != 2:
+            continue
+
+        existing = item.get("regions", [])
+        existing_regions = [
+            str(region).strip()
+            for region in existing
+            if str(region).strip()
+        ] if isinstance(existing, list) else []
+        unmanaged = [region for region in existing_regions if region not in managed_set]
+        actual = countries_map.get(code, [])
+        actual_regions = [
+            region
+            for region in managed_regions
+            if region in set(actual if isinstance(actual, list) else [])
+        ]
+        item["regions"] = unmanaged + actual_regions
+
+    return data
+
+
 def _load_export_tables(
     local_export_dir: Path,
     currencies: list[str],
@@ -377,11 +597,28 @@ def _partner_price_value(row: pd.Series) -> str:
     return _partner_number_text(row.get("Price", ""))
 
 
+def _partner_list_price_value(row: pd.Series) -> str:
+    """Return the original price only when a promo changed the net price."""
+    list_price = pd.to_numeric(row.get("Price", pd.NA), errors="coerce")
+    net_price = pd.to_numeric(row.get("FinalPriceAfterPromo", pd.NA), errors="coerce")
+
+    if pd.isna(list_price) or pd.isna(net_price):
+        return ""
+
+    # Price and FinalPriceAfterPromo are already expressed in the currency of
+    # the current export file, so no cross-currency conversion is required.
+    if abs(float(list_price) - float(net_price)) <= 1e-9:
+        return ""
+
+    return _partner_number_text(list_price)
+
+
 def _partner_price_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["Destination"] = df.get("Country", pd.Series("", index=df.index))
     out["ocsOfferValidityPeriod"] = df.get("Days", pd.Series("", index=df.index)).map(_partner_number_text)
     out["price"] = df.apply(_partner_price_value, axis=1)
+    out["ListPrice"] = df.apply(_partner_list_price_value, axis=1)
     out["ocsCountries"] = df.apply(_partner_ocs_countries, axis=1)
     out["ocsOfferId"] = out.join(df, how="left").apply(_partner_ocs_offer_id, axis=1)
     out["ocsOfferLevelQuota"] = df.get("GB", pd.Series("", index=df.index)).map(_partner_number_text)
@@ -495,11 +732,31 @@ def build_partner_price_pack(
     run_date: datetime | None = None,
     compare_timestamp: str | None = None,
     current_timestamp: str | None = None,
+    destination_table_json: str | Path | None = None,
+    regions_yaml: str | Path | None = None,
 ) -> PartnerPackResult:
     local_export_dir = Path(local_export_dir)
     zip_path = Path(zip_path)
     run_date = run_date or datetime.now()
     current_timestamp = current_timestamp or run_date.strftime("%Y%m%d")
+    project_root = local_export_dir.parents[2]
+    destination_table_json = Path(
+        destination_table_json
+        or project_root / "inputs" / "export-destination-table_reviewed.json"
+    )
+    regions_yaml = Path(
+        regions_yaml
+        or project_root / "inputs" / "regions.yaml"
+    )
+    current_membership = _read_membership_snapshot(
+        local_export_dir / REGION_MEMBERSHIP_CURRENT_NAME
+    )
+    managed_regions = _managed_region_codes(regions_yaml)
+    destination_table = _updated_destination_table(
+        destination_table_json,
+        current_membership,
+        managed_regions,
+    )
     if zip_path.suffix.lower() != ".zip":
         zip_path = zip_path / f"TT_prices_{run_date.strftime('%y%m%d')}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
@@ -530,6 +787,35 @@ def build_partner_price_pack(
             )
 
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(
+            DESTINATION_TABLE_MEMBER_NAME,
+            json.dumps(destination_table, indent=2, ensure_ascii=False) + "\n",
+        )
+
+        if compare_timestamp:
+            previous_membership = _read_or_rebuild_membership_snapshot(
+                local_export_dir,
+                compare_timestamp,
+                normalized_currencies,
+            )
+            region_diff = _region_change_table(
+                previous_membership,
+                current_membership,
+                previous_date=compare_timestamp,
+                current_date=current_timestamp,
+            )
+            zip_file.writestr(
+                REGION_CHANGES_MEMBER_NAME,
+                region_diff.to_csv(index=False),
+            )
+            diff_results.append(
+                PartnerPackDiffFile(
+                    currency="ALL",
+                    member_name=REGION_CHANGES_MEMBER_NAME,
+                    rows_written=len(region_diff),
+                )
+            )
+
         for currency in normalized_currencies:
             merged, removed_by_plan = clean_tables[currency]
             plan_values = _plan_key(merged["Plan"])

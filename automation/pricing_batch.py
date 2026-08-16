@@ -115,7 +115,19 @@ def run_batch_pricing_for_currency(
             currency=currency,
             eur_to_usd=eur_to_usd,
         )
-        iso_to_country = build_iso_country_map(market_df_full)
+
+        # Use the PPG cost file as the authoritative source for country names.
+        # prepare_ppg_data() normalizes the source ISO column to "ISO" and
+        # preserves the PPG country-name column as lowercase "country".
+        if "country" not in ppg_df.columns:
+            raise ValueError(
+                "Prepared PPG data is missing the required 'country' column."
+            )
+
+        ppg_country_names = ppg_df.loc[:, ["ISO", "country"]].rename(
+            columns={"country": "Country"}
+        )
+        iso_to_country = build_iso_country_map(ppg_country_names)
     except Exception as e:
         print(f"Error preparing {currency} market data: {e}")
         return
@@ -291,7 +303,46 @@ def run_batch_pricing_for_currency(
             final_df["Days"].fillna(0).astype(int).astype(str)
         )
 
-    ht_df = final_df.loc[final_df["Provider"].astype(str).str.strip().str.upper() == "HT"].copy()
+    ht_df = final_df.loc[
+        final_df["Provider"].astype(str).str.strip().str.upper() == "HT"
+    ].copy()
+
+    # Final authoritative country-name overwrite immediately before saving.
+    # This guarantees that the written proposal uses the PPG country column.
+    ht_df["ISO"] = ht_df["ISO"].astype(str).str.strip().str.upper()
+    ht_df["Country"] = ht_df["ISO"].map(iso_to_country)
+
+    missing_name_mask = ht_df["Country"].isna() | ht_df["Country"].astype(str).str.strip().eq("")
+    if missing_name_mask.any():
+        missing_isos = sorted(ht_df.loc[missing_name_mask, "ISO"].unique().tolist())
+        raise ValueError(
+            "PPG country-name mapping is missing ISO codes immediately before save: "
+            + ", ".join(missing_isos)
+        )
+
+    actual_country_map = (
+        ht_df[["ISO", "Country"]]
+        .drop_duplicates()
+        .set_index("ISO")["Country"]
+        .to_dict()
+    )
+    mismatches = {
+        iso: {"expected": expected, "actual": actual_country_map.get(iso)}
+        for iso, expected in iso_to_country.items()
+        if iso in actual_country_map and actual_country_map.get(iso) != expected
+    }
+    if mismatches:
+        raise ValueError(
+            "Country names changed after the final PPG overwrite: "
+            + str(mismatches)
+        )
+
+    for sample_iso in ("AE", "GB", "US", "TR", "KR", "VN"):
+        if sample_iso in actual_country_map:
+            print(
+                f"COUNTRY NAME CHECK {sample_iso}: "
+                f"{actual_country_map[sample_iso]}"
+            )
 
     columns_to_keep = [
         "Provider",
@@ -358,6 +409,12 @@ def run_batch_pricing_for_currency(
 
 
 def run_batch_pricing(paths: PipelineFiles = FILES):
+    print(f"PRICING BATCH FILE IN USE: {Path(__file__).absolute()}")
+    print(f"PIPELINE BASE DIRECTORY: {paths.base_dir}")
+    print(f"PPG INPUT FILE: {paths.ppg_csv}")
+    print(f"USD PROPOSAL OUTPUT: {paths.model_latest('USD')}")
+    print(f"EUR PROPOSAL OUTPUT: {paths.model_latest('EUR')}")
+
     # Avoid .resolve() on OneDrive as it can return reparse point paths
     # (like \\?\C:\...) that many libraries fail to read, causing Errno 22.
     base_dir = paths.base_dir

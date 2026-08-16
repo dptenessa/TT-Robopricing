@@ -1,0 +1,227 @@
+{
+  "AD": [
+    "EUROPA",
+    "GLOBAL",
+    "WEST_EUROPE"
+  ],
+  "AE": [
+    "GLOBAL"
+  ],
+  "AF": [
+    "GLOBAL"
+  ],
+  "AG": [
+    "GLOBAL"
+  ],
+  "AI": [
+    "GLOBAL"
+  ],
+  "AO": [
+    "GLOBAL"
+  ],
+  "AZ": [
+    "ASIA",
+    "GLOBAL"
+  ],
+  "BB": [
+    "GLOBAL"
+  ],
+  "BM": [
+    "GLOBAL"
+  ],
+  "BQ": [
+    "GLOBAL"
+  ],
+  "BW": [
+    "GLOBAL"
+  ],
+  "BY": [
+    "GLOBAL"
+  ],
+  "BZ": [
+    "CARIBBEAN",
+    "CARIBBEAN_CRUISE",
+    "CENTRAL_AMERICA",
+    "LATAM"
+  ],
+  "CD": [
+    "GLOBAL"
+  ],
+  "CU": [
+    "CARIBBEAN",
+    "GLOBAL",
+    "LATAM"
+  ],
+  "CV": [
+    "AFRICA",
+    "GLOBAL"
+  ],
+  "EG": [
+    "GLOBAL"
+  ],
+  "ET": [
+    "AFRICA",
+    "EAST_AFRICA",
+    "GLOBAL"
+  ],
+  "FJ": [
+    "GLOBAL",
+    "OCEANIA",
+    "PACIFIC_LONG_HAUL",
+    "SOUTH_PACIFIC"
+  ],
+  "GH": [
+    "GLOBAL"
+  ],
+  "GL": [
+    "GLOBAL"
+  ],
+  "GM": [
+    "GLOBAL"
+  ],
+  "GP": [
+    "GLOBAL"
+  ],
+  "IR": [
+    "GLOBAL"
+  ],
+  "KE": [
+    "AFRICA",
+    "GLOBAL"
+  ],
+  "KH": [
+    "GLOBAL"
+  ],
+  "KN": [
+    "GLOBAL"
+  ],
+  "KY": [
+    "GLOBAL"
+  ],
+  "KZ": [
+    "GLOBAL"
+  ],
+  "LA": [
+    "ASIA",
+    "GLOBAL",
+    "INDOCHINA"
+  ],
+  "LB": [
+    "GLOBAL",
+    "LEVANT",
+    "MENA"
+  ],
+  "LC": [
+    "GLOBAL"
+  ],
+  "LK": [
+    "ASIA",
+    "GLOBAL"
+  ],
+  "LR": [
+    "GLOBAL"
+  ],
+  "LS": [
+    "AFRICA",
+    "GLOBAL",
+    "SOUTHERN_AFRICA"
+  ],
+  "LY": [
+    "AFRICA",
+    "GLOBAL",
+    "MENA",
+    "NORTH_AFRICA"
+  ],
+  "MC": [
+    "EUROPA",
+    "GLOBAL",
+    "MEDITERRANEAN",
+    "WEST_EUROPE"
+  ],
+  "ML": [
+    "GLOBAL"
+  ],
+  "MO": [
+    "GLOBAL"
+  ],
+  "MU": [
+    "GLOBAL"
+  ],
+  "MV": [
+    "GLOBAL"
+  ],
+  "NG": [
+    "GLOBAL"
+  ],
+  "NP": [
+    "ASIA",
+    "GLOBAL",
+    "SUBCONTINENT"
+  ],
+  "OM": [
+    "GLOBAL"
+  ],
+  "PA": [
+    "GLOBAL",
+    "LATAM"
+  ],
+  "PF": [
+    "GLOBAL",
+    "OCEANIA",
+    "PACIFIC_LONG_HAUL",
+    "SOUTH_PACIFIC"
+  ],
+  "PG": [
+    "GLOBAL",
+    "OCEANIA"
+  ],
+  "PW": [
+    "OCEANIA",
+    "PACIFIC_LONG_HAUL",
+    "SOUTH_PACIFIC"
+  ],
+  "RW": [
+    "GLOBAL"
+  ],
+  "SA": [
+    "GLOBAL"
+  ],
+  "SD": [
+    "AFRICA",
+    "GLOBAL"
+  ],
+  "SL": [
+    "GLOBAL"
+  ],
+  "SN": [
+    "GLOBAL"
+  ],
+  "TD": [
+    "GLOBAL"
+  ],
+  "TG": [
+    "AFRICA",
+    "GLOBAL"
+  ],
+  "TJ": [
+    "ASIA",
+    "GLOBAL"
+  ],
+  "TN": [
+    "GLOBAL"
+  ],
+  "TO": [
+    "GLOBAL",
+    "OCEANIA"
+  ],
+  "TZ": [
+    "AFRICA",
+    "GLOBAL"
+  ],
+  "VE": [
+    "GLOBAL"
+  ],
+  "ZA": [
+    "GLOBAL"
+  ]
+}

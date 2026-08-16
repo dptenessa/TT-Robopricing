@@ -17,11 +17,15 @@ except Exception:
     INPUT_REGIONS = PROJECT_ROOT / "inputs" / "regions.yaml"
     OUTPUT_NAME = "region_prices_current.csv"
 
-# Regional anchor guardrails.
-# A country cannot define regional prices when its Unlimited 30-day USD price
-# is above either the absolute ceiling or the relative median ceiling.
-REGIONAL_ANCHOR_UNLIMITED_30D_CAP_USD = 300.0
+# Regional eligibility and anchor guardrails.
+REGIONAL_MIN_VALID_SKUS = 50
+
+# Unlimited 30-day is only a relative outlier guardrail when present.
+# There is no fixed absolute ceiling, and a missing Unlimited 30-day SKU
+# does not automatically disqualify an anchor candidate.
 REGIONAL_ANCHOR_MEDIAN_MULTIPLIER = 2.0
+REGION_MEMBERSHIP_OUTPUT_NAME = "region_membership_current.json"
+REGION_COUNTRY_EXCLUSIONS_NAME = "region_country_exclusions.json"
 
 try:
     from currency_support import CURRENCIES, DEFAULT_CURRENCY, DEFAULT_EUR_TO_USD, normalize_currency
@@ -227,6 +231,91 @@ def region_names(regions_data: dict[str, Any]) -> list[str]:
     ]
 
 
+
+def load_region_country_exclusions(path: str | Path) -> dict[str, list[str]]:
+    """Load persistent country-to-region exclusions.
+
+    File format:
+    {
+      "MA": ["AFRICA"],
+      "CU": ["GLOBAL", "CARIBBEAN"]
+    }
+    """
+    exclusion_path = Path(path)
+    if not exclusion_path.exists():
+        return {}
+
+    try:
+        data = json.loads(exclusion_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: dict[str, list[str]] = {}
+    for country, regions in data.items():
+        country_code = _country_code(country)
+        if not country_code:
+            continue
+        if not isinstance(regions, list):
+            continue
+        normalized_regions = _unique_ordered(
+            str(region).strip()
+            for region in regions
+            if str(region).strip()
+        )
+        if normalized_regions:
+            normalized[country_code] = normalized_regions
+    return dict(sorted(normalized.items()))
+
+
+def save_region_country_exclusions(
+    path: str | Path,
+    exclusions: dict[str, list[str]],
+) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    normalized = {
+        _country_code(country): _unique_ordered(
+            str(region).strip()
+            for region in regions
+            if str(region).strip()
+        )
+        for country, regions in exclusions.items()
+        if _country_code(country)
+    }
+    normalized = {
+        country: regions
+        for country, regions in sorted(normalized.items())
+        if regions
+    }
+
+    output_path.write_text(
+        json.dumps(normalized, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def configured_regions_for_country(
+    country: str,
+    regions_data: dict[str, Any],
+) -> list[str]:
+    country_code = _country_code(country)
+    if not country_code:
+        return []
+    return [
+        region_name
+        for region_name in region_names(regions_data)
+        if country_code in {
+            _country_code(item)
+            for item in resolve_region_ordered(region_name, regions_data)
+        }
+    ]
+
+
 def _required_columns(fieldnames: list[str]) -> None:
     required = {"ISO", "Days", "Plan", "FinalPriceAfterPromo"}
     missing = required - set(fieldnames)
@@ -331,50 +420,55 @@ def _is_unlimited_30d_sku(sku_key: tuple[str, str, str]) -> bool:
     return "unlimited" in plan_text and days_value == 30.0
 
 
-def _country_covers_anchor_prices(
+def _country_valid_skus(
     country: str,
     sku_keys: set[tuple[str, str, str]],
-    anchor_prices_by_currency: dict[
-        str,
-        dict[tuple[str, str, str], float],
-    ],
-    floor_by_currency_country_sku: dict[
-        str,
-        dict[tuple[str, tuple[str, str, str]], float],
-    ],
+    price_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
+    floor_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
     required_currencies: list[str],
-) -> bool:
-    """
-    Return True only when every anchor SKU passes this country's floor
-    in every required currency.
-    """
-    if not sku_keys:
-        return False
-
+) -> set[tuple[str, str, str]]:
+    """Return SKUs whose own prices pass own floors in all currencies."""
+    valid_skus: set[tuple[str, str, str]] = set()
     for sku_key in sku_keys:
-        for currency in required_currencies:
-            anchor_price = anchor_prices_by_currency.get(
-                currency,
-                {},
-            ).get(sku_key)
+        if all(
+            price_by_currency_country_sku.get(currency, {}).get((country, sku_key)) is not None
+            and floor_by_currency_country_sku.get(currency, {}).get((country, sku_key)) is not None
+            and price_by_currency_country_sku[currency][(country, sku_key)]
+            >= floor_by_currency_country_sku[currency][(country, sku_key)]
+            for currency in required_currencies
+        ):
+            valid_skus.add(sku_key)
+    return valid_skus
 
-            required_floor = floor_by_currency_country_sku.get(
-                currency,
-                {},
-            ).get((country, sku_key))
 
-            if anchor_price is None or required_floor is None:
-                return False
-
-            if anchor_price < required_floor:
-                return False
-
-    return True
-
+def _anchor_supported_skus(
+    anchor_prices_by_currency: dict[str, dict[tuple[str, str, str], float]],
+    candidate_sku_keys: set[tuple[str, str, str]],
+    eligible_countries: list[str],
+    floor_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
+    required_currencies: list[str],
+) -> set[tuple[str, str, str]]:
+    """Keep only SKUs whose anchor price passes every eligible country's floor."""
+    supported: set[tuple[str, str, str]] = set()
+    for sku_key in candidate_sku_keys:
+        ok = True
+        for country in eligible_countries:
+            for currency in required_currencies:
+                anchor_price = anchor_prices_by_currency.get(currency, {}).get(sku_key)
+                required_floor = floor_by_currency_country_sku.get(currency, {}).get((country, sku_key))
+                if anchor_price is None or required_floor is None or anchor_price < required_floor:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok:
+            supported.add(sku_key)
+    return supported
 
 def _build_region_pricing_decisions(
     rows_by_currency: dict[str, list[dict[str, Any]]],
     regions_data: dict[str, Any],
+    region_country_exclusions: dict[str, list[str]] | None = None,
 ) -> tuple[
     dict[str, dict[str, dict[tuple[str, str, str], float]]],
     dict[str, dict[str, dict[tuple[str, str, str], dict[str, Any]]]],
@@ -382,106 +476,67 @@ def _build_region_pricing_decisions(
     set[str],
 ]:
     """
-    Select one commercially reasonable anchor country per region.
+    Country eligibility:
+    - At least REGIONAL_MIN_VALID_SKUS unique Provider + Plan + Days SKUs.
+    - Each counted SKU has valid prices above floor in both USD and EUR.
 
-    Anchor requirements:
-    - The country has every regional SKU in USD and EUR.
-    - Every own USD and EUR price passes its own corresponding cost floor.
-    - Unlimited 30-day USD is not an extreme outlier:
-      <= absolute cap and <= regional median * multiplier.
+    Regional SKU eligibility:
+    - A failed SKU is removed from the region, not the country.
+    - The anchor price must pass every eligible country's floor in both currencies.
 
-    Selection:
-    - Highest safe country coverage.
-    - Then lowest Unlimited 30-day USD price.
-    - Then lowest total USD curve price.
-    - Then country code for deterministic output.
-
-    The selected anchor supplies every USD and EUR regional price.
+    Anchor guardrail:
+    - No fixed Unlimited 30-day ceiling.
+    - When present, Unlimited 30-day USD must not exceed regional median times
+      REGIONAL_ANCHOR_MEDIAN_MULTIPLIER.
+    - Missing Unlimited 30-day does not disqualify the candidate.
     """
+    exclusions_by_country = {
+        _country_code(country): set(regions)
+        for country, regions in (region_country_exclusions or {}).items()
+        if _country_code(country)
+    }
+
     normalized_rows_by_currency = {
         normalize_currency(currency): rows
         for currency, rows in rows_by_currency.items()
         if rows
     }
-
     required_currencies = ["USD", "EUR"]
-
-    missing_required = [
-        currency
-        for currency in required_currencies
-        if currency not in normalized_rows_by_currency
-    ]
+    missing_required = [c for c in required_currencies if c not in normalized_rows_by_currency]
     if missing_required:
         raise ValueError(
             "Regional price generation requires both USD and EUR exports. "
             f"Missing: {', '.join(missing_required)}"
         )
 
-    # Build fast indexes by currency + country + SKU.
-    price_by_currency_country_sku: dict[
-        str,
-        dict[tuple[str, tuple[str, str, str]], float],
-    ] = {}
-    row_by_currency_country_sku: dict[
-        str,
-        dict[tuple[str, tuple[str, str, str]], dict[str, Any]],
-    ] = {}
-    floor_by_currency_country_sku: dict[
-        str,
-        dict[tuple[str, tuple[str, str, str]], float],
-    ] = {}
+    price_by_currency_country_sku = {}
+    row_by_currency_country_sku = {}
+    floor_by_currency_country_sku = {}
 
     for currency in required_currencies:
-        price_index: dict[
-            tuple[str, tuple[str, str, str]],
-            float,
-        ] = {}
-        row_index: dict[
-            tuple[str, tuple[str, str, str]],
-            dict[str, Any],
-        ] = {}
-        floor_index: dict[
-            tuple[str, tuple[str, str, str]],
-            float,
-        ] = {}
-
+        price_index = {}
+        row_index = {}
+        floor_index = {}
         for row in normalized_rows_by_currency[currency]:
             country = _country_code(row.get("ISO", ""))
             if not country:
                 continue
-
             sku_key = _regional_sku_key(row)
             index_key = (country, sku_key)
-
             price = round_regular_price(_row_final_price(row))
-            previous_price = price_index.get(index_key)
-
-            # Duplicate country/SKU rows: retain the highest customer price.
-            if previous_price is None or price > previous_price:
+            if index_key not in price_index or price > price_index[index_key]:
                 price_index[index_key] = price
                 row_index[index_key] = row
-
             floor = _cost_floor_for_currency(row, currency)
-            if floor is not None:
-                previous_floor = floor_index.get(index_key)
-
-                # Duplicate country/SKU floors: retain the strictest floor.
-                if previous_floor is None or floor > previous_floor:
-                    floor_index[index_key] = float(floor)
-
+            if floor is not None and (index_key not in floor_index or floor > floor_index[index_key]):
+                floor_index[index_key] = float(floor)
         price_by_currency_country_sku[currency] = price_index
         row_by_currency_country_sku[currency] = row_index
         floor_by_currency_country_sku[currency] = floor_index
 
-    regional_prices_by_region: dict[
-        str,
-        dict[str, dict[tuple[str, str, str], float]],
-    ] = {}
-    regional_source_rows_by_region: dict[
-        str,
-        dict[str, dict[tuple[str, str, str], dict[str, Any]]],
-    ] = {}
-    eligible_countries_by_region: dict[str, list[str]] = {}
+    regional_prices_by_region = {}
+    regional_source_rows_by_region = {}
+    eligible_countries_by_region = {}
     excluded_countries: set[str] = set()
 
     for region_name in region_names(regions_data):
@@ -489,241 +544,123 @@ def _build_region_pricing_decisions(
             code
             for code in (
                 _country_code(country)
-                for country in resolve_region_ordered(
-                    region_name,
-                    regions_data,
-                )
+                for country in resolve_region_ordered(region_name, regions_data)
             )
-            if code
+            if code and region_name not in exclusions_by_country.get(code, set())
         )
-
         if not configured_countries:
             continue
 
-        # Determine the regional SKU universe from all configured countries.
         all_sku_keys: set[tuple[str, str, str]] = set()
-
         for currency in required_currencies:
-            currency_prices = price_by_currency_country_sku[currency]
-
-            for indexed_country, sku_key in currency_prices.keys():
+            for indexed_country, sku_key in price_by_currency_country_sku[currency].keys():
                 if indexed_country in configured_countries:
                     all_sku_keys.add(sku_key)
-
         if not all_sku_keys:
+            excluded_countries.update(configured_countries)
             continue
 
         ordered_sku_keys = sorted(
             all_sku_keys,
-            key=lambda sku: (
-                str(sku[0]).strip().lower(),
-                str(sku[1]).strip().lower(),
-                float(sku[2]),
-            ),
+            key=lambda sku: (str(sku[0]).lower(), str(sku[1]).lower(), float(sku[2])),
         )
-
-        unlimited_30d_keys = {
-            sku_key
-            for sku_key in ordered_sku_keys
-            if _is_unlimited_30d_sku(sku_key)
+        valid_skus_by_country = {
+            country: _country_valid_skus(
+                country,
+                all_sku_keys,
+                price_by_currency_country_sku,
+                floor_by_currency_country_sku,
+                required_currencies,
+            )
+            for country in configured_countries
         }
-
-        if not unlimited_30d_keys:
-            # An anchor cannot be commercially screened without the agreed
-            # benchmark product.
-            excluded_countries.update(configured_countries)
+        eligible_countries = [
+            country
+            for country in configured_countries
+            if len(valid_skus_by_country[country]) >= REGIONAL_MIN_VALID_SKUS
+        ]
+        excluded_countries.update(c for c in configured_countries if c not in eligible_countries)
+        if not eligible_countries:
             continue
 
-        # First identify technically valid anchor candidates.
-        technically_valid_candidates: list[str] = []
-
-        for country in configured_countries:
-            candidate_valid = True
-
-            for sku_key in ordered_sku_keys:
-                for currency in required_currencies:
-                    own_price = price_by_currency_country_sku[
-                        currency
-                    ].get((country, sku_key))
-
-                    own_floor = floor_by_currency_country_sku[
-                        currency
-                    ].get((country, sku_key))
-
-                    if (
-                        own_price is None
-                        or own_floor is None
-                        or own_price < own_floor
-                    ):
-                        candidate_valid = False
-                        break
-
-                if not candidate_valid:
-                    break
-
-            if candidate_valid:
-                technically_valid_candidates.append(country)
-
-        if not technically_valid_candidates:
-            excluded_countries.update(configured_countries)
-            continue
-
-        # Use the highest Unlimited 30-day SKU price when multiple matching
-        # Unlimited rows exist.
-        unlimited_30d_usd_by_country: dict[str, float] = {}
-
-        for country in technically_valid_candidates:
+        unlimited_30d_keys = {sku for sku in ordered_sku_keys if _is_unlimited_30d_sku(sku)}
+        unlimited_30d_usd_by_country = {}
+        for country in eligible_countries:
             prices = [
-                price_by_currency_country_sku["USD"][
-                    (country, sku_key)
-                ]
-                for sku_key in unlimited_30d_keys
-                if (country, sku_key)
-                in price_by_currency_country_sku["USD"]
+                price_by_currency_country_sku["USD"][(country, sku)]
+                for sku in unlimited_30d_keys
+                if (country, sku) in price_by_currency_country_sku["USD"]
+                and sku in valid_skus_by_country[country]
             ]
-
             if prices:
                 unlimited_30d_usd_by_country[country] = max(prices)
 
-        if not unlimited_30d_usd_by_country:
-            excluded_countries.update(configured_countries)
-            continue
-
-        sorted_benchmark_prices = sorted(
-            unlimited_30d_usd_by_country.values()
-        )
-        midpoint = len(sorted_benchmark_prices) // 2
-
-        if len(sorted_benchmark_prices) % 2:
-            regional_median = sorted_benchmark_prices[midpoint]
-        else:
-            regional_median = (
-                sorted_benchmark_prices[midpoint - 1]
-                + sorted_benchmark_prices[midpoint]
-            ) / 2.0
-
-        relative_ceiling = (
-            regional_median
-            * REGIONAL_ANCHOR_MEDIAN_MULTIPLIER
-        )
-        effective_ceiling = min(
-            REGIONAL_ANCHOR_UNLIMITED_30D_CAP_USD,
-            relative_ceiling,
-        )
-
-        reasonable_candidates = [
-            country
-            for country in technically_valid_candidates
-            if unlimited_30d_usd_by_country.get(
-                country,
-                float("inf"),
-            ) <= effective_ceiling
-        ]
-
-        if not reasonable_candidates:
-            excluded_countries.update(configured_countries)
-            continue
-
-        scored_candidates: list[
-            tuple[
-                int,
-                float,
-                float,
-                str,
-                dict[str, dict[tuple[str, str, str], float]],
-                list[str],
+        candidates = list(eligible_countries)
+        if unlimited_30d_usd_by_country:
+            vals = sorted(unlimited_30d_usd_by_country.values())
+            mid = len(vals) // 2
+            median = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+            ceiling = median * REGIONAL_ANCHOR_MEDIAN_MULTIPLIER
+            candidates = [
+                c for c in candidates
+                if c not in unlimited_30d_usd_by_country
+                or unlimited_30d_usd_by_country[c] <= ceiling
             ]
-        ] = []
+        if not candidates:
+            continue
 
-        for candidate in reasonable_candidates:
-            anchor_prices_by_currency: dict[
-                str,
-                dict[tuple[str, str, str], float],
-            ] = {
+        scored = []
+        for candidate in candidates:
+            candidate_skus = set.intersection(*[
+                {
+                    sku_key
+                    for indexed_country, sku_key in price_by_currency_country_sku[currency].keys()
+                    if indexed_country == candidate
+                }
+                for currency in required_currencies
+            ])
+            anchor_prices = {
                 currency: {
-                    sku_key: price_by_currency_country_sku[
-                        currency
-                    ][(candidate, sku_key)]
-                    for sku_key in ordered_sku_keys
+                    sku: price_by_currency_country_sku[currency][(candidate, sku)]
+                    for sku in candidate_skus
                 }
                 for currency in required_currencies
             }
-
-            covered_countries = [
-                country
-                for country in configured_countries
-                if _country_covers_anchor_prices(
-                    country,
-                    all_sku_keys,
-                    anchor_prices_by_currency,
-                    floor_by_currency_country_sku,
-                    required_currencies,
-                )
-            ]
-
-            coverage_count = len(covered_countries)
-            unlimited_30d_usd = (
-                unlimited_30d_usd_by_country[candidate]
+            supported_skus = _anchor_supported_skus(
+                anchor_prices,
+                candidate_skus,
+                eligible_countries,
+                floor_by_currency_country_sku,
+                required_currencies,
             )
-            total_usd_curve_price = sum(
-                anchor_prices_by_currency["USD"].values()
-            )
+            selected_prices = {
+                currency: {sku: anchor_prices[currency][sku] for sku in supported_skus}
+                for currency in required_currencies
+            }
+            scored.append((
+                -len(supported_skus),
+                unlimited_30d_usd_by_country.get(candidate, float("inf")),
+                sum(selected_prices["USD"].values()),
+                candidate,
+                selected_prices,
+                supported_skus,
+            ))
 
-            scored_candidates.append(
-                (
-                    -coverage_count,
-                    unlimited_30d_usd,
-                    total_usd_curve_price,
-                    candidate,
-                    anchor_prices_by_currency,
-                    covered_countries,
-                )
-            )
+        scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        _, _, _, selected_anchor, selected_prices, selected_skus = scored[0]
+        if not selected_skus:
+            continue
 
-        scored_candidates.sort(
-            key=lambda item: (
-                item[0],
-                item[1],
-                item[2],
-                item[3],
-            )
-        )
-
-        (
-            _negative_coverage,
-            _benchmark_price,
-            _total_curve_price,
-            selected_anchor,
-            selected_prices,
-            eligible_countries,
-        ) = scored_candidates[0]
-
-        source_rows_by_currency: dict[
-            str,
-            dict[tuple[str, str, str], dict[str, Any]],
-        ] = {
+        source_rows = {
             currency: {
-                sku_key: row_by_currency_country_sku[
-                    currency
-                ][(selected_anchor, sku_key)]
-                for sku_key in ordered_sku_keys
+                sku: row_by_currency_country_sku[currency][(selected_anchor, sku)]
+                for sku in selected_skus
             }
             for currency in required_currencies
         }
-
         regional_prices_by_region[region_name] = selected_prices
-        regional_source_rows_by_region[
-            region_name
-        ] = source_rows_by_currency
-        eligible_countries_by_region[
-            region_name
-        ] = eligible_countries
-
-        excluded_countries.update(
-            country
-            for country in configured_countries
-            if country not in eligible_countries
-        )
+        regional_source_rows_by_region[region_name] = source_rows
+        eligible_countries_by_region[region_name] = eligible_countries
 
     return (
         regional_prices_by_region,
@@ -731,6 +668,44 @@ def _build_region_pricing_decisions(
         eligible_countries_by_region,
         excluded_countries,
     )
+
+def _region_membership_payload(
+    eligible_countries_by_region: dict[str, list[str]],
+    regions_data: dict[str, Any],
+) -> dict[str, Any]:
+    managed_regions = region_names(regions_data)
+    regions = {
+        region: _unique_ordered(eligible_countries_by_region.get(region, []))
+        for region in managed_regions
+    }
+
+    countries: dict[str, list[str]] = defaultdict(list)
+    for region in managed_regions:
+        for country in regions.get(region, []):
+            countries[country].append(region)
+
+    return {
+        "regions": regions,
+        "countries": dict(sorted(countries.items())),
+    }
+
+
+def save_region_membership_snapshot(
+    path: str | Path,
+    eligible_countries_by_region: dict[str, list[str]],
+    regions_data: dict[str, Any],
+) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _region_membership_payload(
+        eligible_countries_by_region,
+        regions_data,
+    )
+    output_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
 
 
 def generate_region_prices(
@@ -747,6 +722,7 @@ def generate_region_prices(
     ] | None = None,
     eligible_countries_by_region: dict[str, list[str]] | None = None,
     excluded_countries: Iterable[str] | None = None,
+    region_country_exclusions: dict[str, list[str]] | None = None,
 ) -> RegionGenerationResult:
     input_csv = Path(input_csv)
     output_folder = Path(output_folder) if output_folder else input_csv.parent
@@ -776,7 +752,11 @@ def generate_region_prices(
             regional_source_rows_by_region,
             eligible_countries_by_region,
             calculated_excluded_countries,
-        ) = _build_region_pricing_decisions({detected_currency: rows}, regions_data)
+        ) = _build_region_pricing_decisions(
+            {detected_currency: rows},
+            regions_data,
+            region_country_exclusions=region_country_exclusions,
+        )
 
         if excluded_countries is None:
             excluded_countries = calculated_excluded_countries
@@ -871,6 +851,7 @@ def generate_region_prices_for_export_folder(
     currencies: Iterable[str] = CURRENCIES,
     regions_yaml: str | Path = INPUT_REGIONS,
     output_name: str = OUTPUT_NAME,
+    region_exclusions_json: str | Path | None = None,
 ) -> list[RegionGenerationResult]:
     export_dir = Path(export_dir)
     regions_yaml = Path(regions_yaml)
@@ -900,13 +881,29 @@ def generate_region_prices_for_export_folder(
         )
 
     regions_data = load_yaml(regions_yaml)
+    exclusion_path = (
+        Path(region_exclusions_json)
+        if region_exclusions_json is not None
+        else regions_yaml.with_name(REGION_COUNTRY_EXCLUSIONS_NAME)
+    )
+    region_country_exclusions = load_region_country_exclusions(exclusion_path)
 
     (
         regional_prices_by_region,
         regional_source_rows_by_region,
         eligible_countries_by_region,
         excluded_countries,
-    ) = _build_region_pricing_decisions(rows_by_currency, regions_data)
+    ) = _build_region_pricing_decisions(
+        rows_by_currency,
+        regions_data,
+        region_country_exclusions=region_country_exclusions,
+    )
+
+    save_region_membership_snapshot(
+        export_dir / REGION_MEMBERSHIP_OUTPUT_NAME,
+        eligible_countries_by_region,
+        regions_data,
+    )
 
     for currency, input_csv in currency_inputs:
         results.append(
@@ -920,6 +917,7 @@ def generate_region_prices_for_export_folder(
                 regional_source_rows_by_region=regional_source_rows_by_region,
                 eligible_countries_by_region=eligible_countries_by_region,
                 excluded_countries=excluded_countries,
+                region_country_exclusions=region_country_exclusions,
             )
         )
 
