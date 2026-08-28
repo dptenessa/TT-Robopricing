@@ -39,13 +39,11 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
 
 PARTNER_DIFF_KEY_COLUMNS: tuple[str, ...] = ("ISO", "Plan", "Days", "GB")
 PARTNER_DIFF_VALUE_COLUMNS: tuple[str, ...] = (
-    "Country",
     "Price",
-    "FinalPriceAfterPromo",
     "PromoCode",
     "PromoType",
     "PromoValue",
-    "PromoCurrency",
+    "FinalPriceAfterPromo",
     "PricingUnitCountriesUsed",
 )
 PARTNER_DIFF_OUTPUT_COLUMNS: tuple[str, ...] = (
@@ -115,6 +113,17 @@ REGION_MEMBERSHIP_CURRENT_NAME = "region_membership_current.json"
 REGION_MEMBERSHIP_HISTORY_PREFIX = "region_membership_"
 REGION_CHANGES_MEMBER_NAME = "TT_region_changes.csv"
 DESTINATION_TABLE_MEMBER_NAME = "export-destination-table.json"
+
+REQUIRED_TRANSLATION_LANGUAGES: tuple[str, ...] = (
+    "en",
+    "hr",
+    "de",
+    "fr",
+    "ja",
+    "it",
+    "es",
+    "pt",
+)
 
 
 @dataclass(frozen=True)
@@ -251,44 +260,131 @@ def _read_ppg_country_names(path: Path) -> dict[str, str]:
     )
 
 
-def _validate_canonical_country_names(
+
+def _validate_ppg_country_coverage(
     df: pd.DataFrame,
     ppg_country_names: dict[str, str],
     *,
     currency: str,
 ) -> None:
-    """Country rows must already carry the current PPG name.
+    """Every exported ISO2 country must exist in the authoritative WS_PPG.csv.
 
-    Region/global rows are deliberately excluded because their ISO field is a
-    region code rather than an ISO-3166 alpha-2 country code.
+    WS_PPG.csv already contains the pinned i18n-iso-countries country names.
+    Partner export therefore uses WS_PPG directly instead of trusting the
+    upstream Country text carried by the pricing tables.
     """
-    mismatches: list[str] = []
+    missing: set[str] = set()
 
-    for _, row in df.iterrows():
-        iso = _country_code(row.get("ISO", ""))
-        if len(iso) != 2:
-            continue
+    for value in df.get("ISO", pd.Series(dtype="object")):
+        iso = _country_code(value)
+        if len(iso) == 2 and iso not in ppg_country_names:
+            missing.add(iso)
 
-        expected = str(ppg_country_names.get(iso, "")).strip()
-        actual = str(row.get("Country", "") if row.get("Country", "") is not None else "").strip()
-        if actual.lower() == "nan":
-            actual = ""
-
-        if not expected:
-            mismatches.append(f"{iso}: missing in PPG")
-        elif actual != expected:
-            mismatches.append(f"{iso}: export={actual!r}, PPG={expected!r}")
-
-    if mismatches:
-        preview = "; ".join(mismatches[:12])
-        if len(mismatches) > 12:
-            preview += f"; ... and {len(mismatches) - 12} more"
+    if missing:
         raise ValueError(
-            f"{currency} partner export contains non-canonical country names. "
-            "The pipeline must be corrected upstream; partner export will not "
-            f"silently rewrite them. {preview}"
+            f"{currency} partner export contains country ISO2 codes missing "
+            "from WS_PPG.csv: " + ", ".join(sorted(missing))
         )
 
+
+
+def _clean_translation_value(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "nan" else text
+
+
+def _read_translation_catalog(
+    path: Path,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """Read T-Travel display translations from Regions_countries_list.xlsx.
+
+    Country translations are read from sheet Countries using ISO2.
+    Region translations are read from sheet Codes using Region_tech_name.
+    The workbook is the maintained source for customer-facing translations;
+    it does not define the technical country destination key.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Translation workbook not found: {path}")
+
+    countries = pd.read_excel(path, sheet_name="Countries", dtype=object)
+    regions = pd.read_excel(path, sheet_name="Codes", dtype=object)
+    countries.columns = countries.columns.astype(str).str.strip()
+    regions.columns = regions.columns.astype(str).str.strip()
+
+    required_country_columns = {"ISO2", *REQUIRED_TRANSLATION_LANGUAGES}
+    required_region_columns = {"Region_tech_name", *REQUIRED_TRANSLATION_LANGUAGES}
+
+    missing_country_columns = sorted(required_country_columns - set(countries.columns))
+    missing_region_columns = sorted(required_region_columns - set(regions.columns))
+    if missing_country_columns:
+        raise ValueError(
+            "Countries sheet is missing required columns: "
+            + ", ".join(missing_country_columns)
+        )
+    if missing_region_columns:
+        raise ValueError(
+            "Codes sheet is missing required columns: "
+            + ", ".join(missing_region_columns)
+        )
+
+    country_catalog: dict[str, dict[str, str]] = {}
+    for _, row in countries.iterrows():
+        iso = _country_code(row.get("ISO2", ""))
+        if not iso:
+            continue
+        if iso in country_catalog:
+            raise ValueError(f"Duplicate ISO2 {iso!r} in Countries sheet.")
+        country_catalog[iso] = {
+            language: _clean_translation_value(row.get(language, ""))
+            for language in REQUIRED_TRANSLATION_LANGUAGES
+        }
+
+    region_catalog: dict[str, dict[str, str]] = {}
+    for _, row in regions.iterrows():
+        code = _country_code(row.get("Region_tech_name", ""))
+        if not code:
+            continue
+        if code in region_catalog:
+            raise ValueError(
+                f"Duplicate Region_tech_name {code!r} in Codes sheet."
+            )
+        region_catalog[code] = {
+            language: _clean_translation_value(row.get(language, ""))
+            for language in REQUIRED_TRANSLATION_LANGUAGES
+        }
+
+    return country_catalog, region_catalog
+
+
+def _required_translations(
+    code: str,
+    catalog: dict[str, dict[str, str]],
+    *,
+    kind: str,
+) -> dict[str, str]:
+    translations = catalog.get(code)
+    if translations is None:
+        raise ValueError(
+            f"Active {kind} {code!r} is missing from Regions_countries_list.xlsx."
+        )
+
+    missing = [
+        language
+        for language in REQUIRED_TRANSLATION_LANGUAGES
+        if not str(translations.get(language, "")).strip()
+    ]
+    if missing:
+        raise ValueError(
+            f"Active {kind} {code!r} is missing translations: "
+            + ", ".join(missing)
+        )
+
+    return {
+        language: str(translations[language]).strip()
+        for language in REQUIRED_TRANSLATION_LANGUAGES
+    }
 
 def _norm_key_value(value: object) -> str:
     text = str(value if value is not None else "").strip()
@@ -534,16 +630,28 @@ def _region_code_for_row(
     return ""
 
 
+
 def _partner_destination_value(
     row: pd.Series,
     region_catalog: dict[str, dict[str, str]],
+    ppg_country_names: dict[str, str],
 ) -> str:
-    """Country names come from the validated country pipeline; regions from YAML."""
+    """Return the exact technical Destination key used by Amdocs.
+
+    Countries use the canonical i18n name already stored in WS_PPG.csv.
+    Regions use the stable technical region key from regions.yaml. The same
+    function is used for every price CSV and the destination JSON is generated
+    from the same active catalogue.
+    """
     iso = _country_code(row.get("ISO", ""))
 
     if len(iso) == 2:
-        value = str(row.get("Country", "") if row.get("Country", "") is not None else "").strip()
-        return "" if value.lower() == "nan" else value
+        destination = str(ppg_country_names.get(iso, "")).strip()
+        if not destination:
+            raise ValueError(
+                f"Country {iso!r} is missing a canonical name in WS_PPG.csv."
+            )
+        return destination
 
     region_code = _region_code_for_row(row, region_catalog)
     if not region_code:
@@ -553,7 +661,7 @@ def _partner_destination_value(
             f"PricingUnitIdUsed={row.get('PricingUnitIdUsed', '')!r}, "
             f"PricingRegionUsed={row.get('PricingRegionUsed', '')!r}."
         )
-    return region_catalog[region_code]["region_product_name"]
+    return region_code
 
 
 def _membership_pairs(snapshot: dict[str, object]) -> set[tuple[str, str]]:
@@ -612,15 +720,54 @@ def _region_change_table(
     )
 
 
+
+def _active_destination_codes(
+    clean_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]],
+    region_catalog: dict[str, dict[str, str]],
+) -> tuple[set[str], set[str]]:
+    """Return country and region codes that survive final price filtering."""
+    country_codes: set[str] = set()
+    region_codes: set[str] = set()
+
+    for merged, _removed_by_plan in clean_tables.values():
+        for _, row in merged.iterrows():
+            iso = _country_code(row.get("ISO", ""))
+            if len(iso) == 2:
+                country_codes.add(iso)
+                continue
+
+            region_code = _region_code_for_row(row, region_catalog)
+            if not region_code:
+                raise ValueError(
+                    "Active regional price row cannot be matched to regions.yaml. "
+                    f"ISO={row.get('ISO', '')!r}, Country={row.get('Country', '')!r}."
+                )
+            region_codes.add(region_code)
+
+    return country_codes, region_codes
+
+
 def _updated_destination_table(
     source_path: Path,
     membership_snapshot: dict[str, object],
     managed_regions: list[str],
+    *,
+    active_country_codes: set[str],
+    active_region_codes: set[str],
+    ppg_country_names: dict[str, str],
+    country_translations: dict[str, dict[str, str]],
+    region_translations: dict[str, dict[str, str]],
 ) -> list[object]:
+    """Build the active destination catalogue from the final priced scope.
+
+    The reviewed JSON is used only as a schema/template source. Active scope,
+    technical Destination values and translations are overwritten from the
+    authoritative current inputs.
+    """
     if not source_path.exists():
         raise FileNotFoundError(f"Destination table JSON not found: {source_path}")
-    data = json.loads(source_path.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
+    source_data = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(source_data, list):
         raise ValueError("Destination table JSON must contain a list.")
 
     countries_map = membership_snapshot.get("countries", {})
@@ -628,33 +775,130 @@ def _updated_destination_table(
         countries_map = {}
 
     managed_set = set(managed_regions)
-    for item in data:
-        if not isinstance(item, dict):
+    source_by_code: dict[str, dict[str, object]] = {}
+    source_order: list[str] = []
+    for raw_item in source_data:
+        if not isinstance(raw_item, dict):
             continue
+        code = _country_code(raw_item.get("code", ""))
+        if not code:
+            continue
+        if code in source_by_code:
+            raise ValueError(f"Duplicate code {code!r} in destination source JSON.")
+        source_by_code[code] = dict(raw_item)
+        source_order.append(code)
 
-        code = _country_code(item.get("code", ""))
-        if code:
+    active_codes = set(active_country_codes) | set(active_region_codes)
+    ordered_codes = [code for code in source_order if code in active_codes]
+    ordered_codes.extend(sorted(active_codes - set(ordered_codes)))
+
+    destination_table: list[object] = []
+    for code in ordered_codes:
+        item: dict[str, object] = dict(source_by_code.get(code, {}))
+        item["code"] = code
+        item.pop("regionType", None)
+        item.pop("region_type", None)
+
+        if code in active_country_codes:
+            destination = str(ppg_country_names.get(code, "")).strip()
+            if not destination:
+                raise ValueError(
+                    f"Active country {code!r} is missing from WS_PPG.csv."
+                )
+            translations = _required_translations(
+                code,
+                country_translations,
+                kind="country",
+            )
+            item["destination"] = destination
+            item["dictionary"] = {"destination": translations}
+
+            existing = item.get("regions", [])
+            existing_regions = (
+                [str(region).strip() for region in existing if str(region).strip()]
+                if isinstance(existing, list)
+                else []
+            )
+            unmanaged = [
+                region for region in existing_regions if region not in managed_set
+            ]
+            actual = countries_map.get(code, [])
+            actual_set = set(actual if isinstance(actual, list) else [])
+            actual_regions = [
+                region for region in managed_regions if region in actual_set
+            ]
+            item["regions"] = unmanaged + actual_regions
+        else:
+            translations = _required_translations(
+                code,
+                region_translations,
+                kind="region",
+            )
             item["destination"] = code
+            item["dictionary"] = {"destination": translations}
+            if not isinstance(item.get("regions"), list) or not item.get("regions"):
+                item["regions"] = ["GLOBAL"]
 
-        if len(code) != 2:
-            continue
+        destination_table.append(item)
 
-        existing = item.get("regions", [])
-        existing_regions = [
-            str(region).strip()
-            for region in existing
-            if str(region).strip()
-        ] if isinstance(existing, list) else []
-        unmanaged = [region for region in existing_regions if region not in managed_set]
-        actual = countries_map.get(code, [])
-        actual_regions = [
-            region
-            for region in managed_regions
-            if region in set(actual if isinstance(actual, list) else [])
+    return destination_table
+
+
+def _validate_destination_alignment(
+    price_destinations: set[str],
+    destination_table: list[object],
+) -> None:
+    json_destinations: list[str] = []
+    for item in destination_table:
+        if not isinstance(item, dict):
+            raise ValueError("Destination JSON contains a non-object item.")
+        if "regionType" in item or "region_type" in item:
+            raise ValueError(
+                "Destination JSON must not contain regionType/region_type."
+            )
+        destination = str(item.get("destination", "")).strip()
+        if not destination:
+            raise ValueError("Destination JSON contains an empty destination.")
+        json_destinations.append(destination)
+
+        dictionary = item.get("dictionary", {})
+        translations = (
+            dictionary.get("destination", {})
+            if isinstance(dictionary, dict)
+            else {}
+        )
+        missing = [
+            language
+            for language in REQUIRED_TRANSLATION_LANGUAGES
+            if not isinstance(translations, dict)
+            or not str(translations.get(language, "")).strip()
         ]
-        item["regions"] = unmanaged + actual_regions
+        if missing:
+            raise ValueError(
+                f"Destination {destination!r} is missing translations: "
+                + ", ".join(missing)
+            )
 
-    return data
+    duplicate_destinations = sorted(
+        destination
+        for destination in set(json_destinations)
+        if json_destinations.count(destination) > 1
+    )
+    if duplicate_destinations:
+        raise ValueError(
+            "Duplicate destination keys in JSON: "
+            + ", ".join(duplicate_destinations)
+        )
+
+    json_set = set(json_destinations)
+    if price_destinations != json_set:
+        missing_in_json = sorted(price_destinations - json_set)
+        missing_in_prices = sorted(json_set - price_destinations)
+        raise ValueError(
+            "Price CSV destinations and destination JSON are not synchronized. "
+            f"Missing in JSON: {missing_in_json}; "
+            f"Missing in prices: {missing_in_prices}."
+        )
 
 
 def _load_export_tables(
@@ -810,13 +1054,19 @@ def _partner_list_price_value(row: pd.Series) -> str:
     return _partner_number_text(list_price)
 
 
+
 def _partner_price_output_columns(
     df: pd.DataFrame,
     region_catalog: dict[str, dict[str, str]],
+    ppg_country_names: dict[str, str],
 ) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["Destination"] = df.apply(
-        lambda row: _partner_destination_value(row, region_catalog),
+        lambda row: _partner_destination_value(
+            row,
+            region_catalog,
+            ppg_country_names,
+        ),
         axis=1,
     )
     out["ocsOfferValidityPeriod"] = df.get("Days", pd.Series("", index=df.index)).map(_partner_number_text)
@@ -932,6 +1182,7 @@ def _numeric_delta(prev_row: pd.Series | None, curr_row: pd.Series | None, col: 
     return round(float(current) - float(previous), 4)
 
 
+
 def build_partner_price_pack(
     local_export_dir: str | Path,
     zip_path: str | Path,
@@ -943,12 +1194,18 @@ def build_partner_price_pack(
     destination_table_json: str | Path | None = None,
     regions_yaml: str | Path | None = None,
     ppg_csv: str | Path | None = None,
+    translations_xlsx: str | Path | None = None,
 ) -> PartnerPackResult:
     local_export_dir = Path(local_export_dir)
     zip_path = Path(zip_path)
     run_date = run_date or datetime.now()
     current_timestamp = current_timestamp or run_date.strftime("%Y%m%d")
-    project_root = local_export_dir.parents[2]
+    # Resolve project root from this script location rather than from the
+    # output directory depth. This makes the function safe when the local
+    # export folder structure changes.
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent if script_dir.name.lower() == "automation" else script_dir
+
     destination_table_json = Path(
         destination_table_json
         or project_root / "inputs" / "export-destination-table_reviewed.json"
@@ -961,25 +1218,32 @@ def build_partner_price_pack(
         ppg_csv
         or project_root / "inputs" / "WS_PPG.csv"
     )
+    translations_xlsx = Path(
+        translations_xlsx
+        or project_root / "inputs" / "Regions_countries_list.xlsx"
+    )
+
+    # Authoritative current sources.
     ppg_country_names = _read_ppg_country_names(ppg_csv)
-
+    country_translations, region_translations = _read_translation_catalog(
+        translations_xlsx
+    )
     region_catalog = _region_catalog(regions_yaml)
-
+    managed_regions = _managed_region_codes(region_catalog)
     current_membership = _read_membership_snapshot(
         local_export_dir / REGION_MEMBERSHIP_CURRENT_NAME
     )
-    managed_regions = _managed_region_codes(region_catalog)
-    destination_table = _updated_destination_table(
-        destination_table_json,
-        current_membership,
-        managed_regions,
-    )
+
     if zip_path.suffix.lower() != ".zip":
         zip_path = zip_path / f"TT_prices_{run_date.strftime('%y%m%d')}.zip"
     zip_path.parent.mkdir(parents=True, exist_ok=True)
+
     results: list[PartnerPackFile] = []
     diff_results: list[PartnerPackDiffFile] = []
     normalized_currencies = [normalize_currency(currency) for currency in currencies]
+
+    # Finalize/filter pricing first. The active destination catalogue is derived
+    # only after these filters, so JSON cannot contain unpriced destinations.
     export_tables = _load_export_tables(local_export_dir, normalized_currencies)
     shared_blocked_price_keys = _shared_filter_rules(export_tables)
     clean_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]] = {}
@@ -990,15 +1254,108 @@ def build_partner_price_pack(
             currency=currency,
             shared_blocked_price_keys=shared_blocked_price_keys,
         )
-        _validate_canonical_country_names(
+        _validate_ppg_country_coverage(
             clean_tables[currency][0],
             ppg_country_names,
             currency=currency,
         )
 
+    active_country_codes, active_region_codes = _active_destination_codes(
+        clean_tables,
+        region_catalog,
+    )
+
+    # Prepare every partner price CSV in memory first. Country Destination
+    # always comes from WS_PPG.csv; region Destination is the YAML technical key.
+    prepared_price_outputs: dict[tuple[str, str], pd.DataFrame] = {}
+    prepared_removed_counts: dict[tuple[str, str], int] = {}
+    price_destinations: set[str] = set()
+
+    for currency in normalized_currencies:
+        merged, removed_by_plan = clean_tables[currency]
+        plan_values = _plan_key(merged["Plan"])
+        for pack_name, source_plans in PARTNER_PLAN_PACKS:
+            wanted = {
+                partner_display_plan_label(plan).lower()
+                for plan in source_plans
+            }
+            out = merged.loc[plan_values.isin(wanted)].copy()
+
+            out["_sort_destination"] = out.apply(
+                lambda row: _partner_destination_value(
+                    row,
+                    region_catalog,
+                    ppg_country_names,
+                ),
+                axis=1,
+            )
+            out["_sort_plan"] = out.get(
+                "Plan",
+                pd.Series("", index=out.index),
+            ).astype(str)
+            out["_sort_days"] = pd.to_numeric(
+                out.get("Days", pd.Series("", index=out.index)),
+                errors="coerce",
+            )
+            out["_sort_gb"] = pd.to_numeric(
+                out.get("GB", pd.Series("", index=out.index)),
+                errors="coerce",
+            )
+
+            out = out.sort_values(
+                [
+                    "_sort_destination",
+                    "_sort_plan",
+                    "_sort_days",
+                    "_sort_gb",
+                ],
+                kind="stable",
+                na_position="last",
+            ).drop(
+                columns=[
+                    "_sort_destination",
+                    "_sort_plan",
+                    "_sort_days",
+                    "_sort_gb",
+                ]
+            )
+
+            partner_out = _partner_price_output_columns(
+                out,
+                region_catalog,
+                ppg_country_names,
+            )
+            prepared_price_outputs[(currency, pack_name)] = partner_out
+            prepared_removed_counts[(currency, pack_name)] = sum(
+                int(removed_by_plan.get(plan.lower(), 0))
+                for plan in source_plans
+            )
+            price_destinations.update(
+                destination
+                for destination in partner_out["Destination"].astype(str).str.strip()
+                if destination
+            )
+
+    # Build JSON from exactly the same priced scope, then validate equality.
+    destination_table = _updated_destination_table(
+        destination_table_json,
+        current_membership,
+        managed_regions,
+        active_country_codes=active_country_codes,
+        active_region_codes=active_region_codes,
+        ppg_country_names=ppg_country_names,
+        country_translations=country_translations,
+        region_translations=region_translations,
+    )
+    _validate_destination_alignment(price_destinations, destination_table)
+
     comparison_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]] = {}
     if compare_timestamp:
-        previous_tables = _load_export_tables(local_export_dir, normalized_currencies, timestamp=compare_timestamp)
+        previous_tables = _load_export_tables(
+            local_export_dir,
+            normalized_currencies,
+            timestamp=compare_timestamp,
+        )
         previous_blocked_keys = _shared_filter_rules(previous_tables)
         for currency, (country_prices, region_prices) in previous_tables.items():
             comparison_tables[currency] = _clean_partner_table(
@@ -1008,6 +1365,7 @@ def build_partner_price_pack(
                 shared_blocked_price_keys=previous_blocked_keys,
             )
 
+    # Only after all validation passes do we create the ZIP.
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
         zip_file.writestr(
             DESTINATION_TABLE_MEMBER_NAME,
@@ -1039,57 +1397,8 @@ def build_partner_price_pack(
             )
 
         for currency in normalized_currencies:
-            merged, removed_by_plan = clean_tables[currency]
-            plan_values = _plan_key(merged["Plan"])
             for pack_name, source_plans in PARTNER_PLAN_PACKS:
-                wanted = {partner_display_plan_label(plan).lower() for plan in source_plans}
-                out = merged.loc[plan_values.isin(wanted)].copy()
-
-                out["_sort_destination"] = out.apply(
-                    lambda row: _partner_destination_value(row, region_catalog),
-                    axis=1,
-                )
-                out["_sort_plan"] = out.get(
-                    "Plan",
-                    pd.Series("", index=out.index),
-                ).astype(str)
-                out["_sort_days"] = pd.to_numeric(
-                    out.get(
-                        "Days",
-                        pd.Series("", index=out.index),
-                    ),
-                    errors="coerce",
-                )
-                out["_sort_gb"] = pd.to_numeric(
-                    out.get(
-                        "GB",
-                        pd.Series("", index=out.index),
-                    ),
-                    errors="coerce",
-                )
-
-                out = out.sort_values(
-                    [
-                        "_sort_destination",
-                        "_sort_plan",
-                        "_sort_days",
-                        "_sort_gb",
-                    ],
-                    kind="stable",
-                    na_position="last",
-                ).drop(
-                    columns=[
-                        "_sort_destination",
-                        "_sort_plan",
-                        "_sort_days",
-                        "_sort_gb",
-                    ]
-                )
-
-                out = _partner_price_output_columns(
-                    out,
-                    region_catalog,
-                )
+                out = prepared_price_outputs[(currency, pack_name)]
                 member_name = f"TT_prices_{currency}_{pack_name}.csv"
                 zip_file.writestr(member_name, out.to_csv(index=False))
                 results.append(
@@ -1098,9 +1407,9 @@ def build_partner_price_pack(
                         pack=pack_name,
                         member_name=member_name,
                         rows_written=len(out),
-                        rows_removed_below_cost=sum(
-                            int(removed_by_plan.get(plan.lower(), 0)) for plan in source_plans
-                        ),
+                        rows_removed_below_cost=prepared_removed_counts[
+                            (currency, pack_name)
+                        ],
                     )
                 )
 
@@ -1125,4 +1434,94 @@ def build_partner_price_pack(
                     )
                 )
 
-    return PartnerPackResult(zip_path=zip_path, files=results, diff_files=diff_results)
+    return PartnerPackResult(
+        zip_path=zip_path,
+        files=results,
+        diff_files=diff_results,
+    )
+
+
+def _find_current_local_export_dir(project_root: Path) -> Path:
+    """Find the current pricing export directory used by the partner pack.
+
+    The directory must contain region_membership_current.json and, for every
+    configured currency, both manual_prices_current.csv and
+    region_prices_current.csv in a currency subfolder.
+    """
+    outputs_root = project_root / "outputs"
+    if not outputs_root.exists():
+        raise FileNotFoundError(f"Outputs directory not found: {outputs_root}")
+
+    normalized_currencies = [normalize_currency(currency) for currency in CURRENCIES]
+    candidates: list[Path] = []
+
+    for snapshot in outputs_root.rglob(REGION_MEMBERSHIP_CURRENT_NAME):
+        candidate = snapshot.parent
+        valid = True
+        for currency in normalized_currencies:
+            currency_dir = candidate / currency
+            if not (currency_dir / "manual_prices_current.csv").exists():
+                valid = False
+                break
+            if not (currency_dir / "region_prices_current.csv").exists():
+                valid = False
+                break
+        if valid:
+            candidates.append(candidate)
+
+    # De-duplicate in case of unusual filesystem aliases.
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved not in seen:
+            unique_candidates.append(candidate)
+            seen.add(resolved)
+
+    if not unique_candidates:
+        raise FileNotFoundError(
+            "Could not find a current partner-export source directory under "
+            f"{outputs_root}. Expected a folder containing "
+            f"{REGION_MEMBERSHIP_CURRENT_NAME} plus EUR/USD currency folders "
+            "with manual_prices_current.csv and region_prices_current.csv."
+        )
+
+    if len(unique_candidates) > 1:
+        options = "\n".join(f"  - {path}" for path in unique_candidates)
+        raise RuntimeError(
+            "More than one current partner-export source directory was found. "
+            "Please call build_partner_price_pack() with an explicit "
+            f"local_export_dir. Candidates:\n{options}"
+        )
+
+    return unique_candidates[0]
+
+
+def main() -> None:
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent if script_dir.name.lower() == "automation" else script_dir
+
+    local_export_dir = _find_current_local_export_dir(project_root)
+    partner_pack_dir = project_root / "outputs" / "partner_packs"
+
+    print(f"T-Travel project root: {project_root}")
+    print(f"Current pricing source: {local_export_dir}")
+    print(f"Partner pack output: {partner_pack_dir}")
+
+    result = build_partner_price_pack(
+        local_export_dir=local_export_dir,
+        zip_path=partner_pack_dir,
+    )
+
+    print("\nPartner pack created successfully:")
+    print(f"  {result.zip_path}")
+    print("\nFiles in pack:")
+    print(f"  {DESTINATION_TABLE_MEMBER_NAME}")
+    for item in result.files:
+        print(f"  {item.member_name} ({item.rows_written} rows)")
+    for item in result.diff_files:
+        print(f"  {item.member_name} ({item.rows_written} rows)")
+
+
+if __name__ == "__main__":
+    main()
