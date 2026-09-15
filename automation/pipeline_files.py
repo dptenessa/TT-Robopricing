@@ -140,12 +140,37 @@ class PipelineFiles:
         return self.manual_prices_dir / "current"
 
     @property
+    def editor_current_prices(self) -> Path:
+        return self.editor_exports_dir / "manual_prices_current.csv"
+
+    @property
+    def editor_current_regions(self) -> Path:
+        return self.editor_exports_dir / "region_prices_current.csv"
+
+    @property
+    def editor_current_region_membership(self) -> Path:
+        return self.editor_exports_dir / "region_membership_current.json"
+
+    @property
     def editor_autosave_dir(self) -> Path:
         return self.manual_prices_dir / "autosave"
 
     @property
+    def editor_autosave_prices(self) -> Path:
+        return self.editor_autosave_dir / "manual_prices_autosave.csv"
+
+    @property
     def editor_history_root(self) -> Path:
         return self.manual_prices_dir / "history"
+
+    def editor_history_prices(self, timestamp: str) -> Path:
+        return self.editor_history_root / f"manual_prices_{timestamp}.csv"
+
+    def editor_history_regions(self, timestamp: str) -> Path:
+        return self.editor_history_root / f"region_prices_{timestamp}.csv"
+
+    def editor_history_region_membership(self, timestamp: str) -> Path:
+        return self.editor_history_root / f"region_membership_{timestamp}.json"
 
     @property
     def partner_packs_dir(self) -> Path:
@@ -155,9 +180,11 @@ class PipelineFiles:
         return root / normalize_currency(currency)
 
     def editor_history_dir(self, root: Path, currency: str = DEFAULT_CURRENCY) -> Path:
+        # Manual-price history is now currency-agnostic and stored directly in
+        # outputs/manual_prices/history. Keep the signature for older callers.
         if Path(root) == self.editor_exports_dir:
-            return self.editor_history_root / normalize_currency(currency)
-        return self.editor_currency_dir(root, currency) / "history"
+            return self.editor_history_root
+        return Path(root) / "history"
 
     @property
     def amdocs_output_dir(self) -> Path:

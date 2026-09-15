@@ -3,13 +3,13 @@
     "promo_code": "P1",
     "promo_type": "absolute",
     "promo_value": 4,
-    "label": "P1 (-4 USD)"
+    "label": "P1 (-4)"
   },
   {
     "promo_code": "P2",
     "promo_type": "absolute",
     "promo_value": 6,
-    "label": "P2 (-6 USD)"
+    "label": "P2 (-6)"
   },
   {
     "promo_code": "P3",
@@ -40,5 +40,11 @@
     "promo_type": "percent",
     "promo_value": 25,
     "label": "P7 (-25%)"
+  },
+    {
+    "promo_code": "P8",
+    "promo_type": "percent",
+    "promo_value": 50,
+    "label": "P8 (-50%)"
   }
 ]

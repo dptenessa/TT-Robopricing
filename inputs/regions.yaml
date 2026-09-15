@@ -1,922 +1,798 @@
 metadata:
   coding: ISO2
   country_count: 155
-  region_count: 50
-  total_destinations: 205
-  note: Country catalog contains ISO2 codes only. Regions contain a region_type classification, an optional product display name, and ISO2 country lists. Suriname (SR) and Belize (BZ) were added to the catalog and relevant commercial travel regions.
+  region_count: 49
+  total_destinations: 204
+  note: Region memberships are locked to the corrected regional pricing snapshot from
+    2026-07-16. They do not change automatically with country pricing or promotions.
 countries:
-- "AD"
-- "AE"
-- "AF"
-- "AG"
-- "AI"
-- "AL"
-- "AM"
-- "AO"
-- "AR"
-- "AT"
-- "AU"
-- "AZ"
-- "BA"
-- "BB"
-- "BE"
-- "BG"
-- "BH"
-- "BM"
-- "BQ"
-- "BR"
-- "BS"
-- "BW"
-- "BY"
-- "BZ"
-- "CA"
-- "CD"
-- "CH"
-- "CL"
-- "CN"
-- "CO"
-- "CR"
-- "CU"
-- "CV"
-- "CY"
-- "CZ"
-- "DE"
-- "DK"
-- "DZ"
-- "EC"
-- "EE"
-- "EG"
-- "ES"
-- "ET"
-- "FI"
-- "FJ"
-- "FO"
-- "FR"
-- "GB"
-- "GE"
-- "GG"
-- "GH"
-- "GL"
-- "GM"
-- "GP"
-- "GR"
-- "GT"
-- "HK"
-- "HR"
-- "HU"
-- "ID"
-- "IE"
-- "IL"
-- "IN"
-- "IQ"
-- "IR"
-- "IS"
-- "IT"
-- "JE"
-- "JM"
-- "JO"
-- "JP"
-- "KE"
-- "KG"
-- "KH"
-- "KN"
-- "KR"
-- "KW"
-- "KY"
-- "KZ"
-- "LA"
-- "LB"
-- "LC"
-- "LI"
-- "LK"
-- "LR"
-- "LS"
-- "LT"
-- "LU"
-- "LV"
-- "LY"
-- "MA"
-- "MC"
-- "MD"
-- "ME"
-- "MK"
-- "ML"
-- "MO"
-- "MT"
-- "MU"
-- "MV"
-- "MX"
-- "MY"
-- "NG"
-- "NI"
-- "NL"
-- "NO"
-- "NP"
-- "NZ"
-- "OM"
-- "PA"
-- "PE"
-- "PF"
-- "PG"
-- "PH"
-- "PK"
-- "PL"
-- "PR"
-- "PT"
-- "PY"
-- "QA"
-- "RE"
-- "RO"
-- "RS"
-- "RU"
-- "RW"
-- "SA"
-- "SD"
-- "SE"
-- "SG"
-- "SI"
-- "SK"
-- "SL"
-- "SN"
-- "SR"
-- "SV"
-- "TC"
-- "TD"
-- "TG"
-- "TH"
-- "TJ"
-- "TN"
-- "TO"
-- "TR"
-- "TW"
-- "TZ"
-- "UA"
-- "US"
-- "UY"
-- "UZ"
-- "VE"
-- "VG"
-- "VN"
-- "XK"
-- "ZA"
-- "PW"
+- AD
+- AE
+- AF
+- AG
+- AI
+- AL
+- AM
+- AO
+- AR
+- AT
+- AU
+- AZ
+- BA
+- BB
+- BE
+- BG
+- BH
+- BM
+- BQ
+- BR
+- BS
+- BW
+- BY
+- BZ
+- CA
+- CD
+- CH
+- CL
+- CN
+- CO
+- CR
+- CU
+- CV
+- CY
+- CZ
+- DE
+- DK
+- DZ
+- EC
+- EE
+- EG
+- ES
+- ET
+- FI
+- FJ
+- FO
+- FR
+- GB
+- GE
+- GG
+- GH
+- GL
+- GM
+- GP
+- GR
+- GT
+- HK
+- HR
+- HU
+- ID
+- IE
+- IL
+- IN
+- IQ
+- IR
+- IS
+- IT
+- JE
+- JM
+- JO
+- JP
+- KE
+- KG
+- KH
+- KN
+- KR
+- KW
+- KY
+- KZ
+- LA
+- LB
+- LC
+- LI
+- LK
+- LR
+- LS
+- LT
+- LU
+- LV
+- LY
+- MA
+- MC
+- MD
+- ME
+- MK
+- ML
+- MO
+- MT
+- MU
+- MV
+- MX
+- MY
+- NG
+- NI
+- NL
+- 'NO'
+- NP
+- NZ
+- OM
+- PA
+- PE
+- PF
+- PG
+- PH
+- PK
+- PL
+- PR
+- PT
+- PY
+- QA
+- RE
+- RO
+- RS
+- RU
+- RW
+- SA
+- SD
+- SE
+- SG
+- SI
+- SK
+- SL
+- SN
+- SR
+- SV
+- TC
+- TD
+- TG
+- TH
+- TJ
+- TN
+- TO
+- TR
+- TW
+- TZ
+- UA
+- US
+- UY
+- UZ
+- VE
+- VG
+- VN
+- XK
+- ZA
+- PW
 regions:
   GLOBAL:
     region_type: GLOBAL
     region_product_name: Global
     countries:
-    - "AD"
-    - "AE"
-    - "AF"
-    - "AG"
-    - "AI"
-    - "AL"
-    - "AM"
-    - "AO"
-    - "AR"
-    - "AT"
-    - "AU"
-    - "AZ"
-    - "BA"
-    - "BB"
-    - "BE"
-    - "BG"
-    - "BH"
-    - "BM"
-    - "BQ"
-    - "BR"
-    - "BS"
-    - "BW"
-    - "BY"
-    - "CA"
-    - "CD"
-    - "CH"
-    - "CL"
-    - "CN"
-    - "CO"
-    - "CR"
-    - "CU"
-    - "CV"
-    - "CY"
-    - "CZ"
-    - "DE"
-    - "DK"
-    - "DZ"
-    - "EC"
-    - "EE"
-    - "EG"
-    - "ES"
-    - "ET"
-    - "FI"
-    - "FJ"
-    - "FO"
-    - "FR"
-    - "GB"
-    - "GE"
-    - "GG"
-    - "GH"
-    - "GL"
-    - "GM"
-    - "GP"
-    - "GR"
-    - "GT"
-    - "HK"
-    - "HR"
-    - "HU"
-    - "ID"
-    - "IE"
-    - "IL"
-    - "IN"
-    - "IQ"
-    - "IR"
-    - "IS"
-    - "IT"
-    - "JE"
-    - "JM"
-    - "JO"
-    - "JP"
-    - "KE"
-    - "KG"
-    - "KH"
-    - "KN"
-    - "KR"
-    - "KW"
-    - "KY"
-    - "KZ"
-    - "LA"
-    - "LB"
-    - "LC"
-    - "LI"
-    - "LK"
-    - "LR"
-    - "LS"
-    - "LT"
-    - "LU"
-    - "LV"
-    - "LY"
-    - "MA"
-    - "MC"
-    - "MD"
-    - "ME"
-    - "MK"
-    - "ML"
-    - "MO"
-    - "MT"
-    - "MU"
-    - "MV"
-    - "MX"
-    - "MY"
-    - "NG"
-    - "NI"
-    - "NL"
-    - "NO"
-    - "NP"
-    - "NZ"
-    - "OM"
-    - "PA"
-    - "PE"
-    - "PF"
-    - "PG"
-    - "PH"
-    - "PK"
-    - "PL"
-    - "PR"
-    - "PT"
-    - "PY"
-    - "QA"
-    - "RE"
-    - "RO"
-    - "RS"
-    - "RU"
-    - "RW"
-    - "SA"
-    - "SD"
-    - "SE"
-    - "SG"
-    - "SI"
-    - "SK"
-    - "SL"
-    - "SN"
-    - "SV"
-    - "TC"
-    - "TD"
-    - "TG"
-    - "TH"
-    - "TJ"
-    - "TN"
-    - "TO"
-    - "TR"
-    - "TW"
-    - "TZ"
-    - "UA"
-    - "US"
-    - "UY"
-    - "UZ"
-    - "VE"
-    - "VG"
-    - "VN"
-    - "XK"
-    - "ZA"
+    - AL
+    - AM
+    - AR
+    - AT
+    - AU
+    - BA
+    - BE
+    - BG
+    - BH
+    - BR
+    - BS
+    - CA
+    - CH
+    - CL
+    - CN
+    - CO
+    - CR
+    - CY
+    - CZ
+    - DE
+    - DK
+    - DZ
+    - EC
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GE
+    - GG
+    - GR
+    - GT
+    - HK
+    - HR
+    - HU
+    - ID
+    - IE
+    - IL
+    - IN
+    - IQ
+    - IS
+    - IT
+    - JE
+    - JM
+    - JO
+    - JP
+    - KG
+    - KR
+    - KW
+    - LI
+    - LT
+    - LU
+    - LV
+    - MA
+    - MD
+    - ME
+    - MK
+    - MT
+    - MX
+    - MY
+    - NI
+    - NL
+    - 'NO'
+    - NZ
+    - PE
+    - PH
+    - PK
+    - PL
+    - PR
+    - PT
+    - PY
+    - QA
+    - RE
+    - RO
+    - RS
+    - RU
+    - SE
+    - SG
+    - SI
+    - SK
+    - SV
+    - TC
+    - TH
+    - TR
+    - TW
+    - UA
+    - US
+    - UY
+    - UZ
+    - VG
+    - VN
+    - XK
   EUROPA:
     region_type: LARGE_REGION
     region_product_name: Europe
     countries:
-    - "AD"
-    - "AL"
-    - "AT"
-    - "BA"
-    - "BE"
-    - "BG"
-    - "BY"
-    - "CH"
-    - "CY"
-    - "CZ"
-    - "DE"
-    - "DK"
-    - "EE"
-    - "ES"
-    - "FI"
-    - "FO"
-    - "FR"
-    - "GB"
-    - "GG"
-    - "GR"
-    - "HR"
-    - "HU"
-    - "IE"
-    - "IS"
-    - "IT"
-    - "JE"
-    - "LI"
-    - "LT"
-    - "LU"
-    - "LV"
-    - "MC"
-    - "MD"
-    - "ME"
-    - "MK"
-    - "MT"
-    - "NL"
-    - "NO"
-    - "PL"
-    - "PT"
-    - "RO"
-    - "RS"
-    - "RU"
-    - "SE"
-    - "SI"
-    - "SK"
-    - "TR"
-    - "UA"
-    - "XK"
+    - AL
+    - AT
+    - BA
+    - BE
+    - BG
+    - BY
+    - CH
+    - CY
+    - CZ
+    - DE
+    - DK
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GG
+    - GR
+    - HR
+    - HU
+    - IE
+    - IS
+    - IT
+    - JE
+    - LI
+    - LT
+    - LU
+    - LV
+    - MD
+    - ME
+    - MK
+    - MT
+    - NL
+    - 'NO'
+    - PL
+    - PT
+    - RO
+    - RS
+    - RU
+    - SE
+    - SI
+    - SK
+    - TR
+    - UA
+    - XK
   EU_UK_NOR:
     region_type: LARGE_REGION
     region_product_name: EU, UK & Norway
     countries:
-    - "AT"
-    - "BE"
-    - "BG"
-    - "HR"
-    - "CY"
-    - "CZ"
-    - "DK"
-    - "EE"
-    - "FI"
-    - "FR"
-    - "DE"
-    - "GR"
-    - "HU"
-    - "IE"
-    - "IT"
-    - "LV"
-    - "LT"
-    - "LU"
-    - "MT"
-    - "NL"
-    - "PL"
-    - "PT"
-    - "RO"
-    - "SK"
-    - "SI"
-    - "ES"
-    - "SE"
-    - "NO"
-    - "GB"
+    - AT
+    - BE
+    - BG
+    - HR
+    - CY
+    - CZ
+    - DK
+    - EE
+    - FI
+    - FR
+    - DE
+    - GR
+    - HU
+    - IE
+    - IT
+    - LV
+    - LT
+    - LU
+    - MT
+    - NL
+    - PL
+    - PT
+    - RO
+    - SK
+    - SI
+    - ES
+    - SE
+    - 'NO'
+    - GB
   NORTH_AMERICA:
     region_type: LARGE_REGION
     region_product_name: North America
     countries:
-    - "CA"
-    - "MX"
-    - "US"
+    - CA
+    - MX
+    - US
   MENA:
     region_type: LARGE_REGION
     region_product_name: Middle East & North Africa
     countries:
-    - "AE"
-    - "BH"
-    - "EG"
-    - "IQ"
-    - "IL"
-    - "IR"
-    - "JO"
-    - "KW"
-    - "LB"
-    - "LY"
-    - "MA"
-    - "OM"
-    - "QA"
-    - "SA"
-    - "TN"
+    - BH
+    - EG
+    - IQ
+    - IL
+    - JO
+    - KW
+    - MA
+    - OM
+    - QA
+    - SA
+    - TN
   AFRICA:
     region_type: LARGE_REGION
     region_product_name: Africa
     countries:
-    - "AO"
-    - "BW"
-    - "CD"
-    - "CV"
-    - "DZ"
-    - "EG"
-    - "ET"
-    - "GH"
-    - "GM"
-    - "KE"
-    - "LR"
-    - "LS"
-    - "LY"
-    - "MA"
-    - "ML"
-    - "MU"
-    - "NG"
-    - "RE"
-    - "RW"
-    - "SD"
-    - "SL"
-    - "SN"
-    - "TD"
-    - "TG"
-    - "TN"
-    - "TZ"
-    - "ZA"
+    - BW
+    - CD
+    - DZ
+    - EG
+    - GH
+    - GM
+    - LR
+    - MA
+    - ML
+    - MU
+    - NG
+    - RE
+    - RW
+    - SL
+    - SN
+    - TD
+    - TN
+    - ZA
   LATAM:
     region_type: LARGE_REGION
     region_product_name: Latin America
     countries:
-    - "AR"
-    - "BR"
-    - "BZ"
-    - "CL"
-    - "CO"
-    - "CR"
-    - "CU"
-    - "EC"
-    - "GT"
-    - "MX"
-    - "NI"
-    - "PA"
-    - "PE"
-    - "PY"
-    - "SR"
-    - "SV"
-    - "UY"
-    - "VE"
+    - AR
+    - BR
+    - CL
+    - CO
+    - CR
+    - EC
+    - GT
+    - MX
+    - NI
+    - PE
+    - PY
+    - SR
+    - SV
+    - UY
+    - VE
   OCEANIA:
     region_type: LARGE_REGION
     region_product_name: Oceania & Pacific
     countries:
-    - "AU"
-    - "FJ"
-    - "NZ"
-    - "PF"
-    - "PG"
-    - "TO"
-    - "Pw"
+    - AU
+    - NZ
   ASIA:
     region_type: LARGE_REGION
     region_product_name: Asia
     countries:
-    - "AF"
-    - "AM"
-    - "AZ"
-    - "CN"
-    - "GE"
-    - "HK"
-    - "ID"
-    - "IN"
-    - "IR"
-    - "IQ"
-    - "JP"
-    - "KG"
-    - "KH"
-    - "KR"
-    - "KZ"
-    - "LA"
-    - "LK"
-    - "MO"
-    - "MY"
-    - "NP"
-    - "PH"
-    - "PK"
-    - "SG"
-    - "TH"
-    - "TJ"
-    - "TW"
-    - "UZ"
-    - "VN"
+    - AF
+    - AM
+    - CN
+    - GE
+    - HK
+    - ID
+    - IN
+    - IQ
+    - JP
+    - KG
+    - KR
+    - MO
+    - MY
+    - PH
+    - PK
+    - SG
+    - TH
+    - TW
+    - UZ
+    - VN
   CARIBBEAN:
     region_type: LARGE_REGION
     region_product_name: Caribbean
     countries:
-    - "AG"
-    - "AI"
-    - "BB"
-    - "BM"
-    - "BQ"
-    - "BS"
-    - "BZ"
-    - "CU"
-    - "GP"
-    - "JM"
-    - "KN"
-    - "KY"
-    - "LC"
-    - "PR"
-    - "SR"
-    - "TC"
-    - "VG"
+    - AG
+    - AI
+    - BB
+    - BM
+    - BQ
+    - BS
+    - GP
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - SR
+    - TC
+    - VG
   SE_EUROPE:
     region_type: MEDIUM_REGION
     region_product_name: Southeast Europe
     countries:
-    - "GR"
-    - "RO"
-    - "BG"
-    - "HR"
-    - "RS"
-    - "BA"
-    - "AL"
-    - "ME"
-    - "MK"
-    - "XK"
+    - GR
+    - RO
+    - BG
+    - HR
+    - RS
+    - BA
+    - AL
+    - ME
+    - MK
+    - XK
   WEST_BALKANS:
     region_type: MEDIUM_REGION
     region_product_name: Western Balkans
     countries:
-    - "HR"
-    - "BA"
-    - "RS"
-    - "ME"
-    - "AL"
-    - "MK"
-    - "XK"
+    - HR
+    - BA
+    - RS
+    - ME
+    - AL
+    - MK
+    - XK
   ADRIATIC:
     region_type: MEDIUM_REGION
     region_product_name: Adriatic Coast
     countries:
-    - "IT"
-    - "SI"
-    - "HR"
-    - "ME"
-    - "AL"
+    - IT
+    - SI
+    - HR
+    - ME
+    - AL
   WEST_EUROPE:
     region_type: MEDIUM_REGION
     region_product_name: Western Europe
     countries:
-    - "FR"
-    - "ES"
-    - "PT"
-    - "AD"
-    - "MC"
+    - FR
+    - ES
+    - PT
   BRITISH_ISLES_IR:
     region_type: MEDIUM_REGION
     region_product_name: UK & Ireland
     countries:
-    - "GB"
-    - "IE"
-    - "GG"
-    - "JE"
+    - GB
+    - IE
+    - GG
+    - JE
   CENTRAL_EUROPE:
     region_type: MEDIUM_REGION
     region_product_name: Central Europe
     countries:
-    - "DE"
-    - "AT"
-    - "CH"
-    - "CZ"
-    - "SK"
-    - "HU"
-    - "PL"
+    - DE
+    - AT
+    - CH
+    - CZ
+    - SK
+    - HU
+    - PL
   NORDICS:
     region_type: MEDIUM_REGION
     region_product_name: Nordics
     countries:
-    - "DK"
-    - "SE"
-    - "NO"
-    - "FI"
-    - "IS"
-    - "FO"
-    - "GL"
+    - DK
+    - SE
+    - 'NO'
+    - FI
+    - IS
+    - FO
   BALTICS_FI:
     region_type: MEDIUM_REGION
     region_product_name: Baltics & Finland
     countries:
-    - "EE"
-    - "LV"
-    - "LT"
-    - "FI"
+    - EE
+    - LV
+    - LT
+    - FI
   BENELUX_FR:
     region_type: MEDIUM_REGION
     region_product_name: Benelux & France
     countries:
-    - "BE"
-    - "NL"
-    - "LU"
-    - "FR"
+    - BE
+    - NL
+    - LU
+    - FR
   MEDITERRANEAN:
     region_type: MEDIUM_REGION
     region_product_name: Mediterranean Europe
     countries:
-    - "ES"
-    - "FR"
-    - "IT"
-    - "HR"
-    - "GR"
-    - "MT"
-    - "CY"
-    - "TR"
-    - "ME"
-    - "AL"
-    - "MC"
+    - ES
+    - FR
+    - IT
+    - HR
+    - GR
+    - MT
+    - CY
+    - TR
+    - ME
+    - AL
   EAST_EUROPE:
     region_type: MEDIUM_REGION
     region_product_name: Eastern Europe
     countries:
-    - "PL"
-    - "CZ"
-    - "SK"
-    - "HU"
-    - "RO"
-    - "BG"
-    - "MD"
-    - "UA"
+    - PL
+    - CZ
+    - SK
+    - HU
+    - RO
+    - BG
+    - MD
+    - UA
   ALPINE_REGION:
     region_type: MEDIUM_REGION
     region_product_name: Alpine Europe
     countries:
-    - "AT"
-    - "CH"
-    - "LI"
-    - "SI"
-    - "IT"
-    - "FR"
-    - "DE"
+    - AT
+    - CH
+    - LI
+    - SI
+    - IT
+    - FR
+    - DE
   GULF_TRAVEL:
     region_type: MEDIUM_REGION
     region_product_name: Gulf Countries
     countries:
-    - "AE"
-    - "BH"
-    - "KW"
-    - "OM"
-    - "QA"
-    - "SA"
+    - BH
+    - KW
+    - OM
+    - QA
+    - SA
   LEVANT:
     region_type: MEDIUM_REGION
     region_product_name: Levant
     countries:
-    - "IL"
-    - "JO"
-    - "LB"
+    - IL
+    - JO
   CAUCASUS:
     region_type: MEDIUM_REGION
     region_product_name: Caucasus
     countries:
-    - "AM"
-    - "AZ"
-    - "GE"
+    - AM
+    - AZ
+    - GE
   CENTRAL_ASIA:
     region_type: MEDIUM_REGION
     region_product_name: Central Asia
     countries:
-    - "KZ"
-    - "KG"
-    - "TJ"
-    - "UZ"
+    - KG
+    - TJ
+    - UZ
   INDOCHINA:
     region_type: MEDIUM_REGION
     region_product_name: Indochina
     countries:
-    - "TH"
-    - "VN"
-    - "KH"
-    - "LA"
+    - TH
+    - VN
   SOUTHEAST_ASIA:
     region_type: MEDIUM_REGION
     region_product_name: Southeast Asia
     countries:
-    - "SG"
-    - "MY"
-    - "TH"
-    - "ID"
-    - "VN"
-    - "PH"
+    - SG
+    - MY
+    - TH
+    - ID
+    - VN
+    - PH
   ISLAND_SE_ASIA:
     region_type: MEDIUM_REGION
     region_product_name: Island Southeast Asia
     countries:
-    - "SG"
-    - "MY"
-    - "ID"
-    - "PH"
+    - SG
+    - MY
+    - ID
+    - PH
   EAST_ASIA_PLUS:
     region_type: MEDIUM_REGION
     region_product_name: China, Hong Kong, Macao & Taiwan
     countries:
-    - "CN"
-    - "HK"
-    - "MO"
-    - "TW"
+    - CN
+    - HK
+    - MO
+    - TW
   JP_KR_TW:
     region_type: MEDIUM_REGION
     region_product_name: Japan, South Korea & Taiwan
     countries:
-    - "JP"
-    - "KR"
-    - "TW"
+    - JP
+    - KR
+    - TW
   SUBCONTINENT:
     region_type: MEDIUM_REGION
     region_product_name: Indian Subcontinent
     countries:
-    - "IN"
-    - "PK"
-    - "LK"
-    - "NP"
+    - IN
+    - PK
+    - LK
   NORTH_AFRICA:
     region_type: MEDIUM_REGION
     region_product_name: North Africa
     countries:
-    - "MA"
-    - "DZ"
-    - "TN"
-    - "EG"
-    - "LY"
+    - MA
+    - DZ
+    - TN
+    - EG
   EAST_AFRICA:
     region_type: MEDIUM_REGION
     region_product_name: East Africa
     countries:
-    - "KE"
-    - "TZ"
-    - "RW"
-    - "ET"
+    - TZ
+    - RW
   SOUTHERN_AFRICA:
     region_type: MEDIUM_REGION
     region_product_name: Southern Africa
     countries:
-    - "ZA"
-    - "BW"
-    - "LS"
+    - ZA
+    - BW
   WEST_AFRICA:
     region_type: MEDIUM_REGION
     region_product_name: West Africa
     countries:
-    - "GH"
-    - "SN"
-    - "NG"
-    - "GM"
-    - "SL"
-    - "TG"
-    - "ML"
-    - "LR"
+    - GH
+    - SN
+    - NG
+    - GM
+    - SL
+    - TG
+    - ML
+    - LR
   AFRICA_SAFARI:
     region_type: MEDIUM_REGION
     region_product_name: African Safari
     countries:
-    - "KE"
-    - "TZ"
-    - "ZA"
-    - "BW"
-    - "RW"
+    - TZ
+    - ZA
+    - BW
+    - RW
   INDIAN_OCEAN:
     region_type: MEDIUM_REGION
     region_product_name: Indian Ocean Islands
     countries:
-    - "MU"
-    - "RE"
-    - "MV"
+    - MU
+    - RE
+    - MV
   CENTRAL_AFRICA:
     region_type: MEDIUM_REGION
     region_product_name: Central Africa
     countries:
-    - "AO"
-    - "CD"
-    - "TD"
+    - CD
+    - TD
   CENTRAL_AMERICA:
     region_type: MEDIUM_REGION
     region_product_name: Central America
     countries:
-    - "BZ"
-    - "CR"
-    - "GT"
-    - "MX"
-    - "NI"
-    - "PA"
-    - "SV"
+    - CR
+    - GT
+    - MX
+    - NI
+    - SV
   SOUTH_AMERICA:
     region_type: MEDIUM_REGION
     region_product_name: South America
     countries:
-    - "AR"
-    - "BR"
-    - "CL"
-    - "CO"
-    - "EC"
-    - "PE"
-    - "PY"
-    - "SR"
-    - "UY"
-    - "VE"
+    - AR
+    - BR
+    - CL
+    - CO
+    - EC
+    - PE
+    - PY
+    - SR
+    - UY
+    - VE
   ANDEAN:
     region_type: MEDIUM_REGION
     region_product_name: Andean Region
     countries:
-    - "CO"
-    - "EC"
-    - "PE"
-    - "CL"
+    - CO
+    - EC
+    - PE
+    - CL
   SOUTH_CONE:
     region_type: MEDIUM_REGION
     region_product_name: Southern South America
     countries:
-    - "BR"
-    - "AR"
-    - "CL"
-    - "UY"
-    - "PY"
+    - BR
+    - AR
+    - CL
+    - UY
+    - PY
   CARIBBEAN_CRUISE:
     region_type: MEDIUM_REGION
     region_product_name: Caribbean Cruise
     countries:
-    - "AG"
-    - "BB"
-    - "BS"
-    - "BZ"
-    - "JM"
-    - "KN"
-    - "KY"
-    - "LC"
-    - "PR"
-    - "TC"
+    - AG
+    - BB
+    - BS
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - TC
   LESSER_ANTILLES:
     region_type: MEDIUM_REGION
     region_product_name: Lesser Antilles
     countries:
-    - "AG"
-    - "AI"
-    - "BB"
-    - "BQ"
-    - "GP"
-    - "KN"
-    - "LC"
-    - "VG"
+    - AG
+    - AI
+    - BB
+    - BQ
+    - GP
+    - KN
+    - LC
+    - VG
   NORTH_ATLANTIC_ISLANDS:
     region_type: MEDIUM_REGION
     region_product_name: North Atlantic Islands
     countries:
-    - "BM"
-    - "BS"
-    - "TC"
-    - "PR"
+    - BM
+    - BS
+    - TC
+    - PR
   USA_CANADA:
     region_type: MEDIUM_REGION
     region_product_name: USA & Canada
     countries:
-    - "US"
-    - "CA"
+    - US
+    - CA
   AUS_NZ:
     region_type: MEDIUM_REGION
     region_product_name: Australia & New Zealand
     countries:
-    - "AU"
-    - "NZ"
-  SOUTH_PACIFIC:
-    region_type: MEDIUM_REGION
-    region_product_name: South Pacific
-    countries:
-    - "FJ"
-    - "PG"
-    - "PF"
-    - "TO"
-    - "PW"
+    - AU
+    - NZ
   PACIFIC_LONG_HAUL:
     region_type: MEDIUM_REGION
     region_product_name: Pacific Explorer
     countries:
-    - "AU"
-    - "NZ"
-    - "FJ"
-    - "PF"
-    - "PG"
-    - "TO"
-    - "PW"
+    - AU
+    - NZ

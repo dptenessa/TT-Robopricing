@@ -411,9 +411,8 @@ class PriceCurveCanvas(QWidget):
                 row_id = self.points[idx]["row_id"]
                 self.selected_row_id = row_id
 
-                # Left-click should visually select / drag only.
-                # It should also hide any promo markers from previous right-click selection.
-                self.promo_markers = []
+                # Tell MainWindow that the point was selected.
+                self.pointSelected.emit(row_id)
 
                 self.update()
                 return
@@ -609,17 +608,28 @@ class PriceCurveCanvas(QWidget):
                 if is_selected and not self._is_unlimited(plan):
                     outline = QColor("#555555")
                 floor_state = self._floor_marker_state(point)
-                if floor_state in {"active_below", "both_below"}:
-                    cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
-                    painter.setPen(QPen(cross_color, 3))
-                    painter.drawLine(pt.x() - 7, pt.y() - 7, pt.x() + 7, pt.y() + 7)
-                    painter.drawLine(pt.x() - 7, pt.y() + 7, pt.x() + 7, pt.y() - 7)
-                elif floor_state == "other_below":
-                    self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#1565c0"), 3)
-                elif point.get("is_new_entry"):
+
+                # Always draw the actual price point first. Cost-floor warnings
+                # are overlays and must never replace/hide the point itself.
+                if point.get("is_new_entry"):
                     self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#00897b"), 3)
                 else:
                     self._draw_marker(painter, pt, "circle", marker_size, fill, outline, width)
+
+                if floor_state == "other_below":
+                    # Other currency only: blue ring around the existing point.
+                    painter.setPen(QPen(QColor("#1565c0"), 2))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawEllipse(pt, marker_size + 2, marker_size + 2)
+                elif floor_state in {"active_below", "both_below"}:
+                    # This currency below = blue X; both currencies below = red X.
+                    # Keep the X smaller than the underlying marker so the point
+                    # (including its orange promo fill) remains visible.
+                    cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
+                    cross_half = 4
+                    painter.setPen(QPen(cross_color, 2))
+                    painter.drawLine(QPointF(pt.x() - cross_half, pt.y() - cross_half), QPointF(pt.x() + cross_half, pt.y() + cross_half))
+                    painter.drawLine(QPointF(pt.x() - cross_half, pt.y() + cross_half), QPointF(pt.x() + cross_half, pt.y() - cross_half))
 
                 painter.setPen(QColor("#333333"))
 
@@ -674,16 +684,16 @@ class PriceCurveCanvas(QWidget):
         painter.drawText(int(legend_x) + 28, int(y) + 4, "Applied promo")
         y += 22
 
-        painter.setPen(QPen(QColor("#1565c0"), 3))
-        painter.drawLine(legend_x + 3, y - 7, legend_x + 17, y + 7)
-        painter.drawLine(legend_x + 3, y + 7, legend_x + 17, y - 7)
+        painter.setPen(QPen(QColor("#1565c0"), 2))
+        painter.drawLine(legend_x + 6, y - 4, legend_x + 14, y + 4)
+        painter.drawLine(legend_x + 6, y + 4, legend_x + 14, y - 4)
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x) + 28, int(y) + 4, "This currency below")
         y += 22
 
-        painter.setPen(QPen(QColor("#c62828"), 3))
-        painter.drawLine(legend_x + 3, y - 7, legend_x + 17, y + 7)
-        painter.drawLine(legend_x + 3, y + 7, legend_x + 17, y - 7)
+        painter.setPen(QPen(QColor("#c62828"), 2))
+        painter.drawLine(legend_x + 6, y - 4, legend_x + 14, y + 4)
+        painter.drawLine(legend_x + 6, y + 4, legend_x + 14, y - 4)
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x) + 28, int(y) + 4, "Both currencies below")
         y += 22

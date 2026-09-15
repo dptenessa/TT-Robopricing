@@ -9,6 +9,10 @@ import math
 
 import numpy as np
 import pandas as pd
+try:
+    from pricing_book import read_pricing_workbook, write_pricing_workbook
+except ImportError:
+    from automation.pricing_book import read_pricing_workbook, write_pricing_workbook
 from config import UTILIZATION_OF_GB_IN_PRACTICE, VAT, HT_REV_SHARE
 from costing import cost_per_gb_from_eur, ipg_fee
 try:
@@ -30,6 +34,12 @@ from currency_support import (
 
 
 DEFAULT_MAX_DAYS = 30
+
+
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value if value is not None else "").strip().lower() in {"true", "t", "yes", "y", "1"}
 
 
 def iso_to_a3(code: Any) -> str:
@@ -130,7 +140,7 @@ def load_promos(path: str | Path) -> list[dict[str, Any]]:
             "promo_code": str(item.get("promo_code", "")).strip(),
             "promo_type": promo_type,
             "promo_value": float(item.get("promo_value", 0)),
-            "promo_currency": normalize_currency(item.get("currency", item.get("Currency", "USD"))),
+            "promo_currency": "",
             "label": str(item.get("label", "")).strip() or str(item.get("promo_code", "")).strip(),
         })
     return [p for p in promos if p["promo_code"]]
@@ -144,11 +154,16 @@ def load_table(
     path = Path(path)
     if not path.exists():
         return pd.DataFrame()
-    if path.suffix.lower() in {".xlsx", ".xls"}:
+    if path.suffix.lower() == ".xlsx":
         try:
-            df = pd.read_excel(path, sheet_name="All_Data")
+            df = read_pricing_workbook(path)
         except Exception:
-            df = pd.read_excel(path)
+            try:
+                df = pd.read_excel(path, sheet_name="All_Data")
+            except Exception:
+                df = pd.read_excel(path)
+    elif path.suffix.lower() == ".xls":
+        df = pd.read_excel(path)
     else:
         df = pd.read_csv(path)
 
@@ -158,8 +173,9 @@ def load_table(
         "Cost", "IsBelowCostFloor", "Plan", "PricingUnitIdUsed", "PricingSourceUsed",
         "PricingRegionUsed", "PricingUnitCountriesUsed", "PromoScopeKey", "PromoCode",
         "PromoType", "PromoValue", "PromoCurrency", "PromoLabel", "PromoBasePrice", "FinalPriceAfterPromo",
+        "FinalPriceAfterPromo_USD", "FinalPriceAfterPromo_EUR", "CalculatedCostFloor",
         "CostFloor_USD", "CostFloor_EUR", "USD_IsBelowCostFloor", "EUR_IsBelowCostFloor",
-        "IsPartnerExportBlocked", "PartnerExportBlockReason",
+        "AllowBelowCost", "IsPartnerExportBlocked", "PartnerExportBlockReason",
     ]
     if "IsBelowCostFloor" not in df.columns:
         if "IsBelowCalculatedCostFloor" in df.columns:
@@ -180,8 +196,8 @@ def load_table(
 
     for col in [
         "GB", "Days", "Price", "Price_USD", "Price_EUR", "Cost", "PromoValue",
-        "PromoBasePrice", "FinalPriceAfterPromo", "EUR_TO_USD", "COST_EUR_TO_USD",
-        "CostFloor_USD", "CostFloor_EUR",
+        "PromoBasePrice", "FinalPriceAfterPromo", "FinalPriceAfterPromo_USD", "FinalPriceAfterPromo_EUR",
+        "EUR_TO_USD", "COST_EUR_TO_USD", "CalculatedCostFloor", "CostFloor_USD", "CostFloor_EUR",
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     for col in [
@@ -189,13 +205,13 @@ def load_table(
         "PricingSourceUsed", "PricingRegionUsed", "PricingUnitCountriesUsed", "PromoScopeKey",
         "PromoCode", "PromoType", "PromoCurrency", "PromoLabel", "Currency"
     ]:
-        df[col] = df[col].astype(str).replace("nan", "").str.strip()
+        df[col] = df[col].astype(str).replace({"nan": "", "None": "", "<NA>": "", "NaT": ""}).str.strip()
 
     # ISO is the primary country code for editor logic. Keep ISO3 only as
     # a legacy fallback / export compatibility column.
     df["ISO"] = df["ISO"].where(df["ISO"].astype(str).str.strip().ne(""), df["ISO3"])
-    df["ISO"] = df["ISO"].astype(str).replace("nan", "").str.strip().str.upper()
-    df["ISO3"] = df["ISO3"].astype(str).replace("nan", "").str.strip().str.upper()
+    df["ISO"] = df["ISO"].astype(str).replace({"nan": "", "None": "", "<NA>": "", "NaT": ""}).str.strip().str.upper()
+    df["ISO3"] = df["ISO3"].astype(str).replace({"nan": "", "None": "", "<NA>": "", "NaT": ""}).str.strip().str.upper()
 
     df = df[
         (df["Country"].ne("") | df["ISO"].ne(""))
@@ -237,6 +253,7 @@ class EditorState:
     competitors_by_country: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     row_index: dict[str, dict[str, Any]] = field(default_factory=dict)
     scope_to_row_ids: dict[str, list[str]] = field(default_factory=dict)
+    country_floor_points_by_key: dict[tuple[str, str, float], list[dict[str, Any]]] = field(default_factory=dict)
 
     working_prices: dict[str, float] = field(default_factory=dict)
     working_price_by_scope: dict[str, float] = field(default_factory=dict)
@@ -244,15 +261,41 @@ class EditorState:
 
     loaded_prices: dict[str, float] = field(default_factory=dict)
     loaded_prices_by_currency: dict[str, dict[str, float]] = field(default_factory=lambda: {c: {} for c in CURRENCIES})
-    loaded_promo_store: dict[str, dict[str, Any]] = field(default_factory=dict)
+    loaded_promo_store_by_currency: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=lambda: {c: {} for c in CURRENCIES}
+    )
 
-    promo_store: dict[str, dict[str, Any]] = field(default_factory=dict)
+    promo_store_by_currency: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=lambda: {c: {} for c in CURRENCIES}
+    )
 
     brush_start_row_id: str | None = None
     brush_end_row_id: str | None = None
 
+    def is_region_destination(self, destination: str) -> bool:
+        points = self.points_by_country.get(str(destination), [])
+        return any(
+            str(point.get("pricing_source", "")).strip().lower() == "region_max"
+            for point in points
+        )
+
+    def country_destinations(self) -> list[str]:
+        return sorted(
+            destination
+            for destination in self.points_by_country.keys()
+            if not self.is_region_destination(destination)
+        )
+
+    def region_destinations(self) -> list[str]:
+        return sorted(
+            destination
+            for destination in self.points_by_country.keys()
+            if self.is_region_destination(destination)
+        )
+
     def countries(self) -> list[str]:
-        return sorted(self.points_by_country.keys())
+        # Backward-compatible combined list; UI can render regions separately.
+        return self.country_destinations() + self.region_destinations()
 
     def normalize_current_currency(self) -> str:
         self.active_currency = normalize_currency(self.active_currency)
@@ -311,6 +354,34 @@ class EditorState:
         self.loaded_prices_by_currency.setdefault(currency, {})
         return self.loaded_prices_by_currency[currency]
 
+    def _promo_store_for(self, currency: str | None = None) -> dict[str, dict[str, Any]]:
+        currency = normalize_currency(currency or self.active_currency)
+        self.promo_store_by_currency.setdefault(currency, {})
+        return self.promo_store_by_currency[currency]
+
+    def _loaded_promo_store_for(self, currency: str | None = None) -> dict[str, dict[str, Any]]:
+        currency = normalize_currency(currency or self.active_currency)
+        self.loaded_promo_store_by_currency.setdefault(currency, {})
+        return self.loaded_promo_store_by_currency[currency]
+
+    def _currencies_for_promo_edit(self) -> tuple[str, ...]:
+        # Promo assignment is shared by EUR and USD.
+        return CURRENCIES
+
+    def _promo_for_point(
+        self,
+        point: dict[str, Any],
+        currency: str | None = None,
+    ) -> dict[str, Any] | None:
+        promo_key = str(point.get("promo_scope_key", "")).strip()
+        if not promo_key:
+            return None
+        return self._promo_store_for(currency).get(promo_key)
+
+    def has_promo_for_selected(self, currency: str | None = None) -> bool:
+        point = self.selected_point_info()
+        return bool(point and self._promo_for_point(point, currency))
+
     def _currencies_for_current_edit(self) -> tuple[str, ...]:
         if self.is_dual_currency_mode():
             return (self.normalize_current_currency(),)
@@ -335,6 +406,15 @@ class EditorState:
         return 0.0
 
     def _final_price_for_currency_from_row(self, row: pd.Series, currency: str, base_price: float) -> float:
+        currency = normalize_currency(currency)
+        currency_specific = pd.to_numeric(
+            row.get(f"FinalPriceAfterPromo_{currency}", np.nan),
+            errors="coerce",
+        )
+        if pd.notna(currency_specific):
+            return float(currency_specific)
+
+        # Backward compatibility for legacy one-currency files.
         row_currency = normalize_currency(row.get("Currency", DEFAULT_CURRENCY))
         final_price = pd.to_numeric(row.get("FinalPriceAfterPromo", np.nan), errors="coerce")
         if pd.notna(final_price):
@@ -342,13 +422,8 @@ class EditorState:
         return base_price
 
     def _promo_value_for_currency(self, promo: dict[str, Any], currency: str | None = None) -> float:
-        currency = normalize_currency(currency or self.active_currency)
-        promo_type = str(promo.get("promo_type", "")).strip().lower()
-        value = float(promo.get("promo_value", 0) or 0)
-        if promo_type in {"absolute"}:
-            promo_currency = normalize_currency(promo.get("promo_currency", promo.get("currency", "USD")))
-            return convert_absolute_promo_value(value, promo_currency, currency, self.eur_to_usd)
-        return value
+        # Absolute promo values are currency-agnostic: 4 means -4 EUR and -4 USD.
+        return float(promo.get("promo_value", 0) or 0)
 
     def sync_linked_eur_from_usd(self) -> None:
         for p in self.row_index.values():
@@ -489,19 +564,20 @@ class EditorState:
         self.competitors_by_country = {}
         self.row_index = {}
         self.scope_to_row_ids = {}
+        self.country_floor_points_by_key = {}
         self.working_prices = {}
         self.working_price_by_scope = {}
         self.working_prices_by_currency = {c: {} for c in CURRENCIES}
-        self.promo_store = {}
+        self.promo_store_by_currency = {c: {} for c in CURRENCIES}
         self.loaded_prices = {}
         self.loaded_prices_by_currency = {c: {} for c in CURRENCIES}
-        self.loaded_promo_store = {}
+        self.loaded_promo_store_by_currency = {c: {} for c in CURRENCIES}
         self.selected_row_id = None
         self.brush_start_row_id = None
         self.brush_end_row_id = None
 
-    def _base_promos_from_df(self) -> dict[str, dict[str, Any]]:
-        out: dict[str, dict[str, Any]] = {}
+    def _base_promos_from_df(self) -> dict[str, dict[str, dict[str, Any]]]:
+        out: dict[str, dict[str, dict[str, Any]]] = {c: {} for c in CURRENCIES}
         if self.baseline_df.empty:
             return out
         for _, row in self.baseline_df.iterrows():
@@ -511,14 +587,27 @@ class EditorState:
             key = str(row.get("PromoScopeKey", "")).strip() or str(row.get("sku_scope_key", "")).strip()
             if not key:
                 continue
-            out[key] = {
+            catalog_item = next(
+                (item for item in self.promo_catalog if str(item.get("promo_code", "")).strip() == code),
+                None,
+            ) or {}
+            promo_type = str(row.get("PromoType", "")).strip().lower() or str(catalog_item.get("promo_type", "")).strip().lower()
+            promo_value_raw = pd.to_numeric(row.get("PromoValue", None), errors="coerce")
+            promo_value = float(promo_value_raw) if pd.notna(promo_value_raw) else float(catalog_item.get("promo_value", 0) or 0)
+            promo_label = str(row.get("PromoLabel", "")).strip() or str(catalog_item.get("label", "")).strip() or code
+            promo = {
                 "promo_scope_key": key,
                 "promo_code": code,
-                "promo_type": str(row.get("PromoType", "")).strip().lower(),
-                "promo_value": float(row.get("PromoValue", 0) or 0),
-                "promo_currency": normalize_currency(row.get("PromoCurrency", row.get("Currency", "USD"))),
-                "promo_label": str(row.get("PromoLabel", "")).strip() or code,
+                "promo_type": promo_type,
+                "promo_value": promo_value,
+                "promo_currency": "",
+                "promo_label": promo_label,
             }
+            # Legacy/model rows did not distinguish promo assignment by currency.
+            # Preserve that behavior by seeding both currency stores. Explicit
+            # saved promo JSON files loaded later can then override each currency.
+            for currency in CURRENCIES:
+                out[currency][key] = dict(promo)
         return out
 
     def preload_baseline(self, df: pd.DataFrame) -> None:
@@ -529,8 +618,16 @@ class EditorState:
 
         if allowed_isos and "ISO" in self.baseline_df.columns:
             self.baseline_df["ISO"] = self.baseline_df["ISO"].astype(str).str.strip().str.upper()
-            self.baseline_df = self.baseline_df[self.baseline_df["ISO"].isin(allowed_isos)].copy()
-        self.promo_store = dict(self._base_promos_from_df())
+            pricing_source = self.baseline_df.get(
+                "PricingSourceUsed",
+                pd.Series("", index=self.baseline_df.index),
+            ).astype(str).str.strip().str.lower()
+            # Countries still obey the PPG whitelist. Locked regions are first-class
+            # pricing units and must not be dropped simply because their ISO field
+            # contains a region code instead of an ISO2 country code.
+            keep = self.baseline_df["ISO"].isin(allowed_isos) | pricing_source.eq("region_max")
+            self.baseline_df = self.baseline_df[keep].copy()
+        self.promo_store_by_currency = self._base_promos_from_df()
 
         unit_lookup: dict[str, set[str]] = {}
         for _, row in self.baseline_df.iterrows():
@@ -582,6 +679,7 @@ class EditorState:
                     "iso": str(row.get("ISO", "")).strip().upper(),
                     "iso3": str(row.get("ISO3", "")).strip().upper(),
                     "country": country,
+                    "provider": str(row.get("Provider", "")).strip() or "HT",
                     "pricing_unit_id": unit_id,
                     "pricing_source": str(row.get("PricingSourceUsed", "")).strip(),
                     "pricing_region": str(row.get("PricingRegionUsed", "")).strip(),
@@ -595,10 +693,18 @@ class EditorState:
                         row.get("GB", None),
                     ),
                     "is_new_entry": False,
+                    "allow_below_cost": _boolish(row.get("AllowBelowCost", False)),
                 }
                 points.append(pt)
                 self.row_index[pt["row_id"]] = pt
                 self.scope_to_row_ids.setdefault(scope_key, []).append(pt["row_id"])
+                if str(pt.get("pricing_source", "")).strip().lower() != "region_max":
+                    floor_key = (
+                        str(pt.get("provider", "HT")).strip(),
+                        str(pt.get("plan", "")).strip(),
+                        float(pt.get("days") or 0.0),
+                    )
+                    self.country_floor_points_by_key.setdefault(floor_key, []).append(pt)
                 for currency in CURRENCIES:
                     self.working_prices_by_currency.setdefault(currency, {})[pt["row_id"]] = float(base_prices[currency])
             self.points_by_country[country] = points
@@ -668,39 +774,42 @@ class EditorState:
                 })
             self.competitors_by_country[iso_code] = pts
 
-    def preload_last_exported_promos(self, data: list[dict[str, Any]]) -> None:
-        self.promo_store = {}
-        self.loaded_promo_store = {}
+    def preload_last_exported_promos(
+        self,
+        data: list[dict[str, Any]],
+        currency: str | None = None,
+    ) -> None:
+        currencies = (normalize_currency(currency),) if currency else CURRENCIES
 
-        if not data:
-            for q in self.row_index.values():
-                self._apply_point_display(q)
-            return
+        for target_currency in currencies:
+            current_store = self._promo_store_for(target_currency)
+            loaded_store = self._loaded_promo_store_for(target_currency)
+            current_store.clear()
+            loaded_store.clear()
 
-        for item in data:
-            promo_scope_key = str(item.get("PromoScopeKey", "")).strip()
-            promo_code = str(item.get("PromoCode", "")).strip()
+            for item in data or []:
+                promo_scope_key = str(item.get("PromoScopeKey", "")).strip()
+                promo_code = str(item.get("PromoCode", "")).strip()
 
-            if not promo_scope_key or not promo_code:
-                continue
+                if not promo_scope_key or not promo_code:
+                    continue
 
-            promo = {
-                "promo_scope_key": promo_scope_key,
-                "promo_code": promo_code,
-                "promo_type": str(item.get("PromoType", "")).strip().lower(),
-                "promo_value": float(item.get("PromoValue", 0) or 0),
-                "promo_currency": normalize_currency(item.get("PromoCurrency", item.get("Currency", "USD"))),
-                "promo_label": str(item.get("PromoLabel", "")).strip() or promo_code,
-            }
+                promo = {
+                    "promo_scope_key": promo_scope_key,
+                    "promo_code": promo_code,
+                    "promo_type": str(item.get("PromoType", "")).strip().lower(),
+                    "promo_value": float(item.get("PromoValue", 0) or 0),
+                    "promo_currency": "",
+                    "promo_label": str(item.get("PromoLabel", "")).strip() or promo_code,
+                }
 
-            self.promo_store[promo_scope_key] = promo
-            self.loaded_promo_store[promo_scope_key] = dict(promo)
+                current_store[promo_scope_key] = promo
+                loaded_store[promo_scope_key] = dict(promo)
 
-        # Re-apply promo effect to all loaded points
         for q in self.row_index.values():
             self._apply_point_display(q)
 
-    
+
     def preload_sales_volumes(self, df: pd.DataFrame) -> None:
         self.sales_by_scope = {}
 
@@ -755,7 +864,7 @@ class EditorState:
 
             base_price = float(self.working_prices.get(str(rid), p.get("working_y", p.get("base_y", 0.0))))
 
-            promo = self.promo_store.get(str(p.get("promo_scope_key", "")).strip())
+            promo = self._promo_for_point(p, self.active_currency)
             if promo:
                 final_price = calculate_promo_price(
                     base_price,
@@ -832,27 +941,90 @@ class EditorState:
         fallback_country = str(point.get("iso", "")).strip() or str(point.get("iso3", "")).strip()
         return covered_countries or fallback_country
 
+    def _is_region_point(self, point: dict[str, Any]) -> bool:
+        return str(point.get("pricing_source", "")).strip().lower() == "region_max"
+
+    def _regional_binding_floor(self, point: dict[str, Any], currency: str) -> float:
+        """Return the floor used by the former regional eligibility guardrail.
+
+        The old generator compared a regional anchor price with every locked
+        member country's CostFloor for the same Provider + Plan + Days. The
+        binding regional floor is therefore the maximum of those country floors.
+        It is deliberately based on the current country rows, not a new regional
+        wholesale-cost calculation.
+        """
+        members = set(self.pricing_unit_country_codes(point.get("pricing_unit_countries", "")))
+        key = (
+            str(point.get("provider", "HT")).strip(),
+            str(point.get("plan", "")).strip(),
+            float(point.get("days") or 0.0),
+        )
+        candidates = self.country_floor_points_by_key.get(key, [])
+        floors: list[float] = []
+        for candidate in candidates:
+            iso = str(candidate.get("iso", "")).strip().upper()
+            if members and iso not in members:
+                continue
+            country_price = self.round_regular_price(
+                self._working_price_for_currency(candidate, currency)
+            )
+            country_final = self._final_price_for_currency(
+                candidate, currency, country_price
+            )
+            floors.append(
+                float(
+                    self.calculate_cost_floor(
+                        candidate,
+                        self._floor_country_key_for_point(candidate),
+                        currency=currency,
+                        price_override=country_final,
+                    )
+                )
+            )
+        if floors:
+            return max(floors)
+
+        # Defensive fallback for malformed legacy data.
+        return float(
+            self.calculate_cost_floor(
+                point,
+                self._floor_country_key_for_point(point),
+                currency=currency,
+                price_override=self._final_price_for_currency(
+                    point,
+                    currency,
+                    self._working_price_for_currency(point, currency),
+                ),
+            )
+        )
+
     def _refresh_point_floor_status(self, point: dict[str, Any]) -> None:
         country_key = self._floor_country_key_for_point(point)
         floors: dict[str, float] = {}
         final_prices: dict[str, float] = {}
         below: dict[str, bool] = {}
+        is_region = self._is_region_point(point)
 
         for currency in CURRENCIES:
             working_price = self.round_regular_price(self._working_price_for_currency(point, currency))
             final_price = self._final_price_for_currency(point, currency, working_price)
-            floor = self.calculate_cost_floor(
-                point,
-                country_key,
-                currency=currency,
-                price_override=final_price,
-            )
+            if is_region:
+                floor = self._regional_binding_floor(point, currency)
+            else:
+                floor = self.calculate_cost_floor(
+                    point,
+                    country_key,
+                    currency=currency,
+                    price_override=final_price,
+                )
             floors[currency] = float(floor)
             final_prices[currency] = float(final_price)
-            below[currency] = bool(final_price < floor)
+            below[currency] = bool(final_price < floor - 1e-9)
 
         active_currency = self.normalize_current_currency()
-        blocked_currencies = [currency for currency in CURRENCIES if below.get(currency)]
+        factual_below_currencies = [currency for currency in CURRENCIES if below.get(currency)]
+        allow_below_cost = bool(point.get("allow_below_cost", False))
+        blocked_currencies = [] if allow_below_cost else factual_below_currencies
         point["cost_floor_by_currency"] = floors
         point["final_price_by_currency"] = final_prices
         point["below_cost_floor_by_currency"] = below
@@ -919,7 +1091,7 @@ class EditorState:
         new_prices = []
         for p in matching_points:
             base_price = float(p.get("working_y", p.get("base_y", 0.0)))
-            promo = self.promo_store.get(str(p.get("promo_scope_key", "")).strip())
+            promo = self._promo_for_point(p, self.active_currency)
 
             if promo:
                 base_price = calculate_promo_price(
@@ -1021,7 +1193,9 @@ class EditorState:
 
         self.loaded_prices = {}
         self.loaded_prices_by_currency = {c: {} for c in CURRENCIES}
-        self.loaded_promo_store = {}
+        self.loaded_promo_store_by_currency = {c: {} for c in CURRENCIES}
+        # The consolidated saved file is authoritative for promo assignment too.
+        self.promo_store_by_currency = {c: {} for c in CURRENCIES}
         matched_entry_keys: set[str] = set()
 
         for _, row in df.iterrows():
@@ -1059,20 +1233,35 @@ class EditorState:
                     q.setdefault("working_prices", {})[currency] = float(price)
                     self.working_prices_by_currency.setdefault(currency, {})[str(rid)] = float(price)
 
+            allow_below_cost = _boolish(row.get("AllowBelowCost", False))
+            for rid in self.scope_to_row_ids.get(scope_key, []):
+                q = self.row_index.get(str(rid))
+                if q is not None:
+                    q["allow_below_cost"] = allow_below_cost
+
             promo_code = str(row.get("PromoCode", "")).strip()
             if promo_code:
                 promo_key = str(row.get("PromoScopeKey", "")).strip() or scope_key
+                catalog_item = next(
+                    (item for item in self.promo_catalog if str(item.get("promo_code", "")).strip() == promo_code),
+                    None,
+                ) or {}
+                promo_type = str(row.get("PromoType", "")).strip().lower() or str(catalog_item.get("promo_type", "")).strip().lower()
+                promo_value_raw = pd.to_numeric(row.get("PromoValue", None), errors="coerce")
+                promo_value = float(promo_value_raw) if pd.notna(promo_value_raw) else float(catalog_item.get("promo_value", 0) or 0)
+                promo_label = str(row.get("PromoLabel", "")).strip() or str(catalog_item.get("label", "")).strip() or promo_code
                 promo = {
                     "promo_scope_key": promo_key,
                     "promo_code": promo_code,
-                    "promo_type": str(row.get("PromoType", "")).strip().lower(),
-                    "promo_value": float(row.get("PromoValue", 0) or 0),
-                    "promo_currency": normalize_currency(row.get("PromoCurrency", row.get("Currency", "USD"))),
-                    "promo_label": str(row.get("PromoLabel", "")).strip() or promo_code,
+                    "promo_type": promo_type,
+                    "promo_value": promo_value,
+                    "promo_currency": "",
+                    "promo_label": promo_label,
                 }
 
-                self.loaded_promo_store[promo_key] = promo
-                self.promo_store[promo_key] = promo
+                for target_currency in CURRENCIES:
+                    self._loaded_promo_store_for(target_currency)[promo_key] = dict(promo)
+                    self._promo_store_for(target_currency)[promo_key] = dict(promo)
 
         self.loaded_prices = self._loaded_prices_for(self.active_currency)
         for q in self.row_index.values():
@@ -1098,7 +1287,7 @@ class EditorState:
         point["working_y"] = self.round_regular_price(float(working_prices.get(currency, point["base_y"])))
         working_prices[currency] = float(point["working_y"])
         point["y"] = float(point["working_y"])
-        promo = self.promo_store.get(str(point["promo_scope_key"]).strip())
+        promo = self._promo_for_point(point, currency)
         point["promo"] = ""
         if promo:
             point["promo"] = str(promo.get("promo_code", "")).strip()
@@ -1497,10 +1686,13 @@ class EditorState:
             self.set_scope_prices(rid, self._loaded_price_updates_for_point(q, currencies))
 
             promo_key = str(q.get("promo_scope_key", "")).strip()
-            if promo_key in self.loaded_promo_store:
-                self.promo_store[promo_key] = dict(self.loaded_promo_store[promo_key])
-            else:
-                self.promo_store.pop(promo_key, None)
+            for currency in currencies:
+                loaded_store = self._loaded_promo_store_for(currency)
+                current_store = self._promo_store_for(currency)
+                if promo_key in loaded_store:
+                    current_store[promo_key] = dict(loaded_store[promo_key])
+                else:
+                    current_store.pop(promo_key, None)
 
             self._apply_point_display(q)
 
@@ -1523,10 +1715,13 @@ class EditorState:
             self.set_scope_prices(rid, self._loaded_price_updates_for_point(q, currencies))
 
             promo_key = str(q.get("promo_scope_key", "")).strip()
-            if promo_key in self.loaded_promo_store:
-                self.promo_store[promo_key] = dict(self.loaded_promo_store[promo_key])
-            else:
-                self.promo_store.pop(promo_key, None)
+            for currency in currencies:
+                loaded_store = self._loaded_promo_store_for(currency)
+                current_store = self._promo_store_for(currency)
+                if promo_key in loaded_store:
+                    current_store[promo_key] = dict(loaded_store[promo_key])
+                else:
+                    current_store.pop(promo_key, None)
 
             self._apply_point_display(q)
 
@@ -1566,7 +1761,7 @@ class EditorState:
     def reload_working_from_baseline(self) -> None:
         self.working_prices = {}
         self.working_prices_by_currency = {c: {} for c in CURRENCIES}
-        self.promo_store = self._base_promos_from_df()
+        self.promo_store_by_currency = self._base_promos_from_df()
         for p in self.row_index.values():
             p["working_prices"] = dict(p.get("base_prices", {}))
             for currency in CURRENCIES:
@@ -1583,14 +1778,16 @@ class EditorState:
         out = []
         for promo in self.promo_catalog:
             promo_value = self._promo_value_for_currency(promo)
-            final_price = self.round_promo_price(calculate_promo_price(base_price, promo["promo_type"], promo_value))
+            final_price = self.round_promo_price(
+                calculate_promo_price(base_price, promo["promo_type"], promo_value)
+            )
             if final_price <= base_price:
                 out.append({
                     "promo_scope_key": str(p["promo_scope_key"]),
                     "promo_code": promo["promo_code"],
                     "promo_type": promo["promo_type"],
                     "promo_value": float(promo["promo_value"]),
-                    "promo_currency": normalize_currency(promo.get("promo_currency", promo.get("currency", "USD"))),
+                    "promo_currency": "",
                     "display_promo_value": float(promo_value),
                     "promo_label": promo["label"],
                     "final_price_after_promo": final_price,
@@ -1606,7 +1803,6 @@ class EditorState:
         base_x = float(p["x"])
         markers = []
 
-        # Existing promo candidates
         for c in self.promo_candidates_for_selected()[:8]:
             markers.append({
                 "x": base_x,
@@ -1616,12 +1812,10 @@ class EditorState:
                 "is_remove": False,
             })
 
-        # Add REMOVE marker if promo exists
-        promo_key = str(p.get("promo_scope_key", "")).strip()
-        if promo_key in self.promo_store:
+        if self.has_promo_for_selected():
             markers.append({
                 "x": base_x,
-                "y": float(p["y"]) + 2.0,  # slightly above current point
+                "y": float(p["y"]) + 2.0,
                 "promo_code": "__REMOVE_PROMO__",
                 "label": "Remove",
                 "is_remove": True,
@@ -1629,39 +1823,276 @@ class EditorState:
 
         return markers
 
-    def assign_promo_to_selected(self, promo_code: str) -> None:
+    def available_promo_days_for_selected(self) -> list[float]:
         p = self.selected_point_info()
         if p is None:
-            return
-        match = next((c for c in self.promo_candidates_for_selected() if c["promo_code"] == promo_code), None)
+            return []
+
+        unit_id = str(p.get("pricing_unit_id", "")).strip()
+        plan = str(p.get("plan", "")).strip()
+        days: set[float] = set()
+        for q in self.row_index.values():
+            if str(q.get("pricing_unit_id", "")).strip() != unit_id:
+                continue
+            if str(q.get("plan", "")).strip() != plan:
+                continue
+            try:
+                day = float(q.get("days"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(day):
+                days.add(day)
+        return sorted(days)
+
+    def _matching_promo_range_points(
+        self,
+        start_day: float,
+        end_day: float,
+    ) -> list[dict[str, Any]]:
+        p = self.selected_point_info()
+        if p is None:
+            return []
+
+        low, high = sorted((float(start_day), float(end_day)))
+        unit_id = str(p.get("pricing_unit_id", "")).strip()
+        plan = str(p.get("plan", "")).strip()
+        matches = []
+        for q in self.row_index.values():
+            if str(q.get("pricing_unit_id", "")).strip() != unit_id:
+                continue
+            if str(q.get("plan", "")).strip() != plan:
+                continue
+            try:
+                day = float(q.get("days"))
+            except (TypeError, ValueError):
+                continue
+            if low <= day <= high:
+                matches.append(q)
+        return matches
+
+    def _apply_promo_template_to_points(
+        self,
+        promo_template: dict[str, Any],
+        points: list[dict[str, Any]],
+    ) -> int:
+        currencies = self._currencies_for_promo_edit()
+        affected_scope_keys: set[str] = set()
+
+        for q in points:
+            promo_key = str(q.get("promo_scope_key", "")).strip()
+            scope_key = str(q.get("scope_key", "")).strip()
+            if not promo_key:
+                continue
+            affected_scope_keys.add(scope_key or promo_key)
+            for currency in currencies:
+                scoped = dict(promo_template)
+                scoped["promo_scope_key"] = promo_key
+                self._promo_store_for(currency)[promo_key] = scoped
+
+        refreshed: set[str] = set()
+        for q in points:
+            rid = str(q.get("row_id", ""))
+            if rid and rid not in refreshed:
+                self._apply_point_display(q)
+                refreshed.add(rid)
+
+        return len(affected_scope_keys)
+
+    def assign_promo_to_selected(self, promo_code: str) -> int:
+        p = self.selected_point_info()
+        if p is None:
+            return 0
+        match = next(
+            (c for c in self.promo_candidates_for_selected() if c["promo_code"] == promo_code),
+            None,
+        )
         if not match:
-            return
+            return 0
 
         scope_key = str(p["scope_key"])
-        row_ids = self.scope_to_row_ids.get(scope_key, [])
-        for rid in row_ids:
-            q = self.row_index.get(rid)
-            if q is None:
-                continue
-            promo_key = str(q["promo_scope_key"])
-            scoped_match = dict(match)
-            scoped_match["promo_scope_key"] = promo_key
-            self.promo_store[promo_key] = scoped_match
-            self._apply_point_display(q)
+        points = [
+            self.row_index[rid]
+            for rid in self.scope_to_row_ids.get(scope_key, [])
+            if rid in self.row_index
+        ]
+        return self._apply_promo_template_to_points(match, points)
 
-    def remove_selected_promo(self) -> None:
+    def assign_promo_to_range(
+        self,
+        promo_code: str,
+        start_day: float,
+        end_day: float,
+    ) -> int:
+        match = next(
+            (c for c in self.promo_candidates_for_selected() if c["promo_code"] == promo_code),
+            None,
+        )
+        if not match:
+            return 0
+        return self._apply_promo_template_to_points(
+            match,
+            self._matching_promo_range_points(start_day, end_day),
+        )
+
+    def _remove_promos_from_points(self, points: list[dict[str, Any]]) -> int:
+        currencies = self._currencies_for_promo_edit()
+        affected_scope_keys: set[str] = set()
+        changed = False
+
+        for q in points:
+            promo_key = str(q.get("promo_scope_key", "")).strip()
+            scope_key = str(q.get("scope_key", "")).strip()
+            if not promo_key:
+                continue
+            removed_here = False
+            for currency in currencies:
+                store = self._promo_store_for(currency)
+                if promo_key in store:
+                    store.pop(promo_key, None)
+                    removed_here = True
+                    changed = True
+            if removed_here:
+                affected_scope_keys.add(scope_key or promo_key)
+
+        if changed:
+            for q in points:
+                self._apply_point_display(q)
+
+        return len(affected_scope_keys)
+
+    def remove_selected_promo(self) -> int:
         p = self.selected_point_info()
         if p is None:
-            return
+            return 0
         scope_key = str(p["scope_key"])
-        row_ids = self.scope_to_row_ids.get(scope_key, [])
-        for rid in row_ids:
-            q = self.row_index.get(rid)
-            if q is None:
+        points = [
+            self.row_index[rid]
+            for rid in self.scope_to_row_ids.get(scope_key, [])
+            if rid in self.row_index
+        ]
+        return self._remove_promos_from_points(points)
+
+    def remove_promo_from_range(self, start_day: float, end_day: float) -> int:
+        return self._remove_promos_from_points(
+            self._matching_promo_range_points(start_day, end_day)
+        )
+
+    def workbench_scope_points(
+        self,
+        pricing_unit_id: str,
+        plan: str,
+        days: float,
+        gb: float | None,
+    ) -> list[dict[str, Any]]:
+        """Return all country rows belonging to one Excel workbench pricing scope."""
+        unit = str(pricing_unit_id).strip()
+        plan_text = str(plan).strip()
+        try:
+            day_value = float(days)
+        except (TypeError, ValueError):
+            return []
+
+        scope_key = build_sku_scope_key(unit, plan_text, day_value)
+        candidate_ids = self.scope_to_row_ids.get(scope_key, [])
+        matches: list[dict[str, Any]] = []
+        for row_id in candidate_ids:
+            point = self.row_index.get(str(row_id))
+            if point is None:
                 continue
-            self.promo_store.pop(str(q["promo_scope_key"]), None)
-            self._apply_point_display(q)
-            
+            point_gb = point.get("gb")
+            if gb is None:
+                if point_gb is not None:
+                    continue
+            else:
+                try:
+                    if point_gb is None or not math.isclose(float(point_gb), float(gb), abs_tol=1e-9):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            matches.append(point)
+        return matches
+
+    def set_workbench_scope_prices(
+        self,
+        pricing_unit_id: str,
+        plan: str,
+        days: float,
+        gb: float | None,
+        *,
+        price_eur: float,
+        price_usd: float,
+    ) -> int:
+        """Set explicit independent EUR and USD list prices for a whole pricing unit scope."""
+        matches = self.workbench_scope_points(pricing_unit_id, plan, days, gb)
+        if not matches:
+            return 0
+        self.set_scope_prices(
+            str(matches[0]["row_id"]),
+            {"EUR": float(price_eur), "USD": float(price_usd)},
+        )
+        return len(matches)
+
+    def set_workbench_scope_promo(
+        self,
+        pricing_unit_id: str,
+        plan: str,
+        days: float,
+        gb: float | None,
+        *,
+        promo_code: str,
+    ) -> int:
+        """Assign one approved promo to both EUR and USD for a whole workbench scope."""
+        matches = self.workbench_scope_points(pricing_unit_id, plan, days, gb)
+        if not matches:
+            return 0
+
+        promo_code = str(promo_code or "").strip()
+        if not promo_code:
+            changed = False
+            for point in matches:
+                promo_key = str(point.get("promo_scope_key", "")).strip()
+                if not promo_key:
+                    continue
+                for currency in CURRENCIES:
+                    store = self._promo_store_for(currency)
+                    if promo_key in store:
+                        store.pop(promo_key, None)
+                        changed = True
+            if changed:
+                for point in matches:
+                    self._apply_point_display(point)
+            return len(matches)
+
+        catalog_item = next(
+            (
+                item for item in self.promo_catalog
+                if str(item.get("promo_code", "")).strip() == promo_code
+            ),
+            None,
+        )
+        if catalog_item is None:
+            raise ValueError(f"Unknown promo code in pricing workbench: {promo_code}")
+
+        template = {
+            "promo_code": promo_code,
+            "promo_type": str(catalog_item.get("promo_type", "")).strip().lower(),
+            "promo_value": float(catalog_item.get("promo_value", 0) or 0),
+            "promo_currency": "",
+            "promo_label": str(catalog_item.get("label", "")).strip() or promo_code,
+        }
+        for point in matches:
+            promo_key = str(point.get("promo_scope_key", "")).strip()
+            if not promo_key:
+                continue
+            for currency in CURRENCIES:
+                scoped = dict(template)
+                scoped["promo_scope_key"] = promo_key
+                self._promo_store_for(currency)[promo_key] = scoped
+
+        for point in matches:
+            self._apply_point_display(point)
+        return len(matches)
+
     def round_regular_price(self, price: float) -> float:
         return round(float(price) * 20) / 20
 
@@ -1684,7 +2115,7 @@ class EditorState:
         return converted
 
     def _final_price_for_currency(self, point: dict[str, Any], currency: str, working_price: float) -> float:
-        promo = self.promo_store.get(str(point.get("promo_scope_key", "")).strip())
+        promo = self._promo_for_point(point, currency)
         if not promo:
             return self.round_regular_price(float(working_price))
 
@@ -1696,39 +2127,24 @@ class EditorState:
             )
         )
 
-    def export_prices_csv(self, path: str | Path, currency: str | None = None) -> None:
-        currency = normalize_currency(currency or self.active_currency)
+    def export_prices_dataframe(self) -> pd.DataFrame:
+        """Return one consolidated pricing snapshot containing EUR and USD."""
         rows = []
-
         self._refresh_all_display_prices()
 
         for point in self.row_index.values():
-            working_price = self.round_regular_price(self._working_price_for_currency(point, currency))
-            final_price = self._final_price_for_currency(point, currency, working_price)
             price_usd = self.round_regular_price(self._working_price_for_currency(point, "USD"))
             price_eur = self.round_regular_price(self._working_price_for_currency(point, "EUR"))
+            final_usd = self._final_price_for_currency(point, "USD", price_usd)
+            final_eur = self._final_price_for_currency(point, "EUR", price_eur)
 
-            covered_countries = str(point.get("pricing_unit_countries", "")).strip()
-            fallback_country = str(point.get("iso", "")).strip() or str(point.get("iso3", "")).strip()
-
-            cost_floor = self.calculate_cost_floor(
-                point,
-                covered_countries or fallback_country,
-                currency=currency,
-                price_override=final_price,
-            )
             self._refresh_point_floor_status(point)
             below_by_currency = point.get("below_cost_floor_by_currency", {}) or {}
             floors_by_currency = point.get("cost_floor_by_currency", {}) or {}
-            partner_blocked = bool(point.get("is_partner_export_blocked", False))
+            allow_below_cost = bool(point.get("allow_below_cost", False))
 
-            promo = self.promo_store.get(str(point.get("promo_scope_key", "")))
-            promo_value = ""
-            promo_currency = ""
-            if promo:
-                promo_type = str(promo.get("promo_type", "")).strip().lower()
-                promo_value = self._promo_value_for_currency(promo, currency)
-                promo_currency = currency if promo_type == "absolute" else ""
+            promo = self._promo_for_point(point, "EUR") or self._promo_for_point(point, "USD")
+            promo_value = float(promo.get("promo_value", 0) or 0) if promo else ""
 
             rows.append({
                 "Provider": "HT",
@@ -1738,50 +2154,52 @@ class EditorState:
                 "ISO3": point.get("iso3", ""),
                 "GB": point.get("gb", ""),
                 "Days": point.get("days", ""),
-                "Price": working_price,
-                "Currency": currency,
                 "Price_USD": price_usd,
                 "Price_EUR": price_eur,
-
                 "Plan": point.get("plan", ""),
                 "PricingUnitIdUsed": point.get("pricing_unit_id", ""),
                 "PricingSourceUsed": point.get("pricing_source", ""),
                 "PricingRegionUsed": point.get("pricing_region", ""),
                 "PricingUnitCountriesUsed": point.get("pricing_unit_countries", ""),
-
                 "PromoScopeKey": point.get("promo_scope_key", ""),
                 "PromoCode": promo.get("promo_code", "") if promo else "",
                 "PromoType": promo.get("promo_type", "") if promo else "",
                 "PromoValue": promo_value,
-                "PromoCurrency": promo_currency,
                 "PromoLabel": promo.get("promo_label", "") if promo else "",
-                "PromoBasePrice": working_price if promo else "",
-                "FinalPriceAfterPromo": final_price,
-
-                "CalculatedCostFloor": cost_floor,
-                "IsBelowCostFloor": final_price < cost_floor,
+                "PromoBasePrice": price_eur if promo else "",
+                "FinalPriceAfterPromo_EUR": final_eur,
+                "FinalPriceAfterPromo_USD": final_usd,
                 "CostFloor_USD": floors_by_currency.get("USD", ""),
                 "CostFloor_EUR": floors_by_currency.get("EUR", ""),
                 "USD_IsBelowCostFloor": bool(below_by_currency.get("USD", False)),
                 "EUR_IsBelowCostFloor": bool(below_by_currency.get("EUR", False)),
-                "IsPartnerExportBlocked": partner_blocked,
-                "PartnerExportBlockReason": point.get("partner_export_block_reason", ""),
+                "AllowBelowCost": allow_below_cost,
             })
 
-        out = pd.DataFrame(rows)
+        return pd.DataFrame(rows)
+
+    def export_prices_csv(self, path: str | Path, currency: str | None = None) -> None:
+        """Legacy CSV writer retained for backward compatibility."""
+        out = self.export_prices_dataframe()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         out.to_csv(path, index=False)
+
+    def export_prices_xlsx(self, path: str | Path) -> None:
+        """Write the canonical editable Excel price book."""
+        out = self.export_prices_dataframe()
+        write_pricing_workbook(out, path, promo_catalog=self.promo_catalog)
 
     def export_applied_promos_json(self, path: str | Path, currency: str | None = None) -> None:
         currency = normalize_currency(currency or self.active_currency)
         rows = []
-        for promo_key, promo in self.promo_store.items():
+        for promo_key, promo in self._promo_store_for(currency).items():
             promo_type = str(promo.get("promo_type", "")).strip().lower()
             rows.append({
                 "PromoScopeKey": promo_key,
                 "PromoCode": promo.get("promo_code", ""),
                 "PromoType": promo_type,
-                "PromoValue": self._promo_value_for_currency(promo, currency),
-                "PromoCurrency": currency if promo_type == "absolute" else "",
+                "PromoValue": float(promo.get("promo_value", 0) or 0),
                 "PromoLabel": promo.get("promo_label", ""),
             })
 
@@ -1789,3 +2207,4 @@ class EditorState:
             json.dumps(rows, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import pandas as pd
 from datetime import datetime
 
@@ -34,22 +33,6 @@ from PySide6.QtWidgets import (
 from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
 try:
-    from define_region_prices import (
-        configured_regions_for_country,
-        generate_region_prices_for_export_folder,
-        load_region_country_exclusions,
-        load_yaml,
-        save_region_country_exclusions,
-    )
-except ImportError:
-    from automation.define_region_prices import (
-        configured_regions_for_country,
-        generate_region_prices_for_export_folder,
-        load_region_country_exclusions,
-        load_yaml,
-        save_region_country_exclusions,
-    )
-try:
     from partner_export_pack import build_partner_price_pack
 except ImportError:
     from automation.partner_export_pack import build_partner_price_pack
@@ -76,7 +59,7 @@ BASE_DIR = FILES.base_dir
 PPG_PATH = FILES.ppg_csv
 PROMOS_PATH = FILES.promos_json
 SALES_VOLUME_PATH = FILES.sales_volumes_xlsx
-MAX_SAVED_EXPORT_DROPDOWN_DATES = 30
+MAX_SAVED_EXPORT_DROPDOWN_DATES = None
 
 
 class MainWindow(QMainWindow):
@@ -90,15 +73,8 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
         self.autosave_dirty = False
         self.autosave_in_progress = False
-        self.regions_data = (
-            load_yaml(FILES.regions_yaml)
-            if FILES.regions_yaml.exists()
-            else {}
-        )
-        self.region_country_exclusions = load_region_country_exclusions(
-            FILES.region_country_exclusions_json
-        )
-
+        self.selected_promo_code_for_range: str | None = None
+        self._promo_range_context_key: tuple[str, str] | None = None
         self._build_ui()
         self.statusBar().showMessage("Opening editor...")
         QTimer.singleShot(100, self.try_auto_load)
@@ -148,7 +124,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.splitter)
 
         self.side_panel = QScrollArea()
-        self.side_panel.setMinimumWidth(320)
+        self.side_panel.setMinimumWidth(380)
         self.side_panel.setWidgetResizable(True)
 
         self.side_panel_content = QWidget()
@@ -159,25 +135,6 @@ class MainWindow(QMainWindow):
 
         self.country_combo = QComboBox()
         self.country_combo.currentTextChanged.connect(self.on_country_changed)
-
-        self.exclude_all_regions_check = QCheckBox("Exclude from all regions")
-        self.exclude_all_regions_check.setTristate(False)
-        self.exclude_all_regions_check.setToolTip(
-            "Exclude the selected country from every regional pack in which it is configured."
-        )
-        self.exclude_all_regions_check.stateChanged.connect(
-            self.on_exclude_all_regions_changed
-        )
-
-        self.region_exclusion_list = QListWidget()
-        self.region_exclusion_list.setMinimumHeight(260)
-        self.region_exclusion_list.setMaximumHeight(420)
-        self.region_exclusion_list.setToolTip(
-            "Checked regions will not include the selected country in regional packs."
-        )
-        self.region_exclusion_list.itemChanged.connect(
-            self.on_region_exclusion_changed
-        )
 
         self.saved_state_combo = QComboBox()
         self.saved_state_combo.setPlaceholderText("Select exported date")
@@ -330,7 +287,7 @@ class MainWindow(QMainWindow):
         baseline_grid.addWidget(use_baseline_unit_btn, 1, 0)
         baseline_grid.addWidget(use_loaded_unit_btn, 1, 1)
 
-        export_btn = QPushButton("💾 Export HT prices csv")
+        export_btn = QPushButton("💾 Save pricing")
         export_btn.clicked.connect(self.export_prices)
 
         export_pdf_btn = QPushButton("📄 Export PDF report")
@@ -357,18 +314,54 @@ class MainWindow(QMainWindow):
         self.selection_label.setWordWrap(True)
 
         self.promo_list = QListWidget()
+        self.promo_list.setMinimumHeight(100)
+        self.promo_list.setMaximumHeight(160)
         self.promo_list.itemClicked.connect(self.apply_promo)
+
+        self.promo_range_selected_label = QLabel("Selected promo: —")
+        self.promo_range_selected_label.setWordWrap(True)
+
+        self.promo_from_combo = QComboBox()
+        self.promo_to_combo = QComboBox()
+
+        promo_range_grid = QGridLayout()
+        promo_range_grid.setHorizontalSpacing(6)
+        promo_range_grid.setVerticalSpacing(4)
+        promo_range_grid.addWidget(QLabel("From"), 0, 0)
+        promo_range_grid.addWidget(self.promo_from_combo, 0, 1)
+        promo_range_grid.addWidget(QLabel("To"), 0, 2)
+        promo_range_grid.addWidget(self.promo_to_combo, 0, 3)
+
+        self.apply_promo_range_btn = QPushButton("Apply selected promo to range")
+        self.apply_promo_range_btn.clicked.connect(self.apply_selected_promo_to_range)
+        self.remove_promo_range_btn = QPushButton("Remove promo from range")
+        self.remove_promo_range_btn.clicked.connect(self.remove_promo_from_range)
+
+        promo_range_buttons = QHBoxLayout()
+        promo_range_buttons.addWidget(self.apply_promo_range_btn)
+        promo_range_buttons.addWidget(self.remove_promo_range_btn)
+
+        self.promo_range_box = QWidget()
+        promo_range_layout = QVBoxLayout(self.promo_range_box)
+        promo_range_layout.setContentsMargins(0, 0, 0, 0)
+        promo_range_layout.addWidget(self.promo_range_selected_label)
+        promo_range_layout.addLayout(promo_range_grid)
+        promo_range_layout.addLayout(promo_range_buttons)
 
         # Build left panel
         side_layout.addLayout(load_grid)
         side_layout.addLayout(currency_grid)
         side_layout.addWidget(self.currency_mode_banner)
 
-        side_layout.addWidget(QLabel("Country"))
+        side_layout.addWidget(QLabel("Country / Region"))
         side_layout.addWidget(self.country_combo)
-        side_layout.addWidget(QLabel("Exclude country from regional packs"))
-        side_layout.addWidget(self.exclude_all_regions_check)
-        side_layout.addWidget(self.region_exclusion_list, 1)
+
+        # Promo controls high in the panel for normal editing
+        side_layout.addWidget(QLabel("Promo range"))
+        side_layout.addWidget(self.promo_range_box)
+
+        side_layout.addWidget(QLabel("Promo options"))
+        side_layout.addWidget(self.promo_list)
 
         side_layout.addWidget(QLabel("Drag tools"))
         side_layout.addLayout(mode_row_1)
@@ -417,7 +410,6 @@ class MainWindow(QMainWindow):
             export_pdf_btn,
             # self.tool_help_label,
             QLabel("Selected point info"), self.selection_label,
-            QLabel("Promo options"), self.promo_list,
         ]:
             side_layout.addWidget(widget)
 
@@ -435,7 +427,7 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.canvas)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([320, 1100])
+        self.splitter.setSizes([380, 1100])
 
     def export_all_charts_pdf(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -572,9 +564,9 @@ class MainWindow(QMainWindow):
         *,
         timestamp: str,
         official: bool,
-        partner_zip: Path,
-        compare_timestamp: str | None,
-        pack_result,
+        partner_zip: Path | None = None,
+        compare_timestamp: str | None = None,
+        pack_result=None,
     ) -> None:
         path = self.export_metadata_path(timestamp)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -582,50 +574,55 @@ class MainWindow(QMainWindow):
             "date": timestamp,
             "official": bool(official),
             "exported_at": datetime.now().isoformat(timespec="seconds"),
-            "partner_zip_name": partner_zip.name,
-            "partner_zip_path": str(partner_zip),
+            "partner_pack_created": bool(official and partner_zip is not None),
+            "partner_zip_name": partner_zip.name if partner_zip is not None else "",
+            "partner_zip_path": str(partner_zip) if partner_zip is not None else "",
             "compare_date": compare_timestamp or "",
-            "price_files": [item.member_name for item in pack_result.files],
-            "diff_files": [item.member_name for item in pack_result.diff_files],
+            "price_files": [item.member_name for item in pack_result.files] if pack_result is not None else [],
+            "diff_files": [item.member_name for item in pack_result.diff_files] if pack_result is not None else [],
         }
         path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    def saved_state_timestamps(self, *, official_only: bool = True) -> list[str]:
-        timestamp_sets: list[set[str]] = []
+    def saved_state_timestamps(self, *, official_only: bool = False) -> list[str]:
+        # New consolidated history lives directly under history/.
+        timestamps: set[str] = set()
+        for suffix in (".xlsx", ".csv"):
+            timestamps.update({
+                ts for path in FILES.editor_history_root.glob(f"manual_prices_*{suffix}")
+                for ts in [self._history_timestamp(path, "manual_prices_", suffix)]
+                if ts
+            })
+
+        # Backward-compatible discovery of legacy EUR/USD history.
+        legacy_sets: list[set[str]] = []
         for currency in CURRENCIES:
-            history_dir = FILES.editor_history_dir(FILES.editor_exports_dir, currency)
-            price_timestamps = {
+            history_dir = FILES.editor_history_root / currency
+            legacy_sets.append({
                 ts for path in history_dir.glob("manual_prices_*.csv")
                 for ts in [self._history_timestamp(path, "manual_prices_", ".csv")]
                 if ts
-            }
-            promo_timestamps = {
-                ts for path in history_dir.glob("promos_*.json")
-                for ts in [self._history_timestamp(path, "promos_", ".json")]
-                if ts
-            }
-            timestamp_sets.append(price_timestamps & promo_timestamps)
+            })
+        if legacy_sets:
+            timestamps.update(set.intersection(*legacy_sets))
 
-        if not timestamp_sets:
-            return []
-        timestamps = sorted(set.intersection(*timestamp_sets), reverse=True)
+        ordered = sorted(timestamps, reverse=True)
         if official_only:
-            timestamps = [
-                ts for ts in timestamps
+            ordered = [
+                ts for ts in ordered
                 if self.read_export_metadata(ts).get("official") is True
             ]
-        return timestamps[:MAX_SAVED_EXPORT_DROPDOWN_DATES]
+        return ordered
 
     def refresh_saved_state_combo(self, selected_timestamp: str | None = None) -> None:
         if not hasattr(self, "saved_state_combo"):
             return
 
-        timestamps = self.saved_state_timestamps()
+        timestamps = self.saved_state_timestamps(official_only=False)
         self.saved_state_combo.blockSignals(True)
         self.saved_state_combo.clear()
         self.saved_state_combo.setEnabled(bool(timestamps))
         self.saved_state_combo.setPlaceholderText(
-            "Select official export" if timestamps else "No official export history"
+            "Select saved history" if timestamps else "No saved price history"
         )
 
         for timestamp in timestamps:
@@ -637,32 +634,68 @@ class MainWindow(QMainWindow):
         self.saved_state_combo.setCurrentIndex(selected_index)
         self.saved_state_combo.blockSignals(False)
 
-    def read_promos_from_folder(self, folder: str | Path, names: list[str]) -> tuple[bool, list[dict]]:
-        folder = Path(folder)
-        for currency in CURRENCIES:
-            path = find_currency_file(folder, currency, names)
-            if path is None:
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    data = [data]
-                if isinstance(data, list):
-                    return True, data
-            except Exception:
-                continue
-        return False, []
+    def augment_baseline_with_locked_regions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add locked region rows from the canonical current price book.
 
-    def load_promos_from_folder(self, folder: str | Path) -> list[dict]:
-        _found, data = self.read_promos_from_folder(folder, ["promos_current.json"])
-        return data
+        Country model proposals remain the baseline for country curves. Regions
+        are no longer generated by the model, so their canonical current rows
+        are appended as first-class editor destinations. If no model proposal is
+        available, the full canonical current price book becomes the baseline.
+        """
+        current_path = FILES.editor_exports_dir / "manual_prices_current.xlsx"
+        if not current_path.exists():
+            legacy = FILES.editor_exports_dir / "manual_prices_current.csv"
+            if legacy.exists():
+                current_path = legacy
+            else:
+                return df
+        current_df = load_table(
+            current_path,
+            currency_hint="EUR",
+            eur_to_usd=self.state.eur_to_usd,
+        )
+        if current_df.empty:
+            return df
+        if df.empty:
+            return current_df
+
+        region_rows = current_df[
+            current_df["PricingSourceUsed"].astype(str).str.strip().str.lower().eq("region_max")
+        ].copy()
+        if region_rows.empty:
+            return df
+
+        existing = set(df.get("sku_scope_key", pd.Series(dtype=str)).astype(str))
+        region_rows = region_rows[~region_rows["sku_scope_key"].astype(str).isin(existing)].copy()
+        if region_rows.empty:
+            return df
+
+        combined = pd.concat([df, region_rows], ignore_index=True, sort=False)
+        combined["row_id"] = combined.index.astype(str)
+        return combined
 
     def load_export_prices_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
-        df = self.load_currency_tables_from_folder(
-            folder,
-            ["manual_prices_current.csv", "model_proposal_latest.csv"],
-        )
+        folder = Path(folder)
+        consolidated = None
+        for name in ("manual_prices_current.xlsx", "manual_prices_current.csv", "model_proposal_latest.csv"):
+            candidate = folder / name
+            if candidate.exists():
+                consolidated = candidate
+                break
+
+        if consolidated is not None:
+            df = load_table(
+                consolidated,
+                currency_hint="EUR",
+                eur_to_usd=self.state.eur_to_usd,
+            )
+        else:
+            # Legacy read-only fallback. New saves never use currency folders.
+            df = self.load_currency_tables_from_folder(
+                folder,
+                ["manual_prices_current.xlsx", "manual_prices_current.csv", "model_proposal_latest.csv"],
+            )
+
         if df.empty:
             if not silent:
                 QMessageBox.warning(self, "Load failed", "No usable exported price rows found in that folder.")
@@ -672,37 +705,44 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
         return True
 
-    def load_export_promos_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
-        found, data = self.read_promos_from_folder(folder, ["promos_current.json"])
-        if not found:
-            if not silent:
-                QMessageBox.warning(self, "Load failed", "No usable exported promos found in that folder.")
-            return False
-
-        self.state.preload_last_exported_promos(data)
-        self.refresh_canvas()
-        return True
-
     def load_baseline(self):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Load baseline HT/model folder",
+            "Load current price-book folder",
         )
         if not folder:
             return
 
-        df = self.load_currency_tables_from_folder(
-            folder,
-            ["model_proposal_latest.csv", "manual_prices_current.csv"],
-        )
+        folder = Path(folder)
+        source = None
+        for name in ("manual_prices_current.xlsx", "manual_prices_current.csv"):
+            candidate = folder / name
+            if candidate.exists():
+                source = candidate
+                break
+
+        if source is not None:
+            df = load_table(
+                source,
+                currency_hint="EUR",
+                eur_to_usd=self.state.eur_to_usd,
+            )
+        else:
+            # Legacy fallback only. The model proposal is no longer the editor's
+            # structural baseline when a canonical current price book exists.
+            df = self.load_currency_tables_from_folder(
+                folder,
+                ["model_proposal_latest.csv"],
+            )
+
         if df.empty:
-            QMessageBox.warning(self, "Load failed", "No usable model rows found in that folder.")
+            QMessageBox.warning(self, "Load failed", "No usable current price book found.")
             return
 
+        # The current price book is authoritative for both the set of points and
+        # their current values/promos/overrides.
         self.state.preload_baseline(df)
-
-        if not self.load_export_prices_from_folder(FILES.editor_exports_dir, silent=True):
-            self.state.reload_working_from_baseline()
+        self.state.preload_last_export(df)
 
         self.populate_combos()
         self.refresh_canvas()
@@ -732,30 +772,36 @@ class MainWindow(QMainWindow):
 
     def load_saved_state_timestamp(self, timestamp: str, selected_label: str | None = None) -> bool:
         if not self.state.row_index:
-            QMessageBox.warning(self, "Load saved state", "Load a model proposal before loading a saved state.")
+            QMessageBox.warning(self, "Load saved state", "Load the current price book before loading a saved state.")
             return False
 
         timestamp = str(timestamp).strip()
         selected_label = selected_label or self.export_history_label(timestamp)
-        history_root = FILES.editor_history_root
-        df = self.load_currency_tables_from_folder(
-            history_root,
-            [f"manual_prices_{timestamp}.csv"],
-        )
+        consolidated = FILES.editor_history_root / f"manual_prices_{timestamp}.xlsx"
+        if not consolidated.exists():
+            legacy_consolidated = FILES.editor_history_root / f"manual_prices_{timestamp}.csv"
+            consolidated = legacy_consolidated if legacy_consolidated.exists() else consolidated
+        if consolidated.exists():
+            df = load_table(
+                consolidated,
+                currency_hint="EUR",
+                eur_to_usd=self.state.eur_to_usd,
+            )
+        else:
+            df = self.load_currency_tables_from_folder(
+                FILES.editor_history_root,
+                [f"manual_prices_{timestamp}.csv"],
+            )
+
         if df.empty:
             QMessageBox.warning(self, "Load saved state", "Could not load saved prices for that date.")
             return False
 
-        found_promos, promos = self.read_promos_from_folder(
-            history_root,
-            [f"promos_{timestamp}.json"],
-        )
-        if not found_promos:
-            QMessageBox.warning(self, "Load saved state", "Could not load saved promos for that date.")
-            return False
-
+        # A history snapshot is a complete historical price book, not merely an
+        # overlay on today's structure. Rebuild the editor from the snapshot so
+        # rows that existed then cannot be suppressed by today's price book.
+        self.state.preload_baseline(df)
         self.state.preload_last_export(df)
-        self.state.preload_last_exported_promos(promos)
         self.populate_combos()
         self.autosave_dirty = False
         self.refresh_canvas()
@@ -771,7 +817,11 @@ class MainWindow(QMainWindow):
         self.load_saved_state_timestamp(str(timestamp), self.saved_state_combo.itemText(index))
 
     def select_partner_compare_timestamp(self, current_timestamp: str) -> str | None:
-        timestamps = [ts for ts in self.saved_state_timestamps() if ts != current_timestamp]
+        # Partner packs are official outputs, so compare only with prior official snapshots.
+        timestamps = [
+            ts for ts in self.saved_state_timestamps(official_only=True)
+            if ts != current_timestamp
+        ]
         if not timestamps:
             return None
 
@@ -780,7 +830,7 @@ class MainWindow(QMainWindow):
         selected_label, ok = QInputDialog.getItem(
             self,
             "Compare partner pack",
-            "Compare exported prices with official date:",
+            "Compare partner prices with previous official date:",
             labels,
             0,
             False,
@@ -791,10 +841,12 @@ class MainWindow(QMainWindow):
 
     def ask_official_export(self) -> bool | None:
         message = QMessageBox(self)
-        message.setWindowTitle("Partner pack status")
-        message.setText("Export partner price pack")
-        message.setInformativeText("Tick only if these prices are official.")
-        official_check = QCheckBox("Mark this export as official prices")
+        message.setWindowTitle("Save pricing state")
+        message.setText("Save current prices and history")
+        message.setInformativeText(
+            "If this snapshot is official, a partner pack will also be created."
+        )
+        official_check = QCheckBox("Make this snapshot official and create partner pack")
         official_check.setChecked(False)
         message.setCheckBox(official_check)
         message.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
@@ -896,60 +948,26 @@ class MainWindow(QMainWindow):
     ) -> str:
         export_dir = Path(export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
-
         ts = timestamp or datetime.now().strftime("%Y%m%d")
 
-        for currency in CURRENCIES:
-            currency_dir = export_dir / currency
-            currency_dir.mkdir(parents=True, exist_ok=True)
+        if autosave:
+            # Recovery snapshots stay lightweight CSVs.
+            prices_path = export_dir / "manual_prices_autosave.csv"
+            self.state.export_prices_csv(prices_path)
+        else:
+            # The manually maintained current price book is the rich Excel workbook.
+            prices_path = export_dir / "manual_prices_current.xlsx"
+            self.state.export_prices_xlsx(prices_path)
 
-            if autosave:
-                prices_path = currency_dir / "manual_prices_autosave.csv"
-                promos_path = currency_dir / "promos_autosave.json"
-            else:
-                prices_path = currency_dir / "manual_prices_current.csv"
-                promos_path = currency_dir / "promos_current.json"
-
-            self.state.export_prices_csv(prices_path, currency=currency)
-            self.state.export_applied_promos_json(promos_path, currency=currency)
-
-            if include_history:
-                currency_history_dir = FILES.editor_history_dir(export_dir, currency)
-                currency_history_dir.mkdir(parents=True, exist_ok=True)
-                self.state.export_prices_csv(currency_history_dir / f"manual_prices_{ts}.csv", currency=currency)
-                self.state.export_applied_promos_json(currency_history_dir / f"promos_{ts}.json", currency=currency)
+        if include_history:
+            # History is an immutable data snapshot; it does not need workbook UX/formulas.
+            FILES.editor_history_root.mkdir(parents=True, exist_ok=True)
+            self.state.export_prices_csv(
+                FILES.editor_history_root / f"manual_prices_{ts}.csv"
+            )
 
         return ts
 
-    def save_region_prices_to_folder(
-        self,
-        export_dir: Path,
-        *,
-        include_history: bool = False,
-        timestamp: str | None = None,
-    ):
-        export_dir = Path(export_dir)
-        results = generate_region_prices_for_export_folder(
-            export_dir,
-            regions_yaml=FILES.regions_yaml,
-            region_exclusions_json=FILES.region_country_exclusions_json,
-        )
-        if include_history:
-            ts = timestamp or datetime.now().strftime("%Y%m%d")
-            for result in results:
-                history_dir = FILES.editor_history_dir(export_dir, result.currency)
-                history_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(result.output_csv, history_dir / f"region_prices_{ts}.csv")
-
-            membership_current = export_dir / "region_membership_current.json"
-            if membership_current.exists():
-                FILES.editor_history_root.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(
-                    membership_current,
-                    FILES.editor_history_root / f"region_membership_{ts}.json",
-                )
-        return results
-        
     def quick_save(self):
         try:
             export_dir = FILES.editor_exports_dir
@@ -987,39 +1005,79 @@ class MainWindow(QMainWindow):
             official_export = self.ask_official_export()
             if official_export is None:
                 return
-            export_status = "OFFICIAL" if official_export else "DRAFT"
+
             ts = datetime.now().strftime("%Y%m%d")
-            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
-            if not official_export:
-                default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}_DRAFT.zip"
-            partner_pack_dir = self.partner_pack_dir_for_status(official_export)
-            partner_pack_dir.mkdir(parents=True, exist_ok=True)
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                f"Save {export_status.lower()} price pack ZIP",
-                str(partner_pack_dir / default_zip),
-                "Zip files (*.zip)"
-            )
-            if not path:
-                return
-
-            zip_path = Path(path)
-            zip_path = self.partner_zip_path_in_status_folder(zip_path, official_export)
             local_export_dir = FILES.editor_exports_dir
-            compare_timestamp = self.select_partner_compare_timestamp(ts)
 
-            self.statusBar().showMessage("Saving local export, history, promos, and regions...")
+            self.statusBar().showMessage("Saving consolidated prices, autosave and history...")
             self.clear_busy_cursor()
             QApplication.setOverrideCursor(Qt.WaitCursor)
             cursor_active = True
             QApplication.processEvents()
 
-            ts = self.save_exports_to_folder(local_export_dir, include_history=True, timestamp=ts)
-            region_results = self.save_region_prices_to_folder(
+            # Every explicit save writes the canonical current file, autosave and history.
+            ts = self.save_exports_to_folder(
                 local_export_dir,
                 include_history=True,
                 timestamp=ts,
             )
+            self.save_exports_to_folder(
+                FILES.editor_autosave_dir,
+                autosave=True,
+                timestamp=ts,
+            )
+
+            if not official_export:
+                self.save_export_metadata(
+                    timestamp=ts,
+                    official=False,
+                )
+                self.autosave_dirty = False
+                self.refresh_saved_state_combo(selected_timestamp=ts)
+
+                QApplication.restoreOverrideCursor()
+                cursor_active = False
+                QMessageBox.information(
+                    self,
+                    "Save complete",
+                    "Current prices, autosave and history were saved.\n\n"
+                    "This snapshot was not marked official, so no partner pack was created.",
+                )
+                self.statusBar().showMessage(
+                    "Save complete: current, autosave and history saved; no partner pack created."
+                )
+                return
+
+            # Official snapshots additionally create the partner pack.
+            compare_timestamp = self.select_partner_compare_timestamp(ts)
+            default_zip = f"TT_prices_{datetime.now().strftime('%y%m%d')}.zip"
+            partner_pack_dir = self.partner_pack_dir_for_status(True)
+            partner_pack_dir.mkdir(parents=True, exist_ok=True)
+
+            # Release the wait cursor while the native save dialog is open.
+            QApplication.restoreOverrideCursor()
+            cursor_active = False
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save official partner price pack ZIP",
+                str(partner_pack_dir / default_zip),
+                "Zip files (*.zip)",
+            )
+            if not path:
+                # Pricing state is already saved. Keep it non-official if partner-pack creation is cancelled.
+                self.save_export_metadata(timestamp=ts, official=False)
+                self.refresh_saved_state_combo(selected_timestamp=ts)
+                self.statusBar().showMessage(
+                    "Prices saved, but partner-pack creation was cancelled; snapshot remains non-official."
+                )
+                return
+
+            zip_path = self.partner_zip_path_in_status_folder(Path(path), True)
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            cursor_active = True
+            QApplication.processEvents()
+
             pack_result = build_partner_price_pack(
                 local_export_dir,
                 zip_path,
@@ -1031,13 +1089,13 @@ class MainWindow(QMainWindow):
             )
             self.save_export_metadata(
                 timestamp=ts,
-                official=official_export,
+                official=True,
                 partner_zip=pack_result.zip_path,
                 compare_timestamp=compare_timestamp,
                 pack_result=pack_result,
             )
             self.autosave_dirty = False
-            self.refresh_saved_state_combo(selected_timestamp=ts if official_export else None)
+            self.refresh_saved_state_combo(selected_timestamp=ts)
 
             QApplication.restoreOverrideCursor()
             cursor_active = False
@@ -1053,21 +1111,19 @@ class MainWindow(QMainWindow):
                 f"{result.member_name}: {result.rows_written} changed rows"
                 for result in pack_result.diff_files
             ]
-            excluded = sorted({country for result in region_results for country in result.excluded_countries})
-            excluded_text = ", ".join(excluded) if excluded else "none"
             diff_text = "\n\nDiff CSVs:\n" + "\n".join(diff_lines) if diff_lines else ""
             QMessageBox.information(
                 self,
-                "Export complete",
-                f"Local latest files and history were saved in:\n{local_export_dir}\n\n"
-                f"The clean partner ZIP was saved as:\n{pack_result.zip_path}\n"
-                f"Official status: {export_status}\n\n"
+                "Official export complete",
+                f"Current prices, autosave and history were saved.\n\n"
+                f"The official partner ZIP was saved as:\n{pack_result.zip_path}\n\n"
                 f"CSV files inside ZIP: {len(pack_result.files)}\n"
                 + "\n".join(pack_lines)
-                + diff_text
-                + f"\n\nExcluded countries due to cost floor: {excluded_text}",
+                + diff_text,
             )
-            self.statusBar().showMessage("Export complete: local history saved and clean ZIP pack created.")
+            self.statusBar().showMessage(
+                "Official export complete: pricing history saved and partner pack created."
+            )
 
         except Exception as e:
             QMessageBox.warning(self, "Export failed", f"Could not save export: {e}")
@@ -1080,7 +1136,13 @@ class MainWindow(QMainWindow):
     def populate_combos(self):
         self.country_combo.blockSignals(True)
         self.country_combo.clear()
-        self.country_combo.addItems(self.state.countries())
+        countries = self.state.country_destinations()
+        regions = self.state.region_destinations()
+        self.country_combo.addItems(countries)
+        if countries and regions:
+            self.country_combo.insertSeparator(self.country_combo.count())
+        if regions:
+            self.country_combo.addItems(regions)
 
         if self.state.selected_country:
             idx = self.country_combo.findText(self.state.selected_country)
@@ -1210,139 +1272,22 @@ class MainWindow(QMainWindow):
         )
         self.official_cost_rate_label.setText(rate.label)
 
-    def selected_country_iso(self) -> str:
-        points = self.state.current_points()
-        if not points:
-            return ""
-        return str(points[0].get("iso", "")).strip().upper()
-
-    def refresh_region_exclusion_list(self) -> None:
-        if not hasattr(self, "region_exclusion_list"):
-            return
-
-        country_code = self.selected_country_iso()
-        self.region_exclusion_list.blockSignals(True)
-        self.exclude_all_regions_check.blockSignals(True)
-        self.region_exclusion_list.clear()
-
-        if not country_code or not self.regions_data:
-            self.region_exclusion_list.setEnabled(False)
-            self.exclude_all_regions_check.setEnabled(False)
-            self.exclude_all_regions_check.setChecked(False)
-            self.region_exclusion_list.blockSignals(False)
-            self.exclude_all_regions_check.blockSignals(False)
-            return
-
-        configured_regions = configured_regions_for_country(
-            country_code,
-            self.regions_data,
-        )
-        excluded_regions = set(
-            self.region_country_exclusions.get(country_code, [])
-        )
-
-        has_regions = bool(configured_regions)
-        self.region_exclusion_list.setEnabled(has_regions)
-        self.exclude_all_regions_check.setEnabled(has_regions)
-        for region_name in configured_regions:
-            item = QListWidgetItem(region_name)
-            item.setData(Qt.UserRole, region_name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(
-                Qt.Checked
-                if region_name in excluded_regions
-                else Qt.Unchecked
-            )
-            self.region_exclusion_list.addItem(item)
-
-        self.exclude_all_regions_check.setChecked(
-            has_regions and set(configured_regions).issubset(excluded_regions)
-        )
-        self.region_exclusion_list.blockSignals(False)
-        self.exclude_all_regions_check.blockSignals(False)
-
-    def on_region_exclusion_changed(self, item: QListWidgetItem) -> None:
-        country_code = self.selected_country_iso()
-        region_name = str(item.data(Qt.UserRole) or item.text()).strip()
-        if not country_code or not region_name:
-            return
-
-        excluded = set(self.region_country_exclusions.get(country_code, []))
-        if item.checkState() == Qt.Checked:
-            excluded.add(region_name)
-        else:
-            excluded.discard(region_name)
-
-        if excluded:
-            self.region_country_exclusions[country_code] = sorted(excluded)
-        else:
-            self.region_country_exclusions.pop(country_code, None)
-
-        save_region_country_exclusions(
-            FILES.region_country_exclusions_json,
-            self.region_country_exclusions,
-        )
-        action = "excluded from" if item.checkState() == Qt.Checked else "allowed in"
-        self.statusBar().showMessage(
-            f"{country_code} {action} {region_name}; setting saved permanently."
-        )
-
-        configured_regions = {
-            str(self.region_exclusion_list.item(index).data(Qt.UserRole) or "").strip()
-            for index in range(self.region_exclusion_list.count())
-        }
-        self.exclude_all_regions_check.blockSignals(True)
-        self.exclude_all_regions_check.setChecked(
-            bool(configured_regions) and configured_regions.issubset(excluded)
-        )
-        self.exclude_all_regions_check.blockSignals(False)
-
-    def on_exclude_all_regions_changed(self, state: int) -> None:
-        country_code = self.selected_country_iso()
-        if not country_code:
-            return
-
-        configured_regions = [
-            str(self.region_exclusion_list.item(index).data(Qt.UserRole) or "").strip()
-            for index in range(self.region_exclusion_list.count())
-        ]
-        configured_regions = [region for region in configured_regions if region]
-        if not configured_regions:
-            return
-
-        # Read the checkbox directly. PySide6's stateChanged signal supplies an
-        # integer, while Qt.Checked may be an enum depending on the Qt version.
-        exclude_all = self.exclude_all_regions_check.isChecked()
-        excluded = set(self.region_country_exclusions.get(country_code, []))
-        if exclude_all:
-            excluded.update(configured_regions)
-        else:
-            excluded.difference_update(configured_regions)
-
-        if excluded:
-            self.region_country_exclusions[country_code] = sorted(excluded)
-        else:
-            self.region_country_exclusions.pop(country_code, None)
-
-        self.region_exclusion_list.blockSignals(True)
-        for index in range(self.region_exclusion_list.count()):
-            self.region_exclusion_list.item(index).setCheckState(
-                Qt.Checked if exclude_all else Qt.Unchecked
-            )
-        self.region_exclusion_list.blockSignals(False)
-
-        save_region_country_exclusions(
-            FILES.region_country_exclusions_json,
-            self.region_country_exclusions,
-        )
-        action = "excluded from all configured regions" if exclude_all else "allowed in all configured regions"
-        self.statusBar().showMessage(
-            f"{country_code} {action}; setting saved permanently."
-        )
-
     def on_country_changed(self, country: str):
         self.state.selected_country = country
-        self.refresh_region_exclusion_list()
+
+        # Promo range requires a selected Plan/price point.
+        # Automatically select the first point when changing country.
+        points = self.state.current_points()
+        current = self.state.selected_point_info()
+
+        if (
+            not current
+            or str(current.get("country", "")).strip() != str(country).strip()
+        ):
+            self.state.selected_row_id = (
+                str(points[0]["row_id"]) if points else None
+            )
+
         self.refresh_canvas()
 
     def refresh_canvas(self):
@@ -1357,22 +1302,25 @@ class MainWindow(QMainWindow):
             self.state.selected_row_id,
             title=f"{self.state.selected_country or ''} ({self.state.active_currency})",
         )
+
         self.refresh_currency_visuals()
-        self.refresh_region_exclusion_list()
         self.refresh_promo_list()
+        self.refresh_promo_range_controls()
         self.refresh_selection_label()
         self.country_info_label.setText(self.state.country_info())
         self.refresh_impact_labels()
         
 
     def on_point_selected(self, row_id: str):
-        self.state.selected_row_id = row_id
+        self.state.selected_row_id = str(row_id)
+        self.refresh_promo_range_controls()
         self.refresh_canvas()
 
     def on_promo_selected_from_chart(self, promo_code: str):
         if promo_code == "__REMOVE_PROMO__":
             self.state.remove_selected_promo()
         else:
+            self.selected_promo_code_for_range = str(promo_code)
             self.state.assign_promo_to_selected(str(promo_code))
 
         self.mark_dirty()
@@ -1440,46 +1388,228 @@ class MainWindow(QMainWindow):
 
         info = self.state.selected_point_info()
 
-        if info:
-            promo_key = str(info.get("promo_scope_key", "")).strip()
-            has_promo = promo_key in self.state.promo_store
+        if info and self.state.has_promo_for_selected():
+            item = QListWidgetItem("✖  REMOVE APPLIED PROMO")
+            item.setData(Qt.UserRole, "__REMOVE_PROMO__")
 
-            if has_promo:
-                item = QListWidgetItem("✖  REMOVE APPLIED PROMO")
-                item.setData(Qt.UserRole, "__REMOVE_PROMO__")
+            font = QFont()
+            font.setPointSize(12)
+            font.setBold(True)
+            item.setFont(font)
+            item.setForeground(QColor("#c62828"))
 
-                font = QFont()
-                font.setPointSize(12)
-                font.setBold(True)
-                item.setFont(font)
-                item.setForeground(QColor("#c62828"))
+            self.promo_list.addItem(item)
 
-                self.promo_list.addItem(item)
-
+        selected_row = -1
         for promo in self.state.promo_candidates_for_selected():
             item = QListWidgetItem(
                 f"{promo['promo_label']}  ->  {promo['final_price_after_promo']:.2f} {self.state.active_currency}"
             )
             item.setData(Qt.UserRole, promo["promo_code"])
             self.promo_list.addItem(item)
+            if promo["promo_code"] == self.selected_promo_code_for_range:
+                selected_row = self.promo_list.count() - 1
+
+        if selected_row >= 0:
+            self.promo_list.setCurrentRow(selected_row)
+
+    @staticmethod
+    def _promo_day_label(day: float) -> str:
+        day = float(day)
+        return str(int(day)) if day.is_integer() else f"{day:g}"
+
+    def refresh_promo_range_controls(self) -> None:
+        if not hasattr(self, "promo_from_combo"):
+            return
+
+        info = self.state.selected_point_info()
+
+        # No selected price point = no Plan/range context
+        if not info:
+            self.promo_from_combo.blockSignals(True)
+            self.promo_to_combo.blockSignals(True)
+
+            self.promo_from_combo.clear()
+            self.promo_to_combo.clear()
+
+            self.promo_from_combo.setEnabled(False)
+            self.promo_to_combo.setEnabled(False)
+            self.apply_promo_range_btn.setEnabled(False)
+            self.remove_promo_range_btn.setEnabled(False)
+
+            self.promo_from_combo.blockSignals(False)
+            self.promo_to_combo.blockSignals(False)
+
+            self._promo_range_context_key = None
+
+            currency_scope = "EUR + USD"
+            promo_text = self.selected_promo_code_for_range or "—"
+            self.promo_range_selected_label.setText(
+                f"Selected promo: {promo_text} | "
+                f"Plan: — | Applies to: {currency_scope}"
+            )
+            return
+
+        # Determine context directly from the selected blue point.
+        selected_unit = str(info.get("pricing_unit_id", "")).strip()
+        selected_plan = str(info.get("plan", "")).strip()
+
+        context_key = (selected_unit, selected_plan)
+
+        # Find all available durations for this exact Plan + pricing unit.
+        days = sorted({
+            float(point.get("days"))
+            for point in self.state.current_points()
+            if point.get("days") is not None
+            and str(point.get("plan", "")).strip() == selected_plan
+            and str(point.get("pricing_unit_id", "")).strip() == selected_unit
+        })
+
+        old_from = self.promo_from_combo.currentData()
+        old_to = self.promo_to_combo.currentData()
+
+        preserve = context_key == self._promo_range_context_key
+
+        self.promo_from_combo.blockSignals(True)
+        self.promo_to_combo.blockSignals(True)
+
+        self.promo_from_combo.clear()
+        self.promo_to_combo.clear()
+
+        for day in days:
+            label = self._promo_day_label(day)
+            self.promo_from_combo.addItem(label, day)
+            self.promo_to_combo.addItem(label, day)
+
+        enabled = bool(days)
+
+        self.promo_from_combo.setEnabled(enabled)
+        self.promo_to_combo.setEnabled(enabled)
+
+        self.remove_promo_range_btn.setEnabled(enabled)
+
+        has_selected_promo = bool(self.selected_promo_code_for_range)
+        self.apply_promo_range_btn.setEnabled(
+            enabled and has_selected_promo
+        )
+
+        if days:
+            # Preserve the range while staying on the same Plan.
+            # When changing Plan/country, default to the complete available range.
+            if preserve and old_from in days:
+                from_day = float(old_from)
+            else:
+                from_day = days[0]
+
+            if preserve and old_to in days:
+                to_day = float(old_to)
+            else:
+                to_day = days[-1]
+
+            from_idx = self.promo_from_combo.findData(from_day)
+            to_idx = self.promo_to_combo.findData(to_day)
+
+            self.promo_from_combo.setCurrentIndex(
+                from_idx if from_idx >= 0 else 0
+            )
+            self.promo_to_combo.setCurrentIndex(
+                to_idx if to_idx >= 0 else len(days) - 1
+            )
+
+        self.promo_from_combo.blockSignals(False)
+        self.promo_to_combo.blockSignals(False)
+
+        self._promo_range_context_key = context_key
+
+        promo_text = self.selected_promo_code_for_range or "—"
+        currency_scope = "EUR + USD"
+        plan_text = display_plan_label(selected_plan)
+
+        self.promo_range_selected_label.setText(
+            f"Selected promo: {promo_text} | "
+            f"Plan: {plan_text} | Applies to: {currency_scope}"
+        )
+
+    def _selected_promo_range(self) -> tuple[float, float] | None:
+        start = self.promo_from_combo.currentData()
+        end = self.promo_to_combo.currentData()
+        if start is None or end is None:
+            return None
+        return float(start), float(end)
+
+    def apply_selected_promo_to_range(self) -> None:
+        promo_code = str(self.selected_promo_code_for_range or "").strip()
+        if not promo_code:
+            QMessageBox.information(
+                self,
+                "Promo range",
+                "Select a promo from Promo options first.",
+            )
+            return
+
+        day_range = self._selected_promo_range()
+        if day_range is None:
+            return
+
+        start_day, end_day = day_range
+        affected = self.state.assign_promo_to_range(promo_code, start_day, end_day)
+        if affected <= 0:
+            QMessageBox.information(
+                self,
+                "Promo range",
+                "No matching price points were found for this plan and duration range.",
+            )
+            return
+
+        self.mark_dirty()
+        self.refresh_canvas()
+        scope = "EUR + USD"
+        self.statusBar().showMessage(
+            f"Applied {promo_code} to {affected} price points from "
+            f"{self._promo_day_label(start_day)} to {self._promo_day_label(end_day)} days ({scope})."
+        )
+
+    def remove_promo_from_range(self) -> None:
+        day_range = self._selected_promo_range()
+        if day_range is None:
+            return
+
+        start_day, end_day = day_range
+        affected = self.state.remove_promo_from_range(start_day, end_day)
+        self.mark_dirty()
+        self.refresh_canvas()
+        scope = "EUR + USD"
+        self.statusBar().showMessage(
+            f"Removed promos from {affected} price points from "
+            f"{self._promo_day_label(start_day)} to {self._promo_day_label(end_day)} days ({scope})."
+        )
 
     def apply_promo(self, item: QListWidgetItem):
         promo_code = item.data(Qt.UserRole)
 
         if promo_code == "__REMOVE_PROMO__":
             self.state.remove_selected_promo()
-        else:
-            self.state.assign_promo_to_selected(str(promo_code))
+            self.selected_promo_code_for_range = None
+            self.mark_dirty()
+            self.refresh_canvas()
+            return
 
-        self.mark_dirty()
-        self.refresh_canvas()
+        # Only select the promo here.
+        # Do not apply it yet to the selected price point.
+        self.selected_promo_code_for_range = str(promo_code)
+
+        self.refresh_promo_range_controls()
+
+        self.statusBar().showMessage(
+            f"Selected promo for range: {self.selected_promo_code_for_range}"
+        )
 
     def toggle_left_panel(self):
         if self._left_panel_collapsed:
             self.side_panel.show()
-            self.side_panel.setMinimumWidth(320)
+            self.side_panel.setMinimumWidth(380)
             self.side_panel.setMaximumWidth(16777215)
-            self.splitter.setSizes([320, 1100])
+            self.splitter.setSizes([380, 1100])
             self.toggle_side_btn.setText("◀")
             self._left_panel_collapsed = False
         else:
@@ -1540,17 +1670,35 @@ class MainWindow(QMainWindow):
             progress("Loading promo catalog...")
             self.state.promo_catalog = load_promos(PROMOS_PATH)
 
-        progress("Loading model proposal...")
-        df = self.load_currency_tables_from_folder(
-            FILES.proposals_dir,
-            ["model_proposal_latest.csv"],
-        )
-        if not df.empty:
-            progress("Preparing model proposal...")
-            self.state.preload_baseline(df)
+        progress("Loading current price book...")
+        current_path = FILES.editor_exports_dir / "manual_prices_current.xlsx"
+        if not current_path.exists():
+            legacy_current = FILES.editor_exports_dir / "manual_prices_current.csv"
+            current_path = legacy_current if legacy_current.exists() else current_path
 
-            progress("Loading last local export...")
-            if not self.load_export_prices_from_folder(FILES.editor_exports_dir, silent=True):
+        if current_path.exists():
+            df = load_table(
+                current_path,
+                currency_hint="EUR",
+                eur_to_usd=self.state.eur_to_usd,
+            )
+            if not df.empty:
+                progress("Preparing current price book...")
+                # The canonical current workbook defines the complete editor
+                # structure. Do not let model_proposal_latest.csv decide which
+                # points exist or overwrite manually maintained prices.
+                self.state.preload_baseline(df)
+                self.state.preload_last_export(df)
+        else:
+            # First-run / legacy fallback only. Once manual_prices_current exists,
+            # model proposals are reference data rather than the editor baseline.
+            progress("Current price book not found; loading legacy model proposal...")
+            df = self.load_currency_tables_from_folder(
+                FILES.proposals_dir,
+                ["model_proposal_latest.csv"],
+            )
+            if not df.empty:
+                self.state.preload_baseline(df)
                 self.state.reload_working_from_baseline()
 
         progress("Loading competitor market data...")
@@ -1569,8 +1717,6 @@ class MainWindow(QMainWindow):
             if not sales_df.empty:
                 self.state.preload_sales_volumes(sales_df)
 
-        progress("Loading exported promos...")
-        self.load_export_promos_from_folder(FILES.editor_exports_dir, silent=True)
         self.refresh_saved_state_combo()
 
         if self.state.countries():
@@ -1580,7 +1726,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Auto-loaded available files.")
         else:
             self.statusBar().showMessage(
-                "Auto-load found nothing usable. Check imported proposal and market files."
+                "Auto-load found nothing usable. Check the current price book and market files."
             )
         self.autosave_dirty = False
 

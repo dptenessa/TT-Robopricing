@@ -317,11 +317,39 @@ def configured_regions_for_country(
 
 
 def _required_columns(fieldnames: list[str]) -> None:
-    required = {"ISO", "Days", "Plan", "FinalPriceAfterPromo"}
+    required = {
+        "ISO", "Days", "Plan", "GB",
+        "Price_USD", "Price_EUR",
+        "CostFloor_USD", "CostFloor_EUR",
+    }
     missing = required - set(fieldnames)
     if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
+        raise ValueError(f"Missing required consolidated pricing columns: {sorted(missing)}")
 
+    for currency in CURRENCIES:
+        final_col = f"FinalPriceAfterPromo_{currency}"
+        if final_col not in fieldnames:
+            raise ValueError(f"Missing required consolidated pricing column: {final_col}")
+
+
+def _currency_rows_from_consolidated(
+    rows: list[dict[str, Any]],
+    currency: str,
+) -> list[dict[str, Any]]:
+    """Create an in-memory one-currency view without persisting duplicate files."""
+    currency = normalize_currency(currency)
+    out: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        row["Currency"] = currency
+        row["Price"] = source.get(f"Price_{currency}", "")
+        row["FinalPriceAfterPromo"] = source.get(
+            f"FinalPriceAfterPromo_{currency}",
+            source.get(f"Price_{currency}", ""),
+        )
+        row["IsBelowCostFloor"] = source.get(f"{currency}_IsBelowCostFloor", False)
+        out.append(row)
+    return out
 
 def _is_below_cost(row: dict[str, Any]) -> bool:
     return (
@@ -352,7 +380,11 @@ def _read_pricing_rows(path: str | Path) -> tuple[list[dict[str, Any]], list[str
     dialect = detect_dialect(path)
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f, dialect=dialect)
-        return list(reader), list(reader.fieldnames or [])
+        rows = [
+            row for row in reader
+            if any(str(value if value is not None else "").strip() for value in row.values())
+        ]
+        return rows, list(reader.fieldnames or [])
 
 
 def _row_final_price(row: dict[str, Any]) -> float:
@@ -408,6 +440,15 @@ def _cost_floor_for_currency(row: dict[str, Any], currency: str) -> float | None
 
 
 
+def _below_cost_override_key(row: dict[str, Any]) -> str:
+    return "|".join([
+        _country_code(row.get("ISO", "")),
+        str(row.get("Plan", "") or "").strip().upper(),
+        _normalized_key_part(row.get("Days", "")),
+        _normalized_key_part(row.get("GB", "")),
+    ])
+
+
 def _is_unlimited_30d_sku(sku_key: tuple[str, str, str]) -> bool:
     _provider, plan, days = sku_key
     plan_text = str(plan).strip().lower()
@@ -426,15 +467,23 @@ def _country_valid_skus(
     price_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
     floor_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
     required_currencies: list[str],
+    below_cost_override_country_skus: set[tuple[str, tuple[str, str, str]]] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Return SKUs whose own prices pass own floors in all currencies."""
     valid_skus: set[tuple[str, str, str]] = set()
+    overrides = below_cost_override_country_skus or set()
     for sku_key in sku_keys:
+        overridden = (country, sku_key) in overrides
         if all(
             price_by_currency_country_sku.get(currency, {}).get((country, sku_key)) is not None
-            and floor_by_currency_country_sku.get(currency, {}).get((country, sku_key)) is not None
-            and price_by_currency_country_sku[currency][(country, sku_key)]
-            >= floor_by_currency_country_sku[currency][(country, sku_key)]
+            and (
+                overridden
+                or (
+                    floor_by_currency_country_sku.get(currency, {}).get((country, sku_key)) is not None
+                    and price_by_currency_country_sku[currency][(country, sku_key)]
+                    >= floor_by_currency_country_sku[currency][(country, sku_key)]
+                )
+            )
             for currency in required_currencies
         ):
             valid_skus.add(sku_key)
@@ -447,16 +496,19 @@ def _anchor_supported_skus(
     eligible_countries: list[str],
     floor_by_currency_country_sku: dict[str, dict[tuple[str, tuple[str, str, str]], float]],
     required_currencies: list[str],
+    below_cost_override_country_skus: set[tuple[str, tuple[str, str, str]]] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Keep only SKUs whose anchor price passes every eligible country's floor."""
     supported: set[tuple[str, str, str]] = set()
+    overrides = below_cost_override_country_skus or set()
     for sku_key in candidate_sku_keys:
         ok = True
         for country in eligible_countries:
+            overridden = (country, sku_key) in overrides
             for currency in required_currencies:
                 anchor_price = anchor_prices_by_currency.get(currency, {}).get(sku_key)
                 required_floor = floor_by_currency_country_sku.get(currency, {}).get((country, sku_key))
-                if anchor_price is None or required_floor is None or anchor_price < required_floor:
+                if anchor_price is None or (not overridden and (required_floor is None or anchor_price < required_floor)):
                     ok = False
                     break
             if not ok:
@@ -469,6 +521,7 @@ def _build_region_pricing_decisions(
     rows_by_currency: dict[str, list[dict[str, Any]]],
     regions_data: dict[str, Any],
     region_country_exclusions: dict[str, list[str]] | None = None,
+    allow_below_cost_keys: set[str] | None = None,
 ) -> tuple[
     dict[str, dict[str, dict[tuple[str, str, str], float]]],
     dict[str, dict[str, dict[tuple[str, str, str], dict[str, Any]]]],
@@ -496,6 +549,12 @@ def _build_region_pricing_decisions(
         if _country_code(country)
     }
 
+    allow_below_cost_keys = {
+        str(key).strip().upper()
+        for key in (allow_below_cost_keys or set())
+        if str(key).strip()
+    }
+
     normalized_rows_by_currency = {
         normalize_currency(currency): rows
         for currency, rows in rows_by_currency.items()
@@ -512,6 +571,7 @@ def _build_region_pricing_decisions(
     price_by_currency_country_sku = {}
     row_by_currency_country_sku = {}
     floor_by_currency_country_sku = {}
+    below_cost_override_country_skus: set[tuple[str, tuple[str, str, str]]] = set()
 
     for currency in required_currencies:
         price_index = {}
@@ -523,6 +583,8 @@ def _build_region_pricing_decisions(
                 continue
             sku_key = _regional_sku_key(row)
             index_key = (country, sku_key)
+            if _below_cost_override_key(row).upper() in allow_below_cost_keys:
+                below_cost_override_country_skus.add(index_key)
             price = round_regular_price(_row_final_price(row))
             if index_key not in price_index or price > price_index[index_key]:
                 price_index[index_key] = price
@@ -571,6 +633,7 @@ def _build_region_pricing_decisions(
                 price_by_currency_country_sku,
                 floor_by_currency_country_sku,
                 required_currencies,
+                below_cost_override_country_skus,
             )
             for country in configured_countries
         }
@@ -632,6 +695,7 @@ def _build_region_pricing_decisions(
                 eligible_countries,
                 floor_by_currency_country_sku,
                 required_currencies,
+                below_cost_override_country_skus,
             )
             selected_prices = {
                 currency: {sku: anchor_prices[currency][sku] for sku in supported_skus}
@@ -708,65 +772,47 @@ def save_region_membership_snapshot(
     return output_path
 
 
-def generate_region_prices(
-    input_csv: str | Path,
-    output_folder: str | Path | None = None,
+CONSOLIDATED_REGION_COLUMNS: tuple[str, ...] = (
+    "Provider",
+    "ReferenceProvider",
+    "Country",
+    "ISO",
+    "ISO3",
+    "GB",
+    "Days",
+    "Price_USD",
+    "Price_EUR",
+    "Plan",
+    "PricingUnitIdUsed",
+    "PricingSourceUsed",
+    "PricingRegionUsed",
+    "PricingUnitCountriesUsed",
+    "PromoScopeKey",
+    "PromoCode",
+    "PromoType",
+    "PromoValue",
+    "PromoLabel",
+    "PromoBasePrice",
+    "FinalPriceAfterPromo_EUR",
+    "FinalPriceAfterPromo_USD",
+    "CostFloor_USD",
+    "CostFloor_EUR",
+    "USD_IsBelowCostFloor",
+    "EUR_IsBelowCostFloor",
+    "IsPartnerExportBlocked",
+    "PartnerExportBlockReason",
+)
+
+
+def _write_consolidated_region_prices(
     *,
-    regions_yaml: str | Path = INPUT_REGIONS,
-    output_name: str = OUTPUT_NAME,
-    currency: str | None = None,
-    regional_prices_by_region: dict[str, dict[str, dict[tuple[str, str, str], float]]] | None = None,
-    regional_source_rows_by_region: dict[
-        str,
-        dict[str, dict[tuple[str, str, str], dict[str, Any]]],
-    ] | None = None,
-    eligible_countries_by_region: dict[str, list[str]] | None = None,
+    output_path: Path,
+    regional_prices_by_region: dict[str, dict[str, dict[tuple[str, str, str], float]]],
+    regional_source_rows_by_region: dict[str, dict[str, dict[tuple[str, str, str], dict[str, Any]]]],
+    eligible_countries_by_region: dict[str, list[str]],
+    regions_data: dict[str, Any],
     excluded_countries: Iterable[str] | None = None,
-    region_country_exclusions: dict[str, list[str]] | None = None,
 ) -> RegionGenerationResult:
-    input_csv = Path(input_csv)
-    output_folder = Path(output_folder) if output_folder else input_csv.parent
-    regions_yaml = Path(regions_yaml)
-
-    if not input_csv.exists():
-        raise FileNotFoundError(f"Pricing CSV not found: {input_csv}")
-    if not regions_yaml.exists():
-        raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
-
-    regions_data = load_yaml(regions_yaml)
-    rows, fieldnames = _read_pricing_rows(input_csv)
-
-    if not rows:
-        raise ValueError("Pricing file is empty.")
-    _required_columns(fieldnames)
-
-    detected_currency = normalize_currency(currency or rows[0].get("Currency") or DEFAULT_CURRENCY)
-
-    if (
-        regional_prices_by_region is None
-        or regional_source_rows_by_region is None
-        or eligible_countries_by_region is None
-    ):
-        (
-            regional_prices_by_region,
-            regional_source_rows_by_region,
-            eligible_countries_by_region,
-            calculated_excluded_countries,
-        ) = _build_region_pricing_decisions(
-            {detected_currency: rows},
-            regions_data,
-            region_country_exclusions=region_country_exclusions,
-        )
-
-        if excluded_countries is None:
-            excluded_countries = calculated_excluded_countries
-
-    excluded_country_set = {
-        code
-        for code in (_country_code(country) for country in (excluded_countries or []))
-        if code
-    }
-
     output_rows: list[dict[str, Any]] = []
 
     for region_name in region_names(regions_data):
@@ -775,73 +821,122 @@ def generate_region_prices(
             continue
 
         region_prices = regional_prices_by_region.get(region_name, {})
-        region_source_rows = regional_source_rows_by_region.get(region_name, {})
-        current_currency_prices = region_prices.get(detected_currency, {})
-        current_currency_source_rows = region_source_rows.get(detected_currency, {})
-
-        ordered_current_currency_prices = sorted(
-            current_currency_prices.items(),
-            key=lambda item: (
-                str(item[0][0]).strip().lower(),
-                str(item[0][1]).strip().lower(),
-                float(item[0][2]),
-            ),
+        source_rows = regional_source_rows_by_region.get(region_name, {})
+        usd_prices = region_prices.get("USD", {})
+        eur_prices = region_prices.get("EUR", {})
+        sku_keys = sorted(
+            set(usd_prices) & set(eur_prices),
+            key=lambda sku: (str(sku[0]).lower(), str(sku[1]).lower(), float(sku[2])),
         )
 
-        for sku_key, final_price in ordered_current_currency_prices:
-            max_row = current_currency_source_rows.get(sku_key)
-            if max_row is None:
-                continue
-
+        for sku_key in sku_keys:
             _provider, plan, days = sku_key
-            final_price = round_regular_price(final_price)
-            new_row = dict(max_row)
+            source = (source_rows.get("EUR", {}).get(sku_key)
+                      or source_rows.get("USD", {}).get(sku_key)
+                      or {})
+            price_usd = round_regular_price(usd_prices[sku_key])
+            price_eur = round_regular_price(eur_prices[sku_key])
 
-            _set_if_present(new_row, fieldnames, "Country", region_name)
-            _set_if_present(new_row, fieldnames, "ISO", region_name)
-            _set_if_present(new_row, fieldnames, "ISO3", "")
-            _set_if_present(new_row, fieldnames, "Currency", detected_currency)
-            _set_if_present(new_row, fieldnames, "PricingUnitIdUsed", region_name)
-            _set_if_present(new_row, fieldnames, "PricingSourceUsed", "region_max")
-            _set_if_present(new_row, fieldnames, "PricingRegionUsed", region_name)
-            _set_if_present(new_row, fieldnames, "PricingUnitCountriesUsed", json.dumps(eligible_countries))
-            _set_if_present(new_row, fieldnames, "PromoScopeKey", f"{region_name}|{plan}|{days}")
-            _set_if_present(new_row, fieldnames, "Price", final_price)
-            _set_if_present(new_row, fieldnames, "FinalPriceAfterPromo", final_price)
+            output_rows.append({
+                "Provider": source.get("Provider", "HT") or "HT",
+                "ReferenceProvider": "",
+                "Country": region_name,
+                "ISO": region_name,
+                "ISO3": "",
+                "GB": source.get("GB", ""),
+                "Days": source.get("Days", days),
+                "Price_USD": price_usd,
+                "Price_EUR": price_eur,
+                "Plan": source.get("Plan", plan),
+                "PricingUnitIdUsed": region_name,
+                "PricingSourceUsed": "region_max",
+                "PricingRegionUsed": region_name,
+                "PricingUnitCountriesUsed": json.dumps(eligible_countries),
+                "PromoScopeKey": f"{region_name}|{plan}|{days}",
+                "PromoCode": "",
+                "PromoType": "",
+                "PromoValue": "",
+                "PromoLabel": "",
+                "PromoBasePrice": "",
+                "FinalPriceAfterPromo_EUR": price_eur,
+                "FinalPriceAfterPromo_USD": price_usd,
+                "CostFloor_USD": "",
+                "CostFloor_EUR": "",
+                "USD_IsBelowCostFloor": False,
+                "EUR_IsBelowCostFloor": False,
+                "IsPartnerExportBlocked": False,
+                "PartnerExportBlockReason": "",
+            })
 
-            usd_price = region_prices.get("USD", {}).get(sku_key)
-            eur_price = region_prices.get("EUR", {}).get(sku_key)
-
-            if usd_price is not None:
-                _set_if_present(new_row, fieldnames, "Price_USD", round_regular_price(usd_price))
-            if eur_price is not None:
-                _set_if_present(new_row, fieldnames, "Price_EUR", round_regular_price(eur_price))
-
-            _set_if_present(new_row, fieldnames, "CalculatedCostFloor", "")
-            _set_if_present(new_row, fieldnames, "CostFloor_USD", "")
-            _set_if_present(new_row, fieldnames, "CostFloor_EUR", "")
-            _set_if_present(new_row, fieldnames, "IsBelowCostFloor", False)
-            _set_if_present(new_row, fieldnames, "USD_IsBelowCostFloor", False)
-            _set_if_present(new_row, fieldnames, "EUR_IsBelowCostFloor", False)
-            _set_if_present(new_row, fieldnames, "IsPartnerExportBlocked", False)
-            _set_if_present(new_row, fieldnames, "PartnerExportBlockReason", "")
-
-            output_rows.append(new_row)
-
-    output_folder.mkdir(parents=True, exist_ok=True)
-    output_path = output_folder / output_name
-
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=list(CONSOLIDATED_REGION_COLUMNS))
         writer.writeheader()
         writer.writerows(output_rows)
 
+    excluded_country_set = {
+        code
+        for code in (_country_code(country) for country in (excluded_countries or []))
+        if code
+    }
     return RegionGenerationResult(
-        currency=detected_currency,
-        input_csv=input_csv,
+        currency="ALL",
+        input_csv=output_path.parent / "manual_prices_current.csv",
         output_csv=output_path,
         rows_written=len(output_rows),
         excluded_countries=tuple(sorted(excluded_country_set)),
+    )
+
+
+def generate_region_prices(
+    input_csv: str | Path,
+    output_folder: str | Path | None = None,
+    *,
+    regions_yaml: str | Path = INPUT_REGIONS,
+    output_name: str = OUTPUT_NAME,
+    currency: str | None = None,
+    region_country_exclusions: dict[str, list[str]] | None = None,
+    allow_below_cost_keys: set[str] | None = None,
+    **_legacy_kwargs,
+) -> RegionGenerationResult:
+    """Generate one consolidated regional pricing file from one consolidated manual file."""
+    input_csv = Path(input_csv)
+    output_folder = Path(output_folder) if output_folder else input_csv.parent
+    regions_yaml = Path(regions_yaml)
+    if not input_csv.exists():
+        raise FileNotFoundError(f"Pricing CSV not found: {input_csv}")
+    if not regions_yaml.exists():
+        raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
+
+    rows, fieldnames = _read_pricing_rows(input_csv)
+    if not rows:
+        raise ValueError("Pricing file is empty.")
+    _required_columns(fieldnames)
+
+    regions_data = load_yaml(regions_yaml)
+    rows_by_currency = {
+        currency_code: _currency_rows_from_consolidated(rows, currency_code)
+        for currency_code in CURRENCIES
+    }
+    (
+        regional_prices_by_region,
+        regional_source_rows_by_region,
+        eligible_countries_by_region,
+        excluded_countries,
+    ) = _build_region_pricing_decisions(
+        rows_by_currency,
+        regions_data,
+        region_country_exclusions=region_country_exclusions,
+        allow_below_cost_keys=allow_below_cost_keys,
+    )
+
+    return _write_consolidated_region_prices(
+        output_path=output_folder / output_name,
+        regional_prices_by_region=regional_prices_by_region,
+        regional_source_rows_by_region=regional_source_rows_by_region,
+        eligible_countries_by_region=eligible_countries_by_region,
+        regions_data=regions_data,
+        excluded_countries=excluded_countries,
     )
 
 
@@ -852,33 +947,18 @@ def generate_region_prices_for_export_folder(
     regions_yaml: str | Path = INPUT_REGIONS,
     output_name: str = OUTPUT_NAME,
     region_exclusions_json: str | Path | None = None,
+    allow_below_cost_keys: set[str] | None = None,
 ) -> list[RegionGenerationResult]:
     export_dir = Path(export_dir)
     regions_yaml = Path(regions_yaml)
+    input_csv = export_dir / "manual_prices_current.csv"
+    if not input_csv.exists():
+        raise FileNotFoundError(f"Consolidated manual pricing file not found: {input_csv}")
 
-    results: list[RegionGenerationResult] = []
-    currency_inputs: list[tuple[str, Path]] = []
-    rows_by_currency: dict[str, list[dict[str, Any]]] = {}
-
-    for currency in currencies:
-        normalized_currency = normalize_currency(currency)
-        input_csv = export_dir / normalized_currency / "manual_prices_current.csv"
-
-        if not input_csv.exists():
-            continue
-
-        rows, fieldnames = _read_pricing_rows(input_csv)
-        if not rows:
-            continue
-
-        _required_columns(fieldnames)
-        currency_inputs.append((normalized_currency, input_csv))
-        rows_by_currency[normalized_currency] = rows
-
-    if not currency_inputs:
-        raise FileNotFoundError(
-            f"No manual_prices_current.csv files found under: {export_dir}"
-        )
+    rows, fieldnames = _read_pricing_rows(input_csv)
+    if not rows:
+        raise ValueError("Pricing file is empty.")
+    _required_columns(fieldnames)
 
     regions_data = load_yaml(regions_yaml)
     exclusion_path = (
@@ -887,6 +967,10 @@ def generate_region_prices_for_export_folder(
         else regions_yaml.with_name(REGION_COUNTRY_EXCLUSIONS_NAME)
     )
     region_country_exclusions = load_region_country_exclusions(exclusion_path)
+    rows_by_currency = {
+        currency_code: _currency_rows_from_consolidated(rows, currency_code)
+        for currency_code in CURRENCIES
+    }
 
     (
         regional_prices_by_region,
@@ -897,6 +981,7 @@ def generate_region_prices_for_export_folder(
         rows_by_currency,
         regions_data,
         region_country_exclusions=region_country_exclusions,
+        allow_below_cost_keys=allow_below_cost_keys,
     )
 
     save_region_membership_snapshot(
@@ -905,24 +990,15 @@ def generate_region_prices_for_export_folder(
         regions_data,
     )
 
-    for currency, input_csv in currency_inputs:
-        results.append(
-            generate_region_prices(
-                input_csv,
-                input_csv.parent,
-                regions_yaml=regions_yaml,
-                output_name=output_name,
-                currency=currency,
-                regional_prices_by_region=regional_prices_by_region,
-                regional_source_rows_by_region=regional_source_rows_by_region,
-                eligible_countries_by_region=eligible_countries_by_region,
-                excluded_countries=excluded_countries,
-                region_country_exclusions=region_country_exclusions,
-            )
-        )
-
-    return results
-
+    result = _write_consolidated_region_prices(
+        output_path=export_dir / output_name,
+        regional_prices_by_region=regional_prices_by_region,
+        regional_source_rows_by_region=regional_source_rows_by_region,
+        eligible_countries_by_region=eligible_countries_by_region,
+        regions_data=regions_data,
+        excluded_countries=excluded_countries,
+    )
+    return [result]
 
 def _pick_input_csv() -> str:
     import tkinter as tk

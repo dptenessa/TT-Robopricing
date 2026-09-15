@@ -13,6 +13,10 @@ import yaml
 
 from currency_support import CURRENCIES, normalize_currency
 from plan_labels import PARTNER_PLAN_PACKS, partner_display_plan_label
+try:
+    from pricing_book import read_pricing_workbook, normalize_pricing_dataframe
+except ImportError:
+    from automation.pricing_book import read_pricing_workbook, normalize_pricing_dataframe
 
 
 PARTNER_DROP_COLUMNS: tuple[str, ...] = (
@@ -20,6 +24,8 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "COST_EUR_TO_USD",
     "Price_USD",
     "Price_EUR",
+    "FinalPriceAfterPromo_USD",
+    "FinalPriceAfterPromo_EUR",
     "usd_price",
     "eur_price",
     "CalculatedCostFloor",
@@ -30,6 +36,7 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "Is_Below_Cost_Floor",
     "USD_IsBelowCostFloor",
     "EUR_IsBelowCostFloor",
+    "AllowBelowCost",
     "IsPartnerExportBlocked",
     "PartnerExportBlockReason",
     "ISO3",
@@ -39,12 +46,7 @@ PARTNER_DROP_COLUMNS: tuple[str, ...] = (
 
 PARTNER_DIFF_KEY_COLUMNS: tuple[str, ...] = ("ISO", "Plan", "Days", "GB")
 PARTNER_DIFF_VALUE_COLUMNS: tuple[str, ...] = (
-    "Price",
-    "PromoCode",
-    "PromoType",
-    "PromoValue",
     "FinalPriceAfterPromo",
-    "PricingUnitCountriesUsed",
 )
 PARTNER_DIFF_OUTPUT_COLUMNS: tuple[str, ...] = (
     "ChangeType",
@@ -109,7 +111,6 @@ OCS_OFFER_IDS: dict[str, dict[bool, str]] = {
     },
 }
 
-REGION_MEMBERSHIP_CURRENT_NAME = "region_membership_current.json"
 REGION_MEMBERSHIP_HISTORY_PREFIX = "region_membership_"
 REGION_CHANGES_MEMBER_NAME = "TT_region_changes.csv"
 DESTINATION_TABLE_MEMBER_NAME = "export-destination-table.json"
@@ -152,7 +153,19 @@ class PartnerPackResult:
 def _read_required_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Required export file not found: {path}")
-    return pd.read_csv(path)
+    df = pd.read_csv(path)
+    return df.dropna(how="all").reset_index(drop=True)
+
+
+def _read_required_pricing(path: Path) -> pd.DataFrame:
+    """Read the canonical pricing workbook/CSV and recompute derived fields."""
+    if not path.exists():
+        raise FileNotFoundError(f"Required export file not found: {path}")
+    if path.suffix.lower() == ".xlsx":
+        df = read_pricing_workbook(path)
+    else:
+        df = normalize_pricing_dataframe(pd.read_csv(path).dropna(how="all").reset_index(drop=True))
+    return df.dropna(how="all").reset_index(drop=True)
 
 
 def _plan_key(series: pd.Series) -> pd.Series:
@@ -164,25 +177,36 @@ def _bool_series(series: pd.Series) -> pd.Series:
 
 
 def _below_cost_mask(df: pd.DataFrame) -> pd.Series:
-    masks = []
+    """Return rows that must be blocked from partner export.
+
+    In the Excel price book the below-floor flags are factual diagnostics while
+    AllowBelowCost is the explicit commercial override.  Recompute blocking
+    from those fields instead of trusting cached Excel formula values.
+    """
+    if "AllowBelowCost" in df.columns:
+        factual_masks = []
+        for col in ("USD_IsBelowCostFloor", "EUR_IsBelowCostFloor", "IsBelowCostFloor", "IsBelowCalculatedCostFloor", "Is_Below_Cost_Floor"):
+            if col in df.columns:
+                factual_masks.append(_bool_series(df[col]))
+        if factual_masks:
+            factual = factual_masks[0].copy()
+            for mask in factual_masks[1:]:
+                factual = factual | mask
+            return factual & ~_bool_series(df["AllowBelowCost"])
+
     if "IsPartnerExportBlocked" in df.columns:
-        masks.append(_bool_series(df["IsPartnerExportBlocked"]))
-    if "USD_IsBelowCostFloor" in df.columns:
-        masks.append(_bool_series(df["USD_IsBelowCostFloor"]))
-    if "EUR_IsBelowCostFloor" in df.columns:
-        masks.append(_bool_series(df["EUR_IsBelowCostFloor"]))
-    if "IsBelowCostFloor" in df.columns:
-        masks.append(_bool_series(df["IsBelowCostFloor"]))
-    if "IsBelowCalculatedCostFloor" in df.columns:
-        masks.append(_bool_series(df["IsBelowCalculatedCostFloor"]))
-    if "Is_Below_Cost_Floor" in df.columns:
-        masks.append(_bool_series(df["Is_Below_Cost_Floor"]))
+        return _bool_series(df["IsPartnerExportBlocked"])
+
+    masks = []
+    for col in ("USD_IsBelowCostFloor", "EUR_IsBelowCostFloor", "IsBelowCostFloor", "IsBelowCalculatedCostFloor", "Is_Below_Cost_Floor"):
+        if col in df.columns:
+            masks.append(_bool_series(df[col]))
     if masks:
         out = masks[0].copy()
         for mask in masks[1:]:
             out = out | mask
         return out
-    raise ValueError("Partner export requires IsBelowCostFloor so below-cost prices can be removed.")
+    raise ValueError("Partner export requires cost-floor status columns so below-cost prices can be removed.")
 
 
 def _country_code(value: object) -> str:
@@ -297,7 +321,7 @@ def _clean_translation_value(value: object) -> str:
 
 def _read_translation_catalog(
     path: Path,
-) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
     """Read T-Travel display translations from Regions_countries_list.xlsx.
 
     Country translations are read from sheet Countries using ISO2.
@@ -329,7 +353,7 @@ def _read_translation_catalog(
             + ", ".join(missing_region_columns)
         )
 
-    country_catalog: dict[str, dict[str, str]] = {}
+    country_catalog: dict[str, dict[str, object]] = {}
     for _, row in countries.iterrows():
         iso = _country_code(row.get("ISO2", ""))
         if not iso:
@@ -341,7 +365,7 @@ def _read_translation_catalog(
             for language in REQUIRED_TRANSLATION_LANGUAGES
         }
 
-    region_catalog: dict[str, dict[str, str]] = {}
+    region_catalog: dict[str, dict[str, object]] = {}
     for _, row in regions.iterrows():
         code = _country_code(row.get("Region_tech_name", ""))
         if not code:
@@ -360,7 +384,7 @@ def _read_translation_catalog(
 
 def _required_translations(
     code: str,
-    catalog: dict[str, dict[str, str]],
+    catalog: dict[str, dict[str, object]],
     *,
     kind: str,
 ) -> dict[str, str]:
@@ -472,6 +496,8 @@ def _history_root_for(local_export_dir: Path) -> Path:
 
 
 def _membership_history_path(local_export_dir: Path, timestamp: str) -> Path:
+    # Legacy path retained only for reading exports created before regions were
+    # embedded in manual_prices_YYYYMMDD.csv. New exports do not write it.
     return _history_root_for(local_export_dir) / f"{REGION_MEMBERSHIP_HISTORY_PREFIX}{timestamp}.json"
 
 
@@ -484,29 +510,86 @@ def _read_membership_snapshot(path: Path) -> dict[str, object]:
     return data
 
 
+def _membership_snapshot_from_price_df(
+    df: pd.DataFrame,
+    region_catalog: dict[str, dict[str, object]],
+    *,
+    generated_from: str,
+) -> dict[str, object]:
+    """Derive locked region membership directly from canonical price rows."""
+    region_members: dict[str, set[str]] = {}
+    expected_regions = set(region_catalog)
+    _country_rows, region_rows = _split_canonical_price_book(df, region_catalog)
+
+    for _, row in region_rows.iterrows():
+        region = _region_code_for_row(row, region_catalog)
+        if not region:
+            continue
+        countries = _country_list(row.get("PricingUnitCountriesUsed", ""))
+        if countries:
+            region_members.setdefault(region, set()).update(countries)
+
+    missing = sorted(expected_regions - set(region_members))
+    if missing:
+        raise ValueError(
+            "Canonical pricing file is missing rows/membership for regions defined "
+            "in regions.yaml: " + ", ".join(missing)
+        )
+
+    regions = {
+        region: sorted(region_members.get(region, set()))
+        for region in region_catalog
+    }
+    country_members: dict[str, list[str]] = {}
+    for region, countries in regions.items():
+        for country in countries:
+            country_members.setdefault(country, []).append(region)
+
+    return {
+        "generated_from": generated_from,
+        "regions": regions,
+        "countries": {
+            country: sorted(region_list)
+            for country, region_list in sorted(country_members.items())
+        },
+    }
+
+
+def _membership_snapshot_from_manual_prices(
+    path: Path,
+    region_catalog: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    df = _read_required_pricing(path)
+    return _membership_snapshot_from_price_df(
+        df,
+        region_catalog,
+        generated_from=path.name,
+    )
+
+
 def _membership_snapshot_from_region_prices(
     local_export_dir: Path,
     timestamp: str,
     currencies: list[str],
 ) -> dict[str, object]:
-    """Reconstruct legacy membership history from saved regional price CSVs.
-
-    This is used for exports created before region_membership_YYYYMMDD.json
-    snapshots existed. The first available currency history file is enough
-    because regional membership is generated consistently across currencies.
-    """
+    """Legacy fallback for history created before consolidated region rows."""
     history_root = _history_root_for(local_export_dir)
     region_members: dict[str, set[str]] = {}
 
-    for currency in currencies:
-        path = history_root / currency / f"region_prices_{timestamp}.csv"
+    candidate_paths = [history_root / f"region_prices_{timestamp}.csv"]
+    candidate_paths.extend(
+        history_root / currency / f"region_prices_{timestamp}.csv"
+        for currency in currencies
+    )
+
+    for path in candidate_paths:
         if not path.exists():
             continue
-
         df = pd.read_csv(path)
         if df.empty:
             continue
-
         for _, row in df.iterrows():
             region = _country_code(
                 row.get("ISO", "")
@@ -515,11 +598,9 @@ def _membership_snapshot_from_region_prices(
             )
             if not region:
                 continue
-
             countries = _country_list(row.get("PricingUnitCountriesUsed", ""))
             if countries:
                 region_members.setdefault(region, set()).update(countries)
-
         if region_members:
             break
 
@@ -537,8 +618,7 @@ def _membership_snapshot_from_region_prices(
     for region, countries in regions.items():
         for country in countries:
             country_members.setdefault(country, []).append(region)
-
-    snapshot: dict[str, object] = {
+    return {
         "generated_from": f"historical region_prices_{timestamp}.csv",
         "regions": regions,
         "countries": {
@@ -547,23 +627,32 @@ def _membership_snapshot_from_region_prices(
         },
     }
 
-    history_path = _membership_history_path(local_export_dir, timestamp)
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text(
-        json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return snapshot
-
 
 def _read_or_rebuild_membership_snapshot(
     local_export_dir: Path,
     timestamp: str,
     currencies: list[str],
+    region_catalog: dict[str, dict[str, object]],
 ) -> dict[str, object]:
-    path = _membership_history_path(local_export_dir, timestamp)
-    if path.exists():
-        return _read_membership_snapshot(path)
+    # New format: membership lives inside the consolidated history CSV.
+    history_root = _history_root_for(local_export_dir)
+    manual_history = history_root / f"manual_prices_{timestamp}.xlsx"
+    if not manual_history.exists():
+        legacy_manual = history_root / f"manual_prices_{timestamp}.csv"
+        if legacy_manual.exists():
+            manual_history = legacy_manual
+    if manual_history.exists():
+        try:
+            return _membership_snapshot_from_manual_prices(manual_history, region_catalog)
+        except ValueError:
+            # Early consolidated history could still keep regions in sidecar files.
+            # Fall through to those legacy snapshots instead of forcing migration.
+            pass
+
+    # Legacy formats remain readable; no new sidecar membership JSON is written.
+    legacy_snapshot = _membership_history_path(local_export_dir, timestamp)
+    if legacy_snapshot.exists():
+        return _read_membership_snapshot(legacy_snapshot)
     return _membership_snapshot_from_region_prices(
         local_export_dir,
         timestamp,
@@ -571,8 +660,8 @@ def _read_or_rebuild_membership_snapshot(
     )
 
 
-def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, str]]:
-    """Load the authoritative commercial metadata for every managed region."""
+def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, object]]:
+    """Load static commercial metadata and locked membership for managed regions."""
     if not regions_yaml.exists():
         raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
 
@@ -582,7 +671,7 @@ def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, str]]:
         raise ValueError("regions.yaml must contain a 'regions' mapping.")
 
     allowed_types = {"GLOBAL", "LARGE_REGION", "MEDIUM_REGION"}
-    catalog: dict[str, dict[str, str]] = {}
+    catalog: dict[str, dict[str, object]] = {}
 
     for raw_code, raw_spec in regions.items():
         code = _country_code(raw_code)
@@ -596,6 +685,8 @@ def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, str]]:
 
         region_type = str(raw_spec.get("region_type", "")).strip().upper()
         product_name = str(raw_spec.get("region_product_name", "")).strip()
+        countries = [_country_code(item) for item in (raw_spec.get("countries") or [])]
+        countries = [item for item in countries if item]
 
         if region_type not in allowed_types:
             raise ValueError(
@@ -606,22 +697,25 @@ def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, str]]:
             raise ValueError(
                 f"Region {code!r} is missing region_product_name in regions.yaml."
             )
+        if not countries:
+            raise ValueError(f"Region {code!r} has no locked countries in regions.yaml.")
 
         catalog[code] = {
             "region_type": region_type,
             "region_product_name": product_name,
+            "countries": countries,
         }
 
     return catalog
 
 
-def _managed_region_codes(region_catalog: dict[str, dict[str, str]]) -> list[str]:
+def _managed_region_codes(region_catalog: dict[str, dict[str, object]]) -> list[str]:
     return list(region_catalog.keys())
 
 
 def _region_code_for_row(
     row: pd.Series,
-    region_catalog: dict[str, dict[str, str]],
+    region_catalog: dict[str, dict[str, object]],
 ) -> str:
     for field in ("ISO", "PricingUnitIdUsed", "PricingRegionUsed", "Country"):
         candidate = _country_code(row.get(field, ""))
@@ -633,7 +727,7 @@ def _region_code_for_row(
 
 def _partner_destination_value(
     row: pd.Series,
-    region_catalog: dict[str, dict[str, str]],
+    region_catalog: dict[str, dict[str, object]],
     ppg_country_names: dict[str, str],
 ) -> str:
     """Return the exact technical Destination key used by Amdocs.
@@ -723,7 +817,7 @@ def _region_change_table(
 
 def _active_destination_codes(
     clean_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]],
-    region_catalog: dict[str, dict[str, str]],
+    region_catalog: dict[str, dict[str, object]],
 ) -> tuple[set[str], set[str]]:
     """Return country and region codes that survive final price filtering."""
     country_codes: set[str] = set()
@@ -755,8 +849,8 @@ def _updated_destination_table(
     active_country_codes: set[str],
     active_region_codes: set[str],
     ppg_country_names: dict[str, str],
-    country_translations: dict[str, dict[str, str]],
-    region_translations: dict[str, dict[str, str]],
+    country_translations: dict[str, dict[str, object]],
+    region_translations: dict[str, dict[str, object]],
 ) -> list[object]:
     """Build the active destination catalogue from the final priced scope.
 
@@ -901,13 +995,78 @@ def _validate_destination_alignment(
         )
 
 
+def _currency_view(df: pd.DataFrame, currency: str) -> pd.DataFrame:
+    """Create the legacy one-currency shape in memory from consolidated storage."""
+    currency = normalize_currency(currency)
+    out = df.copy()
+    price_col = f"Price_{currency}"
+    final_col = f"FinalPriceAfterPromo_{currency}"
+
+    if price_col not in out.columns:
+        raise ValueError(f"Consolidated pricing file is missing {price_col}.")
+    out["Price"] = pd.to_numeric(out[price_col], errors="coerce")
+    if final_col in out.columns:
+        out["FinalPriceAfterPromo"] = pd.to_numeric(out[final_col], errors="coerce")
+    else:
+        out["FinalPriceAfterPromo"] = out["Price"]
+    out["Currency"] = currency
+    return out
+
+
+def _split_canonical_price_book(
+    df: pd.DataFrame,
+    region_catalog: dict[str, dict[str, object]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split one canonical price book into country and locked-region views."""
+    region_codes = set(region_catalog)
+    source = df.get("PricingSourceUsed", pd.Series("", index=df.index)).astype(str).str.strip().str.lower()
+    iso = df.get("ISO", pd.Series("", index=df.index)).astype(str).str.strip().str.upper()
+    unit = df.get("PricingUnitIdUsed", pd.Series("", index=df.index)).astype(str).str.strip().str.upper()
+    region_mask = source.eq("region_max") | iso.isin(region_codes) | unit.isin(region_codes)
+    return df.loc[~region_mask].copy(), df.loc[region_mask].copy()
+
+
 def _load_export_tables(
     local_export_dir: Path,
     currencies: list[str],
     *,
+    region_catalog: dict[str, dict[str, object]],
     timestamp: str | None = None,
 ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame]]:
+    """Load one canonical current/history price book and expose currency views.
+
+    Legacy country + region sidecar files remain readable for old history.
+    """
     tables: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    if timestamp:
+        root = _history_root_for(local_export_dir)
+        consolidated = root / f"manual_prices_{timestamp}.xlsx"
+        legacy_consolidated = root / f"manual_prices_{timestamp}.csv"
+        legacy_region = root / f"region_prices_{timestamp}.csv"
+    else:
+        root = local_export_dir
+        consolidated = root / "manual_prices_current.xlsx"
+        legacy_consolidated = root / "manual_prices_current.csv"
+        legacy_region = root / "region_prices_current.csv"
+
+    if not consolidated.exists() and legacy_consolidated.exists():
+        consolidated = legacy_consolidated
+
+    if consolidated.exists():
+        full_df = _read_required_pricing(consolidated)
+        country_df, region_df = _split_canonical_price_book(full_df, region_catalog)
+        # If this is an older consolidated country file with region rows still in
+        # a sidecar, read the sidecar as a compatibility fallback.
+        if region_df.empty and legacy_region.exists():
+            region_df = _read_required_csv(legacy_region)
+        for currency in currencies:
+            tables[currency] = (
+                _currency_view(country_df, currency),
+                _currency_view(region_df, currency),
+            )
+        return tables
+
+    # Pre-consolidation legacy EUR/USD history.
     for currency in currencies:
         if timestamp:
             currency_dir = _history_root_for(local_export_dir) / currency
@@ -917,13 +1076,13 @@ def _load_export_tables(
             currency_dir = local_export_dir / currency
             country_path = currency_dir / "manual_prices_current.csv"
             region_path = currency_dir / "region_prices_current.csv"
-
         tables[currency] = (_read_required_csv(country_path), _read_required_csv(region_path))
     return tables
 
 
 def _shared_filter_rules(
     export_tables: dict[str, tuple[pd.DataFrame, pd.DataFrame]],
+    allow_below_cost_keys: set[str] | None = None,
 ) -> set[str]:
     """
     Return price-scope keys that must be blocked consistently across currencies.
@@ -936,13 +1095,15 @@ def _shared_filter_rules(
     regional packs.
     """
     shared_blocked_price_keys: set[str] = set()
+    allowed = {str(key).strip().upper() for key in (allow_below_cost_keys or set()) if str(key).strip()}
 
     for country_prices, region_prices in export_tables.values():
         for df in (country_prices, region_prices):
-            below_cost = _below_cost_mask(df)
+            keys = _price_scope_keys(df)
+            below_cost = _below_cost_mask(df) & ~keys.isin(allowed)
             shared_blocked_price_keys.update(
                 key
-                for key in _price_scope_keys(df.loc[below_cost])
+                for key in keys.loc[below_cost]
                 if key and not key.startswith("|")
             )
 
@@ -955,6 +1116,7 @@ def _clean_partner_table(
     *,
     currency: str,
     shared_blocked_price_keys: set[str],
+    allow_below_cost_keys: set[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     frames = [df for df in (country_prices, region_prices) if not df.empty]
     merged = pd.concat(frames, ignore_index=True, sort=False) if frames else country_prices.copy()
@@ -962,7 +1124,12 @@ def _clean_partner_table(
     if "Plan" not in merged.columns:
         raise ValueError(f"Missing Plan column in {currency} export.")
 
-    below_cost = _below_cost_mask(merged) | _price_scope_keys(merged).isin(shared_blocked_price_keys)
+    keys = _price_scope_keys(merged)
+    allowed = {str(key).strip().upper() for key in (allow_below_cost_keys or set()) if str(key).strip()}
+    below_cost = (
+        (_below_cost_mask(merged) & ~keys.isin(allowed))
+        | keys.isin(shared_blocked_price_keys)
+    )
     removed_by_plan = (
         merged.loc[below_cost]
         .assign(_plan_key=_plan_key(merged.loc[below_cost, "Plan"]))
@@ -993,7 +1160,7 @@ def _partner_ocs_countries(row: pd.Series) -> str:
 
 def _partner_ocs_offer_id(
     row: pd.Series,
-    region_catalog: dict[str, dict[str, str]],
+    region_catalog: dict[str, dict[str, object]],
 ) -> str:
     is_unlimited = str(row.get("Plan", "")).strip().lower() == "unlimited"
     iso = _country_code(row.get("ISO", ""))
@@ -1057,7 +1224,7 @@ def _partner_list_price_value(row: pd.Series) -> str:
 
 def _partner_price_output_columns(
     df: pd.DataFrame,
-    region_catalog: dict[str, dict[str, str]],
+    region_catalog: dict[str, dict[str, object]],
     ppg_country_names: dict[str, str],
 ) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
@@ -1134,13 +1301,16 @@ def _partner_diff_table(
         elif curr_row is None:
             change_type = "Removed"
         else:
-            changed_fields = [
-                col for col in PARTNER_DIFF_VALUE_COLUMNS
-                if _diff_compare_value(prev_row.get(col, "")) != _diff_compare_value(curr_row.get(col, ""))
-            ]
-            if not changed_fields:
+            final_price_changed = (
+                _diff_compare_value(prev_row.get("FinalPriceAfterPromo", ""))
+                != _diff_compare_value(curr_row.get("FinalPriceAfterPromo", ""))
+            )
+
+            if not final_price_changed:
                 continue
+
             change_type = "Changed"
+            changed_fields = ["FinalPriceAfterPromo"]
 
         source = curr_row if curr_row is not None else prev_row
         changed_fields_text = "" if change_type != "Changed" else ", ".join(changed_fields)
@@ -1195,6 +1365,7 @@ def build_partner_price_pack(
     regions_yaml: str | Path | None = None,
     ppg_csv: str | Path | None = None,
     translations_xlsx: str | Path | None = None,
+    allow_below_cost_keys: Iterable[str] | None = None,
 ) -> PartnerPackResult:
     local_export_dir = Path(local_export_dir)
     zip_path = Path(zip_path)
@@ -1230,8 +1401,12 @@ def build_partner_price_pack(
     )
     region_catalog = _region_catalog(regions_yaml)
     managed_regions = _managed_region_codes(region_catalog)
-    current_membership = _read_membership_snapshot(
-        local_export_dir / REGION_MEMBERSHIP_CURRENT_NAME
+    current_price_book = local_export_dir / "manual_prices_current.xlsx"
+    if not current_price_book.exists():
+        current_price_book = local_export_dir / "manual_prices_current.csv"
+    current_membership = _membership_snapshot_from_manual_prices(
+        current_price_book,
+        region_catalog,
     )
 
     if zip_path.suffix.lower() != ".zip":
@@ -1242,10 +1417,23 @@ def build_partner_price_pack(
     diff_results: list[PartnerPackDiffFile] = []
     normalized_currencies = [normalize_currency(currency) for currency in currencies]
 
+    allowed_below_cost_keys = {
+        str(key).strip().upper()
+        for key in (allow_below_cost_keys or [])
+        if str(key).strip()
+    }
+
     # Finalize/filter pricing first. The active destination catalogue is derived
     # only after these filters, so JSON cannot contain unpriced destinations.
-    export_tables = _load_export_tables(local_export_dir, normalized_currencies)
-    shared_blocked_price_keys = _shared_filter_rules(export_tables)
+    export_tables = _load_export_tables(
+        local_export_dir,
+        normalized_currencies,
+        region_catalog=region_catalog,
+    )
+    shared_blocked_price_keys = _shared_filter_rules(
+        export_tables,
+        allow_below_cost_keys=allowed_below_cost_keys,
+    )
     clean_tables: dict[str, tuple[pd.DataFrame, dict[str, int]]] = {}
     for currency, (country_prices, region_prices) in export_tables.items():
         clean_tables[currency] = _clean_partner_table(
@@ -1253,6 +1441,7 @@ def build_partner_price_pack(
             region_prices,
             currency=currency,
             shared_blocked_price_keys=shared_blocked_price_keys,
+            allow_below_cost_keys=allowed_below_cost_keys,
         )
         _validate_ppg_country_coverage(
             clean_tables[currency][0],
@@ -1354,6 +1543,7 @@ def build_partner_price_pack(
         previous_tables = _load_export_tables(
             local_export_dir,
             normalized_currencies,
+            region_catalog=region_catalog,
             timestamp=compare_timestamp,
         )
         previous_blocked_keys = _shared_filter_rules(previous_tables)
@@ -1377,6 +1567,7 @@ def build_partner_price_pack(
                 local_export_dir,
                 compare_timestamp,
                 normalized_currencies,
+                region_catalog,
             )
             region_diff = _region_change_table(
                 previous_membership,
@@ -1414,25 +1605,38 @@ def build_partner_price_pack(
                 )
 
         if compare_timestamp:
+            # One currency-neutral partner change file contains the EUR and USD
+            # price changes.  The Currency column identifies each row.
+            currency_diffs: list[pd.DataFrame] = []
             for currency in normalized_currencies:
+                if currency not in comparison_tables or currency not in clean_tables:
+                    continue
                 previous, _previous_removed = comparison_tables[currency]
                 current, _current_removed = clean_tables[currency]
-                diff = _partner_diff_table(
-                    _partner_output_columns(previous),
-                    _partner_output_columns(current),
-                    currency=currency,
-                    previous_date=compare_timestamp,
-                    current_date=current_timestamp,
-                )
-                member_name = f"TT_price_changes_{currency}.csv"
-                zip_file.writestr(member_name, diff.to_csv(index=False))
-                diff_results.append(
-                    PartnerPackDiffFile(
+                currency_diffs.append(
+                    _partner_diff_table(
+                        _partner_output_columns(previous),
+                        _partner_output_columns(current),
                         currency=currency,
-                        member_name=member_name,
-                        rows_written=len(diff),
+                        previous_date=compare_timestamp,
+                        current_date=current_timestamp,
                     )
                 )
+
+            if currency_diffs:
+                diff = pd.concat(currency_diffs, ignore_index=True)
+            else:
+                diff = pd.DataFrame(columns=list(PARTNER_DIFF_OUTPUT_COLUMNS))
+
+            member_name = "TT_price_changes.csv"
+            zip_file.writestr(member_name, diff.to_csv(index=False))
+            diff_results.append(
+                PartnerPackDiffFile(
+                    currency="ALL",
+                    member_name=member_name,
+                    rows_written=len(diff),
+                )
+            )
 
     return PartnerPackResult(
         zip_path=zip_path,
@@ -1442,59 +1646,38 @@ def build_partner_price_pack(
 
 
 def _find_current_local_export_dir(project_root: Path) -> Path:
-    """Find the current pricing export directory used by the partner pack.
+    """Find the canonical current price-book directory."""
+    preferred = project_root / "outputs" / "manual_prices" / "current"
+    if (preferred / "manual_prices_current.xlsx").exists() or (preferred / "manual_prices_current.csv").exists():
+        return preferred
 
-    The directory must contain region_membership_current.json and, for every
-    configured currency, both manual_prices_current.csv and
-    region_prices_current.csv in a currency subfolder.
-    """
     outputs_root = project_root / "outputs"
     if not outputs_root.exists():
         raise FileNotFoundError(f"Outputs directory not found: {outputs_root}")
-
-    normalized_currencies = [normalize_currency(currency) for currency in CURRENCIES]
-    candidates: list[Path] = []
-
-    for snapshot in outputs_root.rglob(REGION_MEMBERSHIP_CURRENT_NAME):
-        candidate = snapshot.parent
-        valid = True
-        for currency in normalized_currencies:
-            currency_dir = candidate / currency
-            if not (currency_dir / "manual_prices_current.csv").exists():
-                valid = False
-                break
-            if not (currency_dir / "region_prices_current.csv").exists():
-                valid = False
-                break
-        if valid:
-            candidates.append(candidate)
-
-    # De-duplicate in case of unusual filesystem aliases.
-    unique_candidates = []
+    candidates = [
+        path.parent
+        for pattern in ("manual_prices_current.xlsx", "manual_prices_current.csv")
+        for path in outputs_root.rglob(pattern)
+        if path.is_file()
+    ]
+    unique = []
     seen = set()
     for candidate in candidates:
         resolved = candidate.resolve()
         if resolved not in seen:
-            unique_candidates.append(candidate)
+            unique.append(candidate)
             seen.add(resolved)
-
-    if not unique_candidates:
+    if not unique:
         raise FileNotFoundError(
-            "Could not find a current partner-export source directory under "
-            f"{outputs_root}. Expected a folder containing "
-            f"{REGION_MEMBERSHIP_CURRENT_NAME} plus EUR/USD currency folders "
-            "with manual_prices_current.csv and region_prices_current.csv."
+            "Could not find manual_prices_current.xlsx (or legacy CSV) under " + str(outputs_root)
         )
-
-    if len(unique_candidates) > 1:
-        options = "\n".join(f"  - {path}" for path in unique_candidates)
+    if len(unique) > 1:
+        options = "\n".join(f"  - {path}" for path in unique)
         raise RuntimeError(
-            "More than one current partner-export source directory was found. "
-            "Please call build_partner_price_pack() with an explicit "
-            f"local_export_dir. Candidates:\n{options}"
+            "More than one current pricing source directory was found. "
+            "Pass local_export_dir explicitly. Candidates:\n" + options
         )
-
-    return unique_candidates[0]
+    return unique[0]
 
 
 def main() -> None:
