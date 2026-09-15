@@ -78,7 +78,7 @@ jobs:
         env:
           RESUME_TODAY: ${{ github.event_name == 'workflow_dispatch' && inputs.reuse_today_successes == true }}
         run: |
-          args=(--scrape)
+          args=(--scrape --skip-model)
           if [ "$RESUME_TODAY" = "true" ]; then
             args+=(--resume-successful-today)
           fi
@@ -113,10 +113,6 @@ jobs:
             outputs/combined_scrapes/history/combined_scrape_*.csv
             outputs/market_analysis/market_prices_annotated_latest.csv
             outputs/market_analysis/outlier_audit_latest.csv
-            outputs/model_proposals/USD/*.csv
-            outputs/model_proposals/USD/history/*.csv
-            outputs/model_proposals/EUR/*.csv
-            outputs/model_proposals/EUR/history/*.csv
             outputs/diagnostics/scrape_status_latest.csv
             outputs/diagnostics/scrape_status_history/*.csv
             outputs/diagnostics/logs/*.log

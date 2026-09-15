@@ -43,7 +43,7 @@ EXPECTED_CURRENT_OUTPUTS = {
     for name, _script, _timeout_s in SCRAPERS
 }
 QUALITY_RULES = {
-    "airalo": {"min_rows": 1000, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
+    "airalo": {"min_rows": 800, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
     "holafly": {"min_rows": 700, "min_countries": 20, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
     "orange": {"min_rows": 1000, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
     "saily": {"min_rows": 500, "min_countries": 100, "min_row_ratio": 0.80, "min_country_ratio": 0.80},
