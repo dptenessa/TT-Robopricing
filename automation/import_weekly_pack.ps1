@@ -35,18 +35,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Weekly pack imported successfully."
-Write-Host "Running local data preparation and pricing model..."
-Write-Host ""
-
-python "$ScriptDir\pricing_pipeline.py"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Write-Host "Weekly pack was imported, but local preparation/model generation failed."
-    exit $LASTEXITCODE
-}
-
-Write-Host ""
-Write-Host "Weekly pack imported and local model proposals regenerated."
-Write-Host "You can now open the fast pricing editor."
+Write-Host "Weekly market pack imported successfully."
+Write-Host "No regression/model proposal generation is run during import."
+Write-Host "The imported market_prices_annotated_latest.csv is ready for the recommendation engine/editor."

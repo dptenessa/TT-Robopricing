@@ -6,8 +6,8 @@ import pandas as pd
 from datetime import datetime
 
 from PySide6.QtPrintSupport import QPrinter
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QColor, QShortcut, QKeySequence, QPainter, QPageSize, QPageLayout
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QFont, QColor, QShortcut, QKeySequence, QPainter, QPageSize, QPageLayout
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -53,12 +53,30 @@ from currency_support import (
     normalize_currency,
 )
 from pipeline_files import FILES
+try:
+    from pricing_recommendations import (
+        annotate_price_book_with_recommendations,
+        generate_recommendations_from_files,
+        recommendation_outputs_are_stale,
+    )
+except ImportError:
+    from automation.pricing_recommendations import (
+        annotate_price_book_with_recommendations,
+        generate_recommendations_from_files,
+        recommendation_outputs_are_stale,
+    )
+try:
+    from market_insights import generate_market_insights, market_insights_is_stale
+except ImportError:
+    from automation.market_insights import generate_market_insights, market_insights_is_stale
 
 
 BASE_DIR = FILES.base_dir
 PPG_PATH = FILES.ppg_csv
 PROMOS_PATH = FILES.promos_json
 SALES_VOLUME_PATH = FILES.sales_volumes_xlsx
+RECOMMENDATIONS_PATH = FILES.work_dir / "pricing_recommendations" / "recommendations_latest.csv"
+MARKET_INSIGHTS_PATH = FILES.work_dir / "pricing_recommendations" / "market_insights_latest.html"
 MAX_SAVED_EXPORT_DROPDOWN_DATES = None
 
 
@@ -262,30 +280,43 @@ class MainWindow(QMainWindow):
 
         self.mode_buttons["inflate"].setChecked(True)
 
+        self.drag_safety_label = QLabel("Protected editing: hold SHIFT while dragging any curve tool.")
+        self.drag_safety_label.setWordWrap(True)
+        self.drag_safety_label.setStyleSheet(
+            "font-weight: bold; color: #8a4b08; background: #fff4df; "
+            "border: 1px solid #e6b566; border-radius: 4px; padding: 5px;"
+        )
+
+        self.recommendation_status_label = QLabel("Recommendations: not loaded")
+        self.recommendation_status_label.setWordWrap(True)
+        self.recommendation_status_label.setStyleSheet("color: #444444;")
+        self.reload_recommendations_btn = QPushButton("Refresh recommendations")
+        self.reload_recommendations_btn.setFixedHeight(32)
+        self.reload_recommendations_btn.setToolTip("Recalculate recommendations from the current price book and latest market data.")
+        self.reload_recommendations_btn.clicked.connect(lambda: self.refresh_pricing_intelligence(force=True, refresh=True))
+
+        self.open_market_insights_btn = QPushButton("Open market insights")
+        self.open_market_insights_btn.setFixedHeight(32)
+        self.open_market_insights_btn.setToolTip("Open the latest competitor-market movement dashboard in your browser.")
+        self.open_market_insights_btn.clicked.connect(self.open_market_insights)
+
         # Action buttons
         reset_zoom_btn = QPushButton("Home")
         reset_zoom_btn.setFixedHeight(38)
 
-        use_baseline_plan_btn = QPushButton("Plan → Model")
-        use_baseline_plan_btn.clicked.connect(self.use_baseline_for_selected_plan)
+        reset_plan_btn = QPushButton("↩ Reset plan")
+        reset_plan_btn.setToolTip("Restore the selected plan to the prices and promos loaded when this price book was opened.")
+        reset_plan_btn.clicked.connect(self.use_loaded_for_selected_plan)
 
-        use_baseline_unit_btn = QPushButton("All → Model")
-        use_baseline_unit_btn.clicked.connect(self.use_baseline_for_pricing_unit)
-        
-        use_loaded_plan_btn = QPushButton("Plan → Loaded")
-        use_loaded_plan_btn.clicked.connect(self.use_loaded_for_selected_plan)
+        reset_unit_btn = QPushButton("↩ Reset pricing unit")
+        reset_unit_btn.setToolTip("Restore every plan in the selected pricing unit to the loaded price-book state.")
+        reset_unit_btn.clicked.connect(self.use_loaded_for_pricing_unit)
 
-        use_loaded_unit_btn = QPushButton("All → Loaded")
-        use_loaded_unit_btn.clicked.connect(self.use_loaded_for_pricing_unit)
-        
-        baseline_grid = QGridLayout()
-        baseline_grid.setHorizontalSpacing(6)
-        baseline_grid.setVerticalSpacing(6)
-
-        baseline_grid.addWidget(use_baseline_plan_btn, 0, 0)
-        baseline_grid.addWidget(use_loaded_plan_btn, 0, 1)
-        baseline_grid.addWidget(use_baseline_unit_btn, 1, 0)
-        baseline_grid.addWidget(use_loaded_unit_btn, 1, 1)
+        reset_grid = QGridLayout()
+        reset_grid.setHorizontalSpacing(6)
+        reset_grid.setVerticalSpacing(6)
+        reset_grid.addWidget(reset_plan_btn, 0, 0)
+        reset_grid.addWidget(reset_unit_btn, 0, 1)
 
         export_btn = QPushButton("💾 Save pricing")
         export_btn.clicked.connect(self.export_prices)
@@ -364,9 +395,17 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(self.promo_list)
 
         side_layout.addWidget(QLabel("Drag tools"))
+        side_layout.addWidget(self.drag_safety_label)
         side_layout.addLayout(mode_row_1)
         side_layout.addLayout(mode_row_2)
         side_layout.addLayout(mode_row_3)
+
+        side_layout.addWidget(QLabel("Pricing recommendations"))
+        side_layout.addWidget(self.recommendation_status_label)
+        recommendation_buttons = QHBoxLayout()
+        recommendation_buttons.addWidget(self.reload_recommendations_btn)
+        recommendation_buttons.addWidget(self.open_market_insights_btn)
+        side_layout.addLayout(recommendation_buttons)
 
 
         impact_box = QWidget()
@@ -403,7 +442,7 @@ class MainWindow(QMainWindow):
         ]:
             side_layout.addWidget(widget)
 
-        side_layout.addLayout(baseline_grid)
+        side_layout.addLayout(reset_grid)
 
         for widget in [
             export_btn,
@@ -420,6 +459,7 @@ class MainWindow(QMainWindow):
         reset_zoom_btn.clicked.connect(self.canvas.reset_zoom)
         self.canvas.pointSelected.connect(self.on_point_selected)
         self.canvas.pointDragged.connect(self.on_point_dragged)
+        self.canvas.recommendationSelected.connect(self.on_recommendation_selected)
         self.canvas.promoSelected.connect(self.on_promo_selected_from_chart)
         self.canvas.statusChanged.connect(self.statusBar().showMessage)
 
@@ -634,50 +674,10 @@ class MainWindow(QMainWindow):
         self.saved_state_combo.setCurrentIndex(selected_index)
         self.saved_state_combo.blockSignals(False)
 
-    def augment_baseline_with_locked_regions(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add locked region rows from the canonical current price book.
-
-        Country model proposals remain the baseline for country curves. Regions
-        are no longer generated by the model, so their canonical current rows
-        are appended as first-class editor destinations. If no model proposal is
-        available, the full canonical current price book becomes the baseline.
-        """
-        current_path = FILES.editor_exports_dir / "manual_prices_current.xlsx"
-        if not current_path.exists():
-            legacy = FILES.editor_exports_dir / "manual_prices_current.csv"
-            if legacy.exists():
-                current_path = legacy
-            else:
-                return df
-        current_df = load_table(
-            current_path,
-            currency_hint="EUR",
-            eur_to_usd=self.state.eur_to_usd,
-        )
-        if current_df.empty:
-            return df
-        if df.empty:
-            return current_df
-
-        region_rows = current_df[
-            current_df["PricingSourceUsed"].astype(str).str.strip().str.lower().eq("region_max")
-        ].copy()
-        if region_rows.empty:
-            return df
-
-        existing = set(df.get("sku_scope_key", pd.Series(dtype=str)).astype(str))
-        region_rows = region_rows[~region_rows["sku_scope_key"].astype(str).isin(existing)].copy()
-        if region_rows.empty:
-            return df
-
-        combined = pd.concat([df, region_rows], ignore_index=True, sort=False)
-        combined["row_id"] = combined.index.astype(str)
-        return combined
-
     def load_export_prices_from_folder(self, folder: str | Path, silent: bool = False) -> bool:
         folder = Path(folder)
         consolidated = None
-        for name in ("manual_prices_current.xlsx", "manual_prices_current.csv", "model_proposal_latest.csv"):
+        for name in ("manual_prices_current.xlsx", "manual_prices_current.csv"):
             candidate = folder / name
             if candidate.exists():
                 consolidated = candidate
@@ -693,7 +693,7 @@ class MainWindow(QMainWindow):
             # Legacy read-only fallback. New saves never use currency folders.
             df = self.load_currency_tables_from_folder(
                 folder,
-                ["manual_prices_current.xlsx", "manual_prices_current.csv", "model_proposal_latest.csv"],
+                ["manual_prices_current.xlsx", "manual_prices_current.csv"],
             )
 
         if df.empty:
@@ -705,7 +705,7 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
         return True
 
-    def load_baseline(self):
+    def load_pricebook(self):
         folder = QFileDialog.getExistingDirectory(
             self,
             "Load current price-book folder",
@@ -721,27 +721,26 @@ class MainWindow(QMainWindow):
                 source = candidate
                 break
 
-        if source is not None:
-            df = load_table(
-                source,
-                currency_hint="EUR",
-                eur_to_usd=self.state.eur_to_usd,
+        if source is None:
+            QMessageBox.warning(
+                self,
+                "Load failed",
+                "No manual_prices_current.xlsx or manual_prices_current.csv was found in that folder.",
             )
-        else:
-            # Legacy fallback only. The model proposal is no longer the editor's
-            # structural baseline when a canonical current price book exists.
-            df = self.load_currency_tables_from_folder(
-                folder,
-                ["model_proposal_latest.csv"],
-            )
+            return
 
+        df = load_table(
+            source,
+            currency_hint="EUR",
+            eur_to_usd=self.state.eur_to_usd,
+        )
         if df.empty:
-            QMessageBox.warning(self, "Load failed", "No usable current price book found.")
+            QMessageBox.warning(self, "Load failed", "No usable current price-book rows found.")
             return
 
         # The current price book is authoritative for both the set of points and
         # their current values/promos/overrides.
-        self.state.preload_baseline(df)
+        self.state.preload_pricebook(df)
         self.state.preload_last_export(df)
 
         self.populate_combos()
@@ -800,7 +799,7 @@ class MainWindow(QMainWindow):
         # A history snapshot is a complete historical price book, not merely an
         # overlay on today's structure. Rebuild the editor from the snapshot so
         # rows that existed then cannot be suppressed by today's price book.
-        self.state.preload_baseline(df)
+        self.state.preload_pricebook(df)
         self.state.preload_last_export(df)
         self.populate_combos()
         self.autosave_dirty = False
@@ -912,16 +911,6 @@ class MainWindow(QMainWindow):
         self.state.promo_catalog = load_promos(path)
         self.refresh_canvas()
 
-    def use_baseline_for_selected_plan(self):
-        self.state.reload_selected_plan_from_baseline()
-        self.mark_dirty()
-        self.refresh_canvas()
-
-    def use_baseline_for_pricing_unit(self):
-        self.state.reload_pricing_unit_from_baseline()
-        self.mark_dirty()
-        self.refresh_canvas()
-        
     def use_loaded_for_selected_plan(self, show_status: bool = False):
         self.state.reload_selected_plan_from_loaded()
         self.mark_dirty()
@@ -972,9 +961,10 @@ class MainWindow(QMainWindow):
         try:
             export_dir = FILES.editor_exports_dir
             self.save_exports_to_folder(export_dir)
+            self.refresh_pricing_intelligence(force=True, refresh=True)
             self.autosave_dirty = False
 
-            self.statusBar().showMessage("Quick saved to outputs/manual_prices/current")
+            self.statusBar().showMessage("Quick saved; recommendations and market insights refreshed.")
 
         except Exception as e:
             print("Quick save failed:", e)
@@ -1026,6 +1016,10 @@ class MainWindow(QMainWindow):
                 autosave=True,
                 timestamp=ts,
             )
+
+            # The canonical workbook is now saved, so regenerate the disposable
+            # recommendation annotation + CSVs + HTML insight view from that exact state.
+            self.refresh_pricing_intelligence(force=True, refresh=True)
 
             if not official_export:
                 self.save_export_metadata(
@@ -1201,7 +1195,7 @@ class MainWindow(QMainWindow):
         self.impact_label.setStyleSheet(f"color: {color(unit_impact)}; font-weight: bold;")
         self.total_impact_label.setStyleSheet(f"color: {color(total_impact)}; font-weight: bold;")
 
-        # Neutral (baseline numbers)
+        # Neutral (loaded price-book numbers)
         self.unit_last_month_label.setStyleSheet("color: #333333;")
         self.total_last_month_label.setStyleSheet("color: #333333;")
 
@@ -1307,9 +1301,151 @@ class MainWindow(QMainWindow):
         self.refresh_promo_list()
         self.refresh_promo_range_controls()
         self.refresh_selection_label()
+        self._refresh_recommendation_status()
         self.country_info_label.setText(self.state.country_info())
         self.refresh_impact_labels()
         
+
+    def refresh_pricing_intelligence(self, *, force: bool = False, refresh: bool = True) -> bool:
+        """Keep Excel annotations, recommendation CSVs and HTML insights in sync.
+
+        Opening the editor only recalculates when the workbook/market/config is newer
+        than the recommendation CSV. Explicit saves and the Refresh button force a
+        recalculation. Autosave intentionally does not, so the 30-second recovery
+        cycle stays lightweight.
+        """
+        price_book = FILES.editor_exports_dir / "manual_prices_current.xlsx"
+        if not price_book.exists() or not FILES.market_annotated.exists():
+            return False
+
+        cursor_active = False
+        try:
+            self.statusBar().showMessage("Refreshing pricing recommendations and market insights...")
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            cursor_active = True
+            QApplication.processEvents()
+
+            stale = recommendation_outputs_are_stale(
+                FILES, price_book_path=price_book, recommendations_path=RECOMMENDATIONS_PATH
+            )
+            if force or stale:
+                generate_recommendations_from_files(
+                    FILES,
+                    price_book_path=price_book,
+                    market_path=FILES.market_annotated,
+                    output_path=RECOMMENDATIONS_PATH,
+                )
+            else:
+                if RECOMMENDATIONS_PATH.exists():
+                    recs = pd.read_csv(RECOMMENDATIONS_PATH, low_memory=False)
+                    annotate_price_book_with_recommendations(price_book, recs)
+                    # The annotation is derived from this exact CSV. Touching the
+                    # CSV records that synchronization so the workbook annotation
+                    # itself does not make recommendations look stale next launch.
+                    RECOMMENDATIONS_PATH.touch()
+                if force or market_insights_is_stale(
+                    FILES,
+                    recommendations_path=RECOMMENDATIONS_PATH,
+                    output_path=MARKET_INSIGHTS_PATH,
+                ):
+                    generate_market_insights(FILES, recommendations_path=RECOMMENDATIONS_PATH)
+
+            self.load_recommendations(refresh=refresh)
+            self.statusBar().showMessage("Pricing recommendations and market insights are up to date.")
+            return True
+        except Exception as exc:
+            print("Pricing intelligence refresh failed:", exc)
+            self.statusBar().showMessage(f"Pricing intelligence refresh failed: {exc}")
+            return False
+        finally:
+            if cursor_active:
+                self.clear_busy_cursor()
+
+    def open_market_insights(self):
+        if not MARKET_INSIGHTS_PATH.exists():
+            self.refresh_pricing_intelligence(force=False, refresh=False)
+        if not MARKET_INSIGHTS_PATH.exists():
+            QMessageBox.warning(self, "Market insights", "The market insights HTML could not be generated.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(MARKET_INSIGHTS_PATH.resolve())))
+
+    def load_recommendations(self, *_args, refresh: bool = True):
+        if not RECOMMENDATIONS_PATH.exists():
+            self.state.preload_recommendations(pd.DataFrame(), source=RECOMMENDATIONS_PATH)
+            if hasattr(self, "recommendation_status_label"):
+                self.recommendation_status_label.setText("Recommendations: file not found. Run pricing_recommendations.py first.")
+            if refresh and self.state.countries():
+                self.refresh_canvas()
+            return False
+
+        try:
+            df = pd.read_csv(RECOMMENDATIONS_PATH)
+            self.state.preload_recommendations(df, source=RECOMMENDATIONS_PATH)
+        except Exception as exc:
+            self.state.preload_recommendations(pd.DataFrame(), source=RECOMMENDATIONS_PATH)
+            if hasattr(self, "recommendation_status_label"):
+                self.recommendation_status_label.setText(f"Recommendations: could not load ({exc})")
+            if refresh and self.state.countries():
+                self.refresh_canvas()
+            return False
+
+        self._refresh_recommendation_status()
+        if refresh and self.state.countries():
+            self.refresh_canvas()
+        self.statusBar().showMessage(
+            f"Loaded {self.state.recommendations_actionable_rows} actionable recommendations."
+        )
+        return True
+
+    def _refresh_recommendation_status(self):
+        if not hasattr(self, "recommendation_status_label"):
+            return
+        if self.state.recommendations_loaded_rows <= 0:
+            self.recommendation_status_label.setText("Recommendations: not loaded")
+            return
+
+        points = self.state.current_points()
+        visible = sum(1 for p in points if p.get("recommendation"))
+        stale = sum(1 for p in points if p.get("recommendation_stale"))
+        text = (
+            f"{visible} actionable here in {self.state.active_currency} | "
+            f"{self.state.recommendations_actionable_rows} total rows actionable"
+        )
+        if stale:
+            text += f" | {stale} stale here"
+        text += "\nClick ▲/▼ to apply. Curve dragging always requires SHIFT."
+        self.recommendation_status_label.setText(text)
+
+    def on_recommendation_selected(self, row_id: str):
+        self.state.selected_row_id = str(row_id)
+        result = self.state.apply_recommendation(str(row_id))
+
+        if result.get("needs_confirmation"):
+            answer = QMessageBox.question(
+                self,
+                "Shared promo recommendation",
+                str(result.get("message", "Apply shared promo?")),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                self.refresh_canvas()
+                self.statusBar().showMessage("Recommendation not applied.")
+                return
+            result = self.state.apply_recommendation(str(row_id), force_shared_promo=True)
+
+        if not result.get("ok"):
+            message = str(result.get("message", "Recommendation could not be applied."))
+            if result.get("stale"):
+                QMessageBox.warning(self, "Stale recommendation", message)
+            else:
+                QMessageBox.warning(self, "Recommendation", message)
+            self.refresh_canvas()
+            return
+
+        self.mark_dirty()
+        self.refresh_canvas()
+        self.statusBar().showMessage(str(result.get("message", "Recommendation applied.")))
 
     def on_point_selected(self, row_id: str):
         self.state.selected_row_id = str(row_id)
@@ -1355,6 +1491,125 @@ class MainWindow(QMainWindow):
         self.mark_dirty()
         self.refresh_canvas()
 
+    @staticmethod
+    def _rec_value(rec: dict, key: str):
+        value = pd.to_numeric(rec.get(key, None), errors="coerce")
+        return None if pd.isna(value) else float(value)
+
+    @staticmethod
+    def _human_recommendation_reason(rec: dict) -> str:
+        reason = str(rec.get("Reason", "") or "").strip().lower()
+        direction = str(rec.get("Direction", "") or "").upper()
+        if reason == "local_signal_list_price":
+            side = "cheap" if direction == "UP" else "expensive"
+            return (
+                f"The permanent list price looks locally {side} versus the adjacent duration anchors "
+                "after adjusting for the competitor market."
+            )
+        if reason == "isolated_anchor_local_signal":
+            side = "expensive" if direction == "DOWN" else "cheap"
+            return (
+                f"This appears to be an isolated {side} anchor rather than a structural curve issue, "
+                "so the engine recommends a promo/net-price adjustment instead of changing the list-price curve."
+            )
+        if reason == "consecutive_anchor_local_signal":
+            side = "high" if direction == "DOWN" else "low"
+            return (
+                f"The same structural signal appears across consecutive anchors, suggesting the list-price segment is {side}."
+            )
+        return str(rec.get("Reason", "") or "").replace("_", " ") or "Local market-position signal."
+
+    def _recommendation_detail_text(self, rec: dict) -> str:
+        direction = str(rec.get("Direction", "") or "").upper()
+        arrow = "▲" if direction == "UP" else "▼" if direction == "DOWN" else "•"
+        mechanism = str(rec.get("Mechanism", "") or "").upper()
+        is_promo = mechanism == "PROMO"
+        kind = "P" if is_promo else "L"
+        mechanism_label = "PROMO / NET PRICE" if is_promo else "LIST PRICE"
+        currency = self.state.active_currency
+
+        current_list = self._rec_value(rec, "CurrentListPriceNow")
+        if current_list is None:
+            current_list = self._rec_value(rec, "CurrentListPrice")
+        current_net = self._rec_value(rec, "CurrentNetPriceNow")
+        if current_net is None:
+            current_net = self._rec_value(rec, "CurrentNetPrice")
+        target = self._rec_value(rec, "MarketTargetPrice")
+        providers = int(self._rec_value(rec, "MarketProviderCount") or 0)
+        neighbours = int(self._rec_value(rec, "NeighborAnchorCount") or 0)
+        decision_basis = str(rec.get("DecisionBasis", "") or "").replace("_", " ")
+        confidence = str(rec.get("Confidence", "") or "").upper()
+        promo_code = str(rec.get("CurrentPromoCodeNow", rec.get("CurrentPromoCode", "")) or "").strip()
+        if promo_code.lower() in {"nan", "none"}:
+            promo_code = ""
+
+        if is_promo:
+            suggested = self._rec_value(rec, "SuggestedPromoFinalPrice")
+            if suggested is None:
+                suggested = self._rec_value(rec, "SuggestedNetPrice")
+            deviation = self._rec_value(rec, "PositionDeviationPct")
+            suggested_promo = str(rec.get("SuggestedPromoCode", "") or "").strip()
+            if suggested_promo.lower() in {"nan", "none"}:
+                suggested_promo = ""
+            action = f"Set net price to {suggested:.2f} {currency}" if suggested is not None else "Adjust net price"
+            if suggested_promo:
+                action += f" via promo {suggested_promo}"
+            action += "; list price stays unchanged."
+        else:
+            suggested = self._rec_value(rec, "SuggestedListPrice")
+            if suggested is None:
+                suggested = self._rec_value(rec, "SuggestedNetPrice")
+            deviation = self._rec_value(rec, "ListPositionDeviationPct")
+            action = f"Set list price to {suggested:.2f} {currency}." if suggested is not None else "Adjust list price."
+
+        current_parts = []
+        if current_list is not None:
+            current_parts.append(f"list {current_list:.2f}")
+        if current_net is not None:
+            current_parts.append(f"net {current_net:.2f}")
+        current_line = f"Current: {' | '.join(current_parts)}" if current_parts else "Current price unavailable"
+        if promo_code:
+            current_line += f" | active promo {promo_code}"
+
+        evidence = []
+        if target is not None:
+            evidence.append(f"market reference {target:.2f} {currency}")
+        if deviation is not None:
+            if deviation < 0:
+                evidence.append(f"{abs(deviation):.0%} cheaper vs market than neighboring anchors")
+            elif deviation > 0:
+                evidence.append(f"{abs(deviation):.0%} more expensive vs market than neighboring anchors")
+        if providers:
+            evidence.append(f"{providers} competitor providers")
+        if neighbours:
+            evidence.append(f"{neighbours} neighboring anchors")
+
+        secondary = str(rec.get("SecondarySignal", "") or "").upper()
+        priority = str(rec.get("PriorityCountry", "") or "").strip()
+        market_context = ""
+        if priority and priority.lower() not in {"nan", "none"}:
+            market_context = f"\nMini-region: priority market {priority}"
+            if secondary and secondary not in {"NONE", "NAN"}:
+                market_context += f" | secondary-market signal {secondary}"
+
+        scope_note = "This applies only to this anchor SKU"
+        countries = str(rec.get("Countries", "") or "").strip()
+        if countries and "," in countries:
+            scope_note += f", across the shared pricing unit ({countries})"
+        scope_note += ". It does not move the rest of the curve."
+
+        reason_text = self._human_recommendation_reason(rec)
+        evidence_line = " | ".join(evidence) if evidence else "local market/neighbor evidence"
+        return (
+            f"\n\n{arrow}{kind}  {direction} — {mechanism_label} | Confidence: {confidence}\n"
+            f"Action: {action}\n"
+            f"{current_line}\n"
+            f"Why: {reason_text}\n"
+            f"Evidence: {evidence_line}\n"
+            f"Signal basis: {decision_basis or '-'}{market_context}\n"
+            f"Scope: {scope_note}"
+        )
+
     def refresh_selection_label(self):
         info = self.state.selected_point_info()
         if not info:
@@ -1362,25 +1617,45 @@ class MainWindow(QMainWindow):
             return
 
         promo = f"\nPromo: {info['promo']}" if info.get("promo") else ""
-        export_status = "blocked" if info.get("is_partner_export_blocked") else "ok"
-        block_reason = (
-            f" ({info.get('partner_export_block_reason')})"
-            if info.get("is_partner_export_blocked")
-            else ""
-        )
+        below_by_currency = info.get("below_cost_floor_by_currency") or {}
+        below_currencies = [
+            currency for currency, is_below in below_by_currency.items() if bool(is_below)
+        ]
+        allow_below_cost = bool(info.get("allow_below_cost", False))
+        if below_currencies:
+            if allow_below_cost:
+                export_status = f"eligible by override (below floor: {','.join(below_currencies)})"
+            else:
+                export_status = f"excluded below floor ({','.join(below_currencies)})"
+        else:
+            export_status = "eligible"
         entry_status = "NEW - no previous saved/exported price" if info.get("is_new_entry") else "Existing"
+
+        recommendation_text = ""
+        rec = self.state.recommendation_for_point(
+            info, self.state.active_currency, actionable_only=True
+        )
+        if rec is not None:
+            if rec.get("applied"):
+                recommendation_text = "\nRecommendation: applied in this session"
+            elif rec.get("stale"):
+                recommendation_text = "\nRecommendation: STALE - rerun pricing_recommendations.py"
+            else:
+                recommendation_text = self._recommendation_detail_text(rec)
+
         self.selection_label.setText(
             f"{display_plan_label(info['plan'])} | {info['days']} days | {info['gb']} GB\n"
             f"Entry: {entry_status}\n"
             f"Currency: {self.state.active_currency}\n"
             f"Working price: {info['y']:.2f}\n"
-            f"Model price: {info['base_y']:.2f}\n"
+            f"Loaded price: {info['base_y']:.2f}\n"
             f"ISO: {info.get('iso') or '-'}\n"
             f"Pricing unit: {info['pricing_unit_id'] or '-'}\n"
             f"Source: {info['pricing_source'] or '-'} | Region: {info['pricing_region'] or '-'}\n"
             f"Unit countries: {info['pricing_unit_countries'] or '-'}\n"
             f"Countries affected in editor: {info['editor_scope_countries'] or '-'}\n"
-            f"Partner export: {export_status}{block_reason}{promo}"
+            f"Partner export: {export_status}{promo}"
+            f"{recommendation_text}"
         )
 
     def refresh_promo_list(self):
@@ -1685,21 +1960,11 @@ class MainWindow(QMainWindow):
             if not df.empty:
                 progress("Preparing current price book...")
                 # The canonical current workbook defines the complete editor
-                # structure. Do not let model_proposal_latest.csv decide which
-                # points exist or overwrite manually maintained prices.
-                self.state.preload_baseline(df)
+                # structure and the initial/reset state for this session.
+                self.state.preload_pricebook(df)
                 self.state.preload_last_export(df)
         else:
-            # First-run / legacy fallback only. Once manual_prices_current exists,
-            # model proposals are reference data rather than the editor baseline.
-            progress("Current price book not found; loading legacy model proposal...")
-            df = self.load_currency_tables_from_folder(
-                FILES.proposals_dir,
-                ["model_proposal_latest.csv"],
-            )
-            if not df.empty:
-                self.state.preload_baseline(df)
-                self.state.reload_working_from_baseline()
+            progress("Current price book not found. The editor requires manual_prices_current.xlsx.")
 
         progress("Loading competitor market data...")
         df_market = self.load_currency_tables_from_folder(
@@ -1716,6 +1981,12 @@ class MainWindow(QMainWindow):
             sales_df.columns = sales_df.columns.astype(str).str.strip()
             if not sales_df.empty:
                 self.state.preload_sales_volumes(sales_df)
+
+        progress("Synchronizing pricing recommendations...")
+        self.refresh_pricing_intelligence(force=False, refresh=False)
+        # refresh_pricing_intelligence already loads the recommendation CSV when possible.
+        if self.state.recommendations_loaded_rows <= 0:
+            self.load_recommendations(refresh=False)
 
         self.refresh_saved_state_combo()
 

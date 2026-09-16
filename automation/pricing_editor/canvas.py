@@ -18,6 +18,7 @@ except ImportError:
 class PriceCurveCanvas(QWidget):
     pointSelected = Signal(str)
     pointDragged = Signal(str, float, int)
+    recommendationSelected = Signal(str)
     promoSelected = Signal(str)
     statusChanged = Signal(str)
 
@@ -48,6 +49,9 @@ class PriceCurveCanvas(QWidget):
         self.zoom_y_min = None
         self.zoom_y_max = None
         self.competitor_hitboxes = []
+        self.recommendation_hitboxes = []
+        self.recommendation_card_apply_hitbox: QRectF | None = None
+        self.recommendation_card_row_id: str | None = None
         self.zoom_rect = None
         self.zoom_start = None
         self.pan_start = None
@@ -85,7 +89,6 @@ class PriceCurveCanvas(QWidget):
         super().keyPressEvent(event)
 
     def mouseMoveEvent(self, event):
-        
         # --- Pan ---
         if self.pan_start is not None and self.pan_origin is not None:
             x0, x1, y0, y1 = self.pan_origin
@@ -107,57 +110,70 @@ class PriceCurveCanvas(QWidget):
             self.zoom_rect = (self.zoom_start, event.position())
             self.update()
             return
-        else:
-            self.setCursor(Qt.ArrowCursor)
 
-        promo_code = self._nearest_promo_marker(event.position())
-        if promo_code:
-            self.setCursor(Qt.PointingHandCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-
-        # --- Dragging a point ---
+        # --- Protected price dragging: SHIFT must remain pressed ---
         if self.drag_index is not None and 0 <= self.drag_index < len(self.points):
+            if not (event.modifiers() & Qt.ShiftModifier):
+                self.drag_index = None
+                self.is_dragging = False
+                self.setCursor(Qt.ArrowCursor)
+                self.statusChanged.emit("Price edit stopped: hold SHIFT while dragging curve points.")
+                return
             self.setCursor(Qt.SizeVerCursor)
             y = self._from_screen_y(event.position().y())
             row_id = self.points[self.drag_index]["row_id"]
             self.pointDragged.emit(row_id, y, self.drag_index)
             return
 
+        if (
+            self.recommendation_card_apply_hitbox is not None
+            and self.recommendation_card_row_id
+            and self.recommendation_card_apply_hitbox.contains(event.position())
+        ):
+            self.setCursor(Qt.PointingHandCursor)
+            self.statusChanged.emit("Apply the selected SKU recommendation.")
+            return
+
+        recommendation_hit = self._nearest_recommendation(event.position())
+        if recommendation_hit is not None:
+            _, recommendation = recommendation_hit
+            self.setCursor(Qt.PointingHandCursor)
+            self.statusChanged.emit(self._recommendation_message(recommendation))
+            return
+
         promo_code = self._nearest_promo_marker(event.position())
         if promo_code:
             self.setCursor(Qt.PointingHandCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
+            self.statusChanged.emit(f"Promo option: {promo_code}")
+            return
 
-        # --- ✅ FIX: competitor hover FIRST ---
+        # Competitor hover before HT point hover.
         comp = self._nearest_competitor(event.position()) if self.show_competitors else None
         if comp is not None:
+            self.setCursor(Qt.ArrowCursor)
             msg = (
                 f'Operator: {comp["provider"]} | Plan: {display_plan_label(comp.get("plan", ""))} | '
                 f'Days: {comp.get("days", "")} | GB: {comp.get("gb", "")} | '
                 f'Price: {comp["y"]:.2f} | Promo: no'
             )
             self.statusChanged.emit(msg)
-            #QToolTip.showText(event.globalPosition().toPoint(), msg, self)
             return
 
-        # --- HT hover ---
         idx = self._nearest_point_index(event.position())
         if idx is not None:
+            self.setCursor(Qt.ArrowCursor)
             p = self.points[idx]
             msg = (
                 f'Operator: HT | Plan: {display_plan_label(p["plan"])} | Days: {p["days"]} | '
-                f'GB: {p["gb"]} | Price: {p["y"]:.2f} | Promo: {p["promo"] or "no"}'
+                f'GB: {p["gb"]} | Price: {p["y"]:.2f} | Promo: {p["promo"] or "no"} | '
+                f'Hold SHIFT + drag to edit'
             )
             self.statusChanged.emit(msg)
-            # QToolTip.showText(event.globalPosition().toPoint(), msg, self)
             return
 
-        # --- Promo hover ---
-        promo_code = self._nearest_promo_marker(event.position())
-        self.statusChanged.emit(f"Promo option: {promo_code}" if promo_code else "")
-        
+        self.setCursor(Qt.ArrowCursor)
+        self.statusChanged.emit("")
+
     def mouseReleaseEvent(self, event):
 
          # --- Finish pan ---
@@ -227,9 +243,6 @@ class PriceCurveCanvas(QWidget):
         except Exception:
             return False
 
-    def _is_partner_export_blocked(self, point: dict[str, Any]) -> bool:
-        return bool(point.get("is_partner_export_blocked") or point.get("partner_export_blocked"))
-
     def _floor_marker_state(self, point: dict[str, Any]) -> str:
         below_by_currency = point.get("below_cost_floor_by_currency") or {}
         active_currency = str(point.get("active_currency") or "").upper()
@@ -243,7 +256,7 @@ class PriceCurveCanvas(QWidget):
             return "both_below"
         if active_below:
             return "active_below"
-        if other_below or self._is_partner_export_blocked(point):
+        if other_below:
             return "other_below"
         return "ok"
 
@@ -255,8 +268,13 @@ class PriceCurveCanvas(QWidget):
 
         x0, x1 = min(xs), max(xs)
 
-        # Use HT data only for chart scaling
-        ht_prices = [p["y"] for p in self.points] + [p["base_y"] for p in self.points]
+        # Use current HT prices and visible cost-floor values for chart scaling.
+        ht_prices = [float(p["y"]) for p in self.points]
+        ht_prices.extend(
+            float(p["cost_floor"])
+            for p in self.points
+            if p.get("cost_floor") is not None
+        )
 
         if not ht_prices:
             ht_prices = [0.0, 1.0]
@@ -355,6 +373,361 @@ class PriceCurveCanvas(QWidget):
                 best_dist, best = dist, item["promo_code"]
         return best if best_dist <= 13 else None
 
+    def _nearest_recommendation(self, pos):
+        for rect, row_id, recommendation in reversed(self.recommendation_hitboxes):
+            if rect.contains(pos):
+                return row_id, recommendation
+        return None
+
+    @staticmethod
+    def _rec_num(recommendation: dict[str, Any], key: str) -> float | None:
+        try:
+            value = float(recommendation.get(key))
+            return value if math.isfinite(value) else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _recommendation_kind(mechanism: str) -> tuple[str, str]:
+        mechanism = str(mechanism or "").upper()
+        if mechanism == "PROMO":
+            return "P", "PROMO / NET PRICE"
+        if mechanism.startswith("LIST_PRICE"):
+            return "L", "LIST PRICE"
+        return "?", mechanism.replace("_", " ") or "UNKNOWN"
+
+    @staticmethod
+    def _market_match_text(recommendation: dict[str, Any]) -> str:
+        mode = str(recommendation.get("MarketMatchMode", "") or "").strip()
+        days = recommendation.get("Days")
+        try:
+            days_text = f"{int(round(float(days)))}d"
+        except Exception:
+            days_text = "same duration"
+
+        if mode == "exact_day":
+            duration_text = f"exact {days_text}"
+        elif mode.startswith("fallback_"):
+            dmin = recommendation.get("MarketDurationMin")
+            dmax = recommendation.get("MarketDurationMax")
+            try:
+                duration_text = f"fallback {float(dmin):g}-{float(dmax):g}d"
+            except Exception:
+                duration_text = mode.replace("fallback_", "fallback ").replace("_", "-")
+        else:
+            duration_text = "market match unavailable"
+
+        plan = str(recommendation.get("Plan", "") or "").lower()
+        if "unlimited" in plan:
+            metric_text = "Unlimited only · total price"
+        else:
+            weight = recommendation.get("MarketPricePerGBWeight")
+            try:
+                ppg = float(weight)
+                metric_text = f"capped only · {ppg:.0%} price/GB + {1.0-ppg:.0%} total"
+            except Exception:
+                metric_text = "capped only · price/GB + total"
+        return f"{duration_text} · {metric_text}"
+
+    def _recommendation_message(self, recommendation: dict[str, Any]) -> str:
+        direction = str(recommendation.get("Direction", "")).upper()
+        confidence = str(recommendation.get("Confidence", "")).upper()
+        mechanism = str(recommendation.get("Mechanism", "")).upper()
+        kind, mechanism_label = self._recommendation_kind(mechanism)
+        currency = str(recommendation.get("Currency", ""))
+        current_list = self._rec_num(recommendation, "CurrentListPriceNow")
+        if current_list is None:
+            current_list = self._rec_num(recommendation, "CurrentListPrice")
+        current_net = self._rec_num(recommendation, "CurrentNetPriceNow")
+        if current_net is None:
+            current_net = self._rec_num(recommendation, "CurrentNetPrice")
+        market_target = self._rec_num(recommendation, "MarketTargetPrice")
+
+        if kind == "L":
+            suggested = self._rec_num(recommendation, "SuggestedListPrice")
+            deviation = self._rec_num(recommendation, "ListPositionDeviationPct")
+        else:
+            suggested = self._rec_num(recommendation, "SuggestedPromoFinalPrice")
+            if suggested is None:
+                suggested = self._rec_num(recommendation, "SuggestedNetPrice")
+            deviation = self._rec_num(recommendation, "PositionDeviationPct")
+
+        suggested_text = f"{suggested:.2f} {currency}" if suggested is not None else "-"
+        current_text = []
+        if current_list is not None:
+            current_text.append(f"list {current_list:.2f}")
+        if current_net is not None:
+            current_text.append(f"net {current_net:.2f}")
+        market_text = f" | market ref {market_target:.2f}" if market_target is not None else ""
+        deviation_text = f" | vs neighbouring anchors {deviation:+.0%}" if deviation is not None else ""
+        promo_code = str(recommendation.get("SuggestedPromoCode", "")).strip()
+        if promo_code.lower() in {"nan", "none"}:
+            promo_code = ""
+        promo_text = f" via {promo_code}" if kind == "P" and promo_code else ""
+        match_text = self._market_match_text(recommendation)
+        return (
+            f"{('▲' if direction == 'UP' else '▼')}{kind} {direction} {mechanism_label}: "
+            f"{' / '.join(current_text)} -> {suggested_text}{promo_text}{market_text}{deviation_text} "
+            f"| {match_text} | {confidence} | click to apply this SKU only"
+        )
+
+    def _draw_recommendation_arrow(
+        self,
+        painter: QPainter,
+        point_screen: QPointF,
+        direction: str,
+        confidence: str,
+        mechanism: str = "",
+    ) -> QRectF:
+        direction = str(direction).upper()
+        confidence = str(confidence).upper()
+        kind, _ = self._recommendation_kind(mechanism)
+        size = 6 if confidence == "HIGH" else 5
+        cx = point_screen.x() + 20
+        cy = point_screen.y()
+        color = QColor("#2e7d32") if direction == "UP" else QColor("#c62828")
+        painter.setPen(QPen(color, 1))
+        painter.setBrush(QBrush(color))
+        if direction == "UP":
+            polygon = QPolygonF([
+                QPointF(cx, cy - size),
+                QPointF(cx - size, cy + size),
+                QPointF(cx + size, cy + size),
+            ])
+        else:
+            polygon = QPolygonF([
+                QPointF(cx - size, cy - size),
+                QPointF(cx + size, cy - size),
+                QPointF(cx, cy + size),
+            ])
+        painter.drawPolygon(polygon)
+
+        old_font = painter.font()
+        tag_font = QFont(old_font)
+        tag_font.setPointSize(max(7, old_font.pointSize() - 1))
+        tag_font.setBold(True)
+        painter.setFont(tag_font)
+        painter.setPen(color)
+        painter.drawText(int(cx + 8), int(cy + 4), kind)
+        painter.setFont(old_font)
+        return QRectF(cx - 9, cy - 10, 28, 20)
+
+    @staticmethod
+    def _recommendation_reason_short(recommendation: dict[str, Any]) -> str:
+        reason = str(recommendation.get("Reason", "") or "").strip().lower()
+        direction = str(recommendation.get("Direction", "") or "").upper()
+        if reason == "local_signal_list_price":
+            side = "cheap" if direction == "UP" else "expensive"
+            return (
+                f"Permanent list price looks locally {side} versus adjacent duration anchors "
+                "after competitor adjustment."
+            )
+        if reason == "isolated_anchor_local_signal":
+            side = "cheap" if direction == "UP" else "expensive"
+            return (
+                f"This is an isolated {side} anchor, so the recommendation uses a promo/net-price "
+                "adjustment instead of reshaping the list-price curve."
+            )
+        if reason == "consecutive_anchor_local_signal":
+            side = "low" if direction == "UP" else "high"
+            return f"The same structural signal appears across consecutive anchors; this curve segment looks {side}."
+        raw = str(recommendation.get("Reason", "") or "").replace("_", " ").strip()
+        return raw or "Local market-position signal versus neighbouring anchors."
+
+    def _selected_point(self) -> dict[str, Any] | None:
+        if self.selected_row_id is None:
+            return None
+        selected = str(self.selected_row_id)
+        for point in self.points:
+            if str(point.get("row_id", "")) == selected:
+                return point
+        return None
+
+    def _draw_recommendation_card(self, painter: QPainter, plot_rect: QRectF, x: float, y: float) -> float:
+        """Draw a persistent explanation card for the selected anchor.
+
+        The card intentionally lives inside the chart below the legend.  The
+        only interactive element is the Apply button; clicking elsewhere on
+        the card does not change prices.
+        """
+        point = self._selected_point()
+        if point is None:
+            return y
+
+        recommendation = point.get("recommendation")
+        stale = bool(point.get("recommendation_stale", False))
+        applied = bool(point.get("recommendation_applied", False))
+
+        max_width = max(260.0, min(470.0, float(plot_rect.width()) * 0.42))
+        card_x = float(x)
+        card_width = min(max_width, float(plot_rect.right()) - card_x - 8.0)
+        if card_width < 240:
+            return y
+
+        old_font = painter.font()
+
+        # A selected point with no currently actionable recommendation still
+        # gets a small persistent explanation instead of appearing to do nothing.
+        if not recommendation:
+            if stale:
+                message = "Recommendation is stale - rerun pricing_recommendations.py."
+                border = QColor("#ef6c00")
+            elif applied:
+                message = "Recommendation applied in this session."
+                border = QColor("#2e7d32")
+            else:
+                message = "No recommendation for this anchor."
+                border = QColor("#9e9e9e")
+
+            card_h = 42.0
+            card_rect = QRectF(card_x, y, card_width, card_h)
+            painter.setPen(QPen(border, 1))
+            painter.setBrush(QBrush(QColor(255, 255, 255, 232)))
+            painter.drawRoundedRect(card_rect, 6, 6)
+            painter.setPen(QColor("#444444"))
+            small_font = QFont(old_font)
+            small_font.setPointSize(8)
+            painter.setFont(small_font)
+            painter.drawText(card_rect.adjusted(10, 7, -10, -7), Qt.AlignLeft | Qt.AlignVCenter, message)
+            painter.setFont(old_font)
+            return card_rect.bottom()
+
+        direction = str(recommendation.get("Direction", "") or "").upper()
+        confidence = str(recommendation.get("Confidence", "") or "").upper()
+        mechanism = str(recommendation.get("Mechanism", "") or "").upper()
+        kind, mechanism_label = self._recommendation_kind(mechanism)
+        currency = str(recommendation.get("Currency", "") or "")
+        accent = QColor("#2e7d32") if direction == "UP" else QColor("#c62828")
+        arrow = "▲" if direction == "UP" else "▼"
+
+        current_list = self._rec_num(recommendation, "CurrentListPriceNow")
+        if current_list is None:
+            current_list = self._rec_num(recommendation, "CurrentListPrice")
+        current_net = self._rec_num(recommendation, "CurrentNetPriceNow")
+        if current_net is None:
+            current_net = self._rec_num(recommendation, "CurrentNetPrice")
+        market_target = self._rec_num(recommendation, "MarketTargetPrice")
+
+        if kind == "L":
+            suggested = self._rec_num(recommendation, "SuggestedListPrice")
+            deviation = self._rec_num(recommendation, "ListPositionDeviationPct")
+        else:
+            suggested = self._rec_num(recommendation, "SuggestedPromoFinalPrice")
+            if suggested is None:
+                suggested = self._rec_num(recommendation, "SuggestedNetPrice")
+            deviation = self._rec_num(recommendation, "PositionDeviationPct")
+
+        current_parts = []
+        if current_list is not None:
+            current_parts.append(f"{current_list:.2f} list")
+        if current_net is not None:
+            current_parts.append(f"{current_net:.2f} net")
+        current_text = " / ".join(current_parts) if current_parts else "current price unavailable"
+        suggested_text = f"{suggested:.2f} {currency}" if suggested is not None else "-"
+
+        market_parts = []
+        if market_target is not None:
+            market_parts.append(f"market ref {market_target:.2f} {currency}")
+        if deviation is not None:
+            market_parts.append(f"vs neighbouring anchors {deviation:+.0%}")
+        providers = self._rec_num(recommendation, "MarketProviderCount")
+        if providers is not None:
+            market_parts.append(f"{int(providers)} providers")
+        market_line = " · ".join(market_parts) if market_parts else "Local market / neighbour comparison"
+
+        countries = str(recommendation.get("Countries", "") or "").strip()
+        unit = str(recommendation.get("PricingUnitIdUsed", "") or "").strip()
+        priority = str(recommendation.get("PriorityCountry", "") or "").strip()
+        if countries and "," in countries:
+            scope = f"this anchor SKU across shared unit {unit or countries} ({countries})"
+            if priority and priority.lower() not in {"nan", "none"}:
+                scope += f" · priority market {priority}"
+        else:
+            scope = "this anchor SKU only"
+
+        promo_code = str(recommendation.get("CurrentPromoCodeNow", recommendation.get("CurrentPromoCode", "")) or "").strip()
+        if promo_code.lower() in {"nan", "none"}:
+            promo_code = ""
+        promo_note = f" · active promo {promo_code}" if promo_code else ""
+        action_prefix = "List" if kind == "L" else "Net"
+
+        # Fixed-height compact card.  It also exposes exactly how the market
+        # neighbours were selected so the recommendation can be audited.
+        card_h = 180.0
+        if y + card_h > plot_rect.bottom() - 6:
+            # Keep the card visible on shorter windows while remaining aligned
+            # with the legend column.
+            y = max(float(plot_rect.top()) + 8.0, float(plot_rect.bottom()) - card_h - 6.0)
+        card_rect = QRectF(card_x, y, card_width, card_h)
+        painter.setPen(QPen(accent, 1.5))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 235)))
+        painter.drawRoundedRect(card_rect, 7, 7)
+
+        header_font = QFont(old_font)
+        header_font.setPointSize(9)
+        header_font.setBold(True)
+        painter.setFont(header_font)
+        painter.setPen(accent)
+        painter.drawText(
+            QRectF(card_x + 10, y + 7, card_width - 20, 20),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            f"{arrow}{kind}  {direction} {mechanism_label} · {confidence}",
+        )
+
+        body_font = QFont(old_font)
+        body_font.setPointSize(8)
+        body_font.setBold(False)
+        painter.setFont(body_font)
+        painter.setPen(QColor("#333333"))
+        painter.drawText(
+            QRectF(card_x + 10, y + 30, card_width - 20, 18),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            f"Current: {current_text}{promo_note}  ->  {action_prefix}: {suggested_text}",
+        )
+        painter.drawText(
+            QRectF(card_x + 10, y + 49, card_width - 20, 18),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            market_line,
+        )
+        match_line = self._market_match_text(recommendation)
+        painter.setPen(QColor("#555555"))
+        painter.drawText(
+            QRectF(card_x + 10, y + 67, card_width - 20, 18),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            f"Match: {match_line}",
+        )
+
+        painter.setPen(QColor("#333333"))
+        reason = self._recommendation_reason_short(recommendation)
+        painter.drawText(
+            QRectF(card_x + 10, y + 88, card_width - 20, 38),
+            Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+            f"Why: {reason}",
+        )
+        painter.setPen(QColor("#555555"))
+        painter.drawText(
+            QRectF(card_x + 10, y + 128, card_width - 145, 36),
+            Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+            f"Scope: {scope}. It does not move the rest of the curve.",
+        )
+
+        button_w = 122.0
+        button_h = 26.0
+        button_rect = QRectF(card_rect.right() - button_w - 10, card_rect.bottom() - button_h - 10, button_w, button_h)
+        painter.setPen(QPen(accent, 1))
+        painter.setBrush(QBrush(QColor(250, 250, 250, 245)))
+        painter.drawRoundedRect(button_rect, 5, 5)
+        button_font = QFont(body_font)
+        button_font.setBold(True)
+        painter.setFont(button_font)
+        painter.setPen(accent)
+        painter.drawText(button_rect, Qt.AlignCenter, "Apply recommendation")
+
+        self.recommendation_card_apply_hitbox = button_rect
+        self.recommendation_card_row_id = str(point.get("row_id", ""))
+        painter.setFont(old_font)
+        return card_rect.bottom()
+
     def wheelEvent(self, event):
         rect = self._plot_rect()
         if not rect.contains(event.position()):
@@ -380,13 +753,11 @@ class PriceCurveCanvas(QWidget):
             return
 
         if event.button() == Qt.RightButton:
-            # 1) If right-click is on a promo / remove marker, apply that action
             promo_code = self._nearest_promo_marker(event.position())
             if promo_code:
                 self.promoSelected.emit(promo_code)
                 return
 
-            # 2) If right-click is on a price point, select it
             idx = self._nearest_point_index(event.position())
             if idx is not None:
                 row_id = self.points[idx]["row_id"]
@@ -395,25 +766,46 @@ class PriceCurveCanvas(QWidget):
                 self.pointSelected.emit(row_id)
                 return
 
-            # 3) Otherwise keep old right-click zoom behavior
             self.zoom_start = event.position()
             self.zoom_rect = None
             return
 
         if event.button() == Qt.LeftButton:
+            if (
+                self.recommendation_card_apply_hitbox is not None
+                and self.recommendation_card_row_id
+                and self.recommendation_card_apply_hitbox.contains(event.position())
+            ):
+                self.recommendationSelected.emit(str(self.recommendation_card_row_id))
+                return
+
+            recommendation_hit = self._nearest_recommendation(event.position())
+            if recommendation_hit is not None:
+                row_id, _ = recommendation_hit
+                self.selected_row_id = str(row_id)
+                self.show_promo_markers = False
+                self.promo_markers = []
+                self.recommendationSelected.emit(str(row_id))
+                return
+
             idx = self._nearest_point_index(event.position())
             if idx is not None:
                 self.show_promo_markers = False
                 self.promo_markers = []
-                self.drag_index = idx
-                self.is_dragging = True
-
                 row_id = self.points[idx]["row_id"]
                 self.selected_row_id = row_id
 
-                # Tell MainWindow that the point was selected.
-                self.pointSelected.emit(row_id)
+                # Selection is always safe. Price editing only starts while SHIFT is held.
+                if event.modifiers() & Qt.ShiftModifier:
+                    self.drag_index = idx
+                    self.is_dragging = True
+                    self.statusChanged.emit("Protected edit active: keep SHIFT pressed while dragging.")
+                else:
+                    self.drag_index = None
+                    self.is_dragging = False
+                    self.statusChanged.emit("Point selected. Hold SHIFT + drag to edit with the selected curve tool.")
 
+                self.pointSelected.emit(row_id)
                 self.update()
                 return
 
@@ -458,6 +850,9 @@ class PriceCurveCanvas(QWidget):
 
     def paintEvent(self, event):
         self.competitor_hitboxes = []
+        self.recommendation_hitboxes = []
+        self.recommendation_card_apply_hitbox = None
+        self.recommendation_card_row_id = None
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#fafafa"))
@@ -582,8 +977,6 @@ class PriceCurveCanvas(QWidget):
             line_color = QColor("#198754") if self._is_unlimited(plan) else QColor("#bdbdbd")
             line_width = 1 if self._is_unlimited(plan) else 1
             is_selected_plan = selected_plan == str(plan)
-            baseline_pts = [{"x": p["x"], "y": p.get("base_display_y", p["base_y"])} for p in package_points]
-            self._draw_polyline(painter, baseline_pts, QColor("#dcdcdc"), 1, dashed=True)
 
             if is_selected_plan:
                 cost_floor_pts = [
@@ -609,27 +1002,32 @@ class PriceCurveCanvas(QWidget):
                     outline = QColor("#555555")
                 floor_state = self._floor_marker_state(point)
 
-                # Always draw the actual price point first. Cost-floor warnings
-                # are overlays and must never replace/hide the point itself.
-                if point.get("is_new_entry"):
-                    self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#00897b"), 3)
-                else:
-                    self._draw_marker(painter, pt, "circle", marker_size, fill, outline, width)
-
-                if floor_state == "other_below":
-                    # Other currency only: blue ring around the existing point.
-                    painter.setPen(QPen(QColor("#1565c0"), 2))
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawEllipse(pt, marker_size + 2, marker_size + 2)
-                elif floor_state in {"active_below", "both_below"}:
-                    # This currency below = blue X; both currencies below = red X.
-                    # Keep the X smaller than the underlying marker so the point
-                    # (including its orange promo fill) remains visible.
+                # Cost-floor visualization is factual only; AllowBelowCost affects
+                # export eligibility, not chart markers. Active/both-below points
+                # are X-only so there is no ambiguous circle underneath.
+                if floor_state in {"active_below", "both_below"}:
                     cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
                     cross_half = 4
                     painter.setPen(QPen(cross_color, 2))
-                    painter.drawLine(QPointF(pt.x() - cross_half, pt.y() - cross_half), QPointF(pt.x() + cross_half, pt.y() + cross_half))
-                    painter.drawLine(QPointF(pt.x() - cross_half, pt.y() + cross_half), QPointF(pt.x() + cross_half, pt.y() - cross_half))
+                    painter.drawLine(
+                        QPointF(pt.x() - cross_half, pt.y() - cross_half),
+                        QPointF(pt.x() + cross_half, pt.y() + cross_half),
+                    )
+                    painter.drawLine(
+                        QPointF(pt.x() - cross_half, pt.y() + cross_half),
+                        QPointF(pt.x() + cross_half, pt.y() - cross_half),
+                    )
+                else:
+                    if point.get("is_new_entry"):
+                        self._draw_marker(painter, pt, "circle", marker_size, fill, QColor("#00897b"), 3)
+                    else:
+                        self._draw_marker(painter, pt, "circle", marker_size, fill, outline, width)
+
+                    if floor_state == "other_below":
+                        # Other currency only: blue ring around the normal point.
+                        painter.setPen(QPen(QColor("#1565c0"), 2))
+                        painter.setBrush(Qt.NoBrush)
+                        painter.drawEllipse(pt, marker_size + 2, marker_size + 2)
 
                 painter.setPen(QColor("#333333"))
 
@@ -639,6 +1037,21 @@ class PriceCurveCanvas(QWidget):
                     label = str(int(point["gb"])) if point.get("gb") is not None and float(point["gb"]).is_integer() else str(point.get("gb", ""))
                 
                 painter.drawText(int(pt.x()) - 14, int(pt.y()) - 11, label)
+
+                recommendation = point.get("recommendation")
+                if recommendation and recommendation.get("display_actionable"):
+                    direction = str(recommendation.get("Direction", "")).upper()
+                    if direction in {"UP", "DOWN"}:
+                        hitbox = self._draw_recommendation_arrow(
+                            painter,
+                            pt,
+                            direction,
+                            str(recommendation.get("Confidence", "")),
+                            str(recommendation.get("Mechanism", "")),
+                        )
+                        self.recommendation_hitboxes.append(
+                            (hitbox, str(point.get("row_id", "")), recommendation)
+                        )
                 
         for m in self.promo_markers:
             pt = self._to_screen(m["x"], m["y"])
@@ -673,11 +1086,21 @@ class PriceCurveCanvas(QWidget):
         painter.drawText(int(legend_x) + 28, int(y) + 4, "Unlimited")
         y += 14
 
-        painter.setPen(QPen(QColor("#dcdcdc"), 1, Qt.DashLine))
-        painter.drawLine(int(legend_x), int(y), int(legend_x) + 20, int(y))
+        up_center = QPointF(legend_x + 10, y)
+        self._draw_recommendation_arrow(
+            painter, QPointF(up_center.x() - 20, up_center.y()), "UP", "HIGH", "LIST_PRICE"
+        )
         painter.setPen(QColor("#333333"))
-        painter.drawText(int(legend_x) + 28, int(y) + 4, "Model baseline")
-        y += 20
+        painter.drawText(int(legend_x) + 38, int(y) + 4, "L = list-price recommendation")
+        y += 18
+
+        down_center = QPointF(legend_x + 10, y)
+        self._draw_recommendation_arrow(
+            painter, QPointF(down_center.x() - 20, down_center.y()), "DOWN", "HIGH", "PROMO"
+        )
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 38, int(y) + 4, "P = promo / net-price recommendation")
+        y += 18
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, QColor("#ff9800"), QColor("#ef6c00"), 1)
         painter.setPen(QColor("#333333"))
@@ -688,19 +1111,19 @@ class PriceCurveCanvas(QWidget):
         painter.drawLine(legend_x + 6, y - 4, legend_x + 14, y + 4)
         painter.drawLine(legend_x + 6, y + 4, legend_x + 14, y - 4)
         painter.setPen(QColor("#333333"))
-        painter.drawText(int(legend_x) + 28, int(y) + 4, "This currency below")
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Active currency below floor")
         y += 22
 
         painter.setPen(QPen(QColor("#c62828"), 2))
         painter.drawLine(legend_x + 6, y - 4, legend_x + 14, y + 4)
         painter.drawLine(legend_x + 6, y + 4, legend_x + 14, y - 4)
         painter.setPen(QColor("#333333"))
-        painter.drawText(int(legend_x) + 28, int(y) + 4, "Both currencies below")
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Both currencies below floor")
         y += 22
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#1565c0"), 3)
         painter.setPen(QColor("#333333"))
-        painter.drawText(int(legend_x) + 28, int(y) + 4, "Other currency below")
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Other currency below floor")
         y += 22
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#00897b"), 3)
@@ -732,6 +1155,12 @@ class PriceCurveCanvas(QWidget):
             painter.setPen(QColor("#333333"))
             painter.drawText(int(legend_x) + 28, int(y) + 4, provider)
             y += 14
+
+        # --- Persistent selected-anchor recommendation card ---
+        y += 8
+        card_bottom = self._draw_recommendation_card(painter, rect, legend_x, y)
+        if card_bottom > y:
+            y = card_bottom + 8
             
         # --- Keyboard hint ---
         painter.setPen(QColor("#999999"))

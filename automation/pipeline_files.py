@@ -116,6 +116,10 @@ class PipelineFiles:
         return self.market_dir / "outlier_audit_latest.csv"
 
     @property
+    def market_history_db(self) -> Path:
+        return self.market_dir / "market_history.db"
+
+    @property
     def dropped_rows_debug(self) -> Path:
         return self.market_dir / "dropped_rows_debug.csv"
 

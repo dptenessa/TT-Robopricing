@@ -105,8 +105,21 @@ def evaluate_iso_group(iso_df):
         iso_df.at[i, "NeighborCount"] = int(len(nearest))
         iso_df.at[i, "LocalRefPrice"] = ref_price
         iso_df.at[i, "MarketRatio"] = ratio
-        iso_df.at[i, "RowFlag"] = bool(ratio > ROW_RATIO_THRESHOLD)
-        iso_df.at[i, "RowReason"] = "far_from_local_market" if ratio > ROW_RATIO_THRESHOLD else "ok"
+
+        # Treat very large deviations symmetrically.  The original implementation
+        # only flagged abnormally expensive rows.  A source can be wrong in either
+        # direction, so a >3x point and a <1/3x point are both excluded from
+        # pricing while remaining visible in the annotated/audit data.
+        high_outlier = ratio > ROW_RATIO_THRESHOLD
+        low_outlier = ratio < (1.0 / ROW_RATIO_THRESHOLD)
+        row_flag = bool(high_outlier or low_outlier)
+        iso_df.at[i, "RowFlag"] = row_flag
+        if high_outlier:
+            iso_df.at[i, "RowReason"] = "far_above_local_market"
+        elif low_outlier:
+            iso_df.at[i, "RowReason"] = "far_below_local_market"
+        else:
+            iso_df.at[i, "RowReason"] = "ok"
 
     return iso_df
 
@@ -160,9 +173,10 @@ def clean_market_data_sparse(df):
             reviewed["MatchedOffers"] = reviewed["MatchedOffers"].fillna(0).astype(int)
             reviewed["FlaggedRows"] = reviewed["FlaggedRows"].fillna(0).astype(int)
 
-        # Keep everything; only annotate
+        # Keep every row for audit/visualisation, but explicitly exclude flagged
+        # row-level outliers from downstream pricing references.
         reviewed["ProviderStatus"] = "Kept"
-        reviewed["UseForPricing"] = True
+        reviewed["UseForPricing"] = ~reviewed["RowFlag"].fillna(False).astype(bool)
 
         annotated_parts.append(reviewed)
 

@@ -228,13 +228,18 @@ def load_table(
 
 @dataclass
 class EditorState:
-    baseline_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    pricebook_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     market_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     ppg_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     ppg_cost_by_iso: dict[str, float] = field(default_factory=dict)
     units_sold_by_scope: dict[str, float] = field(default_factory=dict)
     sales_by_scope: dict[str, dict[str, float]] = field(default_factory=dict)
     promo_catalog: list[dict[str, Any]] = field(default_factory=list)
+    recommendations_by_key: dict[tuple[str, str, float, float | None, str], dict[str, Any]] = field(default_factory=dict)
+    recommendations_source: str = ""
+    recommendations_loaded_rows: int = 0
+    recommendations_actionable_rows: int = 0
+    applied_recommendation_keys: set[tuple[str, str, float, float | None, str]] = field(default_factory=set)
     selected_country: str | None = None
     selected_row_id: str | None = None
     max_days: int = DEFAULT_MAX_DAYS
@@ -278,6 +283,301 @@ class EditorState:
             str(point.get("pricing_source", "")).strip().lower() == "region_max"
             for point in points
         )
+
+    @staticmethod
+    def _recommendation_float_key(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return round(number, 6)
+
+    @staticmethod
+    def _recommendation_text(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        text = str(value).strip()
+        return "" if text.lower() in {"nan", "none", "<na>", "nat"} else text
+
+    def _recommendation_key(
+        self,
+        pricing_unit_id: Any,
+        plan: Any,
+        days: Any,
+        gb: Any,
+        currency: Any,
+    ) -> tuple[str, str, float, float | None, str] | None:
+        day_value = self._recommendation_float_key(days)
+        if day_value is None:
+            return None
+        unit = self._recommendation_text(pricing_unit_id).upper()
+        plan_text = self._recommendation_text(plan).upper()
+        currency_text = normalize_currency(currency)
+        if not unit or not plan_text:
+            return None
+        return (unit, plan_text, day_value, self._recommendation_float_key(gb), currency_text)
+
+    def preload_recommendations(self, df: pd.DataFrame, source: str | Path | None = None) -> None:
+        self.recommendations_by_key = {}
+        self.recommendations_source = str(source or "")
+        self.recommendations_loaded_rows = 0
+        self.recommendations_actionable_rows = 0
+        self.applied_recommendation_keys = set()
+
+        if df is None or df.empty:
+            for point in self.row_index.values():
+                point.pop("recommendation", None)
+                point.pop("recommendation_stale", None)
+                point.pop("recommendation_applied", None)
+            return
+
+        required = {"PricingUnitIdUsed", "Plan", "Days", "GB", "Currency", "Actionable"}
+        missing = sorted(required - set(df.columns))
+        if missing:
+            raise ValueError(f"Recommendation file is missing required columns: {', '.join(missing)}")
+
+        loaded = 0
+        actionable = 0
+        for _, row in df.iterrows():
+            key = self._recommendation_key(
+                row.get("PricingUnitIdUsed", ""),
+                row.get("Plan", ""),
+                row.get("Days", None),
+                row.get("GB", None),
+                row.get("Currency", DEFAULT_CURRENCY),
+            )
+            if key is None:
+                continue
+            record = row.to_dict()
+            record["Actionable"] = _boolish(record.get("Actionable", False))
+            record["Direction"] = self._recommendation_text(record.get("Direction", "")).upper()
+            record["Confidence"] = self._recommendation_text(record.get("Confidence", "")).upper()
+            record["Mechanism"] = self._recommendation_text(record.get("Mechanism", "")).upper()
+            record["Currency"] = normalize_currency(record.get("Currency", DEFAULT_CURRENCY))
+            self.recommendations_by_key[key] = record
+            loaded += 1
+            actionable += int(bool(record["Actionable"]))
+
+        self.recommendations_loaded_rows = loaded
+        self.recommendations_actionable_rows = actionable
+        for point in self.row_index.values():
+            self._attach_recommendation_state(point)
+
+    def recommendation_for_point(
+        self,
+        point: dict[str, Any],
+        currency: str | None = None,
+        *,
+        actionable_only: bool = False,
+    ) -> dict[str, Any] | None:
+        currency = normalize_currency(currency or self.active_currency)
+        key = self._recommendation_key(
+            point.get("pricing_unit_id", ""),
+            point.get("plan", ""),
+            point.get("days", None),
+            point.get("gb", None),
+            currency,
+        )
+        if key is None:
+            return None
+        raw = self.recommendations_by_key.get(key)
+        if raw is None:
+            return None
+        if actionable_only and not bool(raw.get("Actionable", False)):
+            return None
+
+        rec = dict(raw)
+        applied = key in self.applied_recommendation_keys
+        current_list = self._working_price_for_currency(point, currency)
+        current_net = self._final_price_for_currency(point, currency, current_list)
+        promo = self._promo_for_point(point, currency) or {}
+        current_promo = self._recommendation_text(promo.get("promo_code", ""))
+
+        expected_list = pd.to_numeric(rec.get("CurrentListPrice", None), errors="coerce")
+        expected_net = pd.to_numeric(rec.get("CurrentNetPrice", None), errors="coerce")
+        expected_promo = self._recommendation_text(rec.get("CurrentPromoCode", ""))
+
+        tolerance = 0.051
+        list_ok = pd.isna(expected_list) or abs(float(expected_list) - float(current_list)) <= tolerance
+        net_ok = pd.isna(expected_net) or abs(float(expected_net) - float(current_net)) <= tolerance
+        promo_ok = expected_promo == current_promo
+        stale = not (list_ok and net_ok and promo_ok)
+
+        rec["applied"] = applied
+        rec["fresh"] = (not stale) and (not applied)
+        rec["stale"] = stale and not applied
+        rec["display_actionable"] = bool(rec.get("Actionable", False)) and not stale and not applied
+        rec["CurrentListPriceNow"] = float(current_list)
+        rec["CurrentNetPriceNow"] = float(current_net)
+        rec["CurrentPromoCodeNow"] = current_promo
+        return rec
+
+    def _clear_applied_recommendations_for_point(
+        self,
+        point: dict[str, Any],
+        currencies: tuple[str, ...] | list[str],
+    ) -> None:
+        """Make recommendations eligible again after a reset restores their loaded baseline."""
+        for currency in currencies:
+            key = self._recommendation_key(
+                point.get("pricing_unit_id", ""),
+                point.get("plan", ""),
+                point.get("days", None),
+                point.get("gb", None),
+                currency,
+            )
+            if key is not None:
+                self.applied_recommendation_keys.discard(key)
+
+    def _attach_recommendation_state(self, point: dict[str, Any]) -> None:
+        rec = self.recommendation_for_point(point, self.active_currency, actionable_only=True)
+        if rec is None:
+            point.pop("recommendation", None)
+            point.pop("recommendation_stale", None)
+            point.pop("recommendation_applied", None)
+            return
+        point["recommendation_stale"] = bool(rec.get("stale", False))
+        point["recommendation_applied"] = bool(rec.get("applied", False))
+        if rec.get("display_actionable"):
+            point["recommendation"] = rec
+        else:
+            point.pop("recommendation", None)
+
+    def apply_recommendation(
+        self,
+        row_id: str,
+        *,
+        force_shared_promo: bool = False,
+    ) -> dict[str, Any]:
+        point = self.row_index.get(str(row_id))
+        if point is None:
+            return {"ok": False, "message": "Price point no longer exists."}
+
+        active_currency = self.normalize_current_currency()
+        rec = self.recommendation_for_point(point, active_currency, actionable_only=True)
+        if rec is None:
+            return {"ok": False, "message": "No actionable recommendation for this point."}
+        if rec.get("stale"):
+            return {
+                "ok": False,
+                "stale": True,
+                "message": "This recommendation no longer matches the current price/promo. Rerun the recommendation engine.",
+            }
+
+        mechanism = self._recommendation_text(rec.get("Mechanism", "")).upper()
+        direction = self._recommendation_text(rec.get("Direction", "")).upper()
+        other_currency = "USD" if active_currency == "EUR" else "EUR"
+        other_rec = self.recommendation_for_point(point, other_currency, actionable_only=True)
+
+        if mechanism.startswith("LIST_PRICE"):
+            suggested = pd.to_numeric(rec.get("SuggestedListPrice", None), errors="coerce")
+            if pd.isna(suggested):
+                suggested = pd.to_numeric(rec.get("SuggestedNetPrice", None), errors="coerce")
+            if pd.isna(suggested):
+                return {"ok": False, "message": "Recommendation has no usable list-price target."}
+
+            updates = {active_currency: float(suggested)}
+            if (
+                other_rec
+                and other_rec.get("display_actionable")
+                and self._recommendation_text(other_rec.get("Mechanism", "")).upper().startswith("LIST_PRICE")
+                and self._recommendation_text(other_rec.get("Direction", "")).upper() == direction
+            ):
+                other_suggested = pd.to_numeric(other_rec.get("SuggestedListPrice", None), errors="coerce")
+                if pd.isna(other_suggested):
+                    other_suggested = pd.to_numeric(other_rec.get("SuggestedNetPrice", None), errors="coerce")
+                if pd.notna(other_suggested):
+                    updates[other_currency] = float(other_suggested)
+
+            self.set_scope_prices(str(row_id), updates)
+            for currency in updates:
+                applied_key = self._recommendation_key(
+                    point.get("pricing_unit_id", ""),
+                    point.get("plan", ""),
+                    point.get("days", None),
+                    point.get("gb", None),
+                    currency,
+                )
+                if applied_key is not None:
+                    self.applied_recommendation_keys.add(applied_key)
+            currencies = "/".join(updates.keys())
+            return {
+                "ok": True,
+                "mechanism": mechanism,
+                "direction": direction,
+                "currencies": list(updates.keys()),
+                "message": f"Applied {direction} list-price recommendation for {currencies}.",
+            }
+
+        if mechanism == "PROMO":
+            promo_code = self._recommendation_text(rec.get("SuggestedPromoCode", ""))
+            if not promo_code:
+                return {"ok": False, "message": "Promo recommendation has no promo code."}
+
+            other_same = bool(
+                other_rec
+                and other_rec.get("display_actionable")
+                and self._recommendation_text(other_rec.get("Mechanism", "")).upper() == "PROMO"
+                and self._recommendation_text(other_rec.get("SuggestedPromoCode", "")) == promo_code
+            )
+            if not other_same and not force_shared_promo:
+                if other_rec and other_rec.get("display_actionable"):
+                    other_desc = (
+                        f"{other_currency} recommends "
+                        f"{self._recommendation_text(other_rec.get('Mechanism', ''))} "
+                        f"{self._recommendation_text(other_rec.get('SuggestedPromoCode', '')) or self._recommendation_text(other_rec.get('Direction', ''))}."
+                    )
+                else:
+                    other_desc = f"{other_currency} has no matching actionable promo recommendation."
+                return {
+                    "ok": False,
+                    "needs_confirmation": True,
+                    "promo_code": promo_code,
+                    "message": (
+                        f"Promo {promo_code} is shared by EUR and USD. "
+                        f"{other_desc} Apply the shared promo anyway?"
+                    ),
+                }
+
+            self.selected_row_id = str(row_id)
+            affected = self.assign_promo_to_selected(promo_code)
+            if not affected:
+                return {"ok": False, "message": f"Promo {promo_code} is not available in the promo catalog."}
+            active_key = self._recommendation_key(
+                point.get("pricing_unit_id", ""),
+                point.get("plan", ""),
+                point.get("days", None),
+                point.get("gb", None),
+                active_currency,
+            )
+            if active_key is not None:
+                self.applied_recommendation_keys.add(active_key)
+            if other_same:
+                other_key = self._recommendation_key(
+                    point.get("pricing_unit_id", ""),
+                    point.get("plan", ""),
+                    point.get("days", None),
+                    point.get("gb", None),
+                    other_currency,
+                )
+                if other_key is not None:
+                    self.applied_recommendation_keys.add(other_key)
+            return {
+                "ok": True,
+                "mechanism": mechanism,
+                "direction": direction,
+                "promo_code": promo_code,
+                "message": f"Applied recommended promo {promo_code} (shared EUR/USD).",
+            }
+
+        return {"ok": False, "message": f"Unsupported recommendation mechanism: {mechanism or 'unknown'}."}
 
     def country_destinations(self) -> list[str]:
         return sorted(
@@ -511,32 +811,32 @@ class EditorState:
             .to_dict()
         )
 
-    def _canonicalize_baseline_country_names(self) -> None:
-        """Force model/editor country names to the current PPG value by ISO."""
-        if self.baseline_df.empty or "ISO" not in self.baseline_df.columns:
+    def _canonicalize_pricebook_country_names(self) -> None:
+        """Force loaded price-book country names to the current PPG value by ISO."""
+        if self.pricebook_df.empty or "ISO" not in self.pricebook_df.columns:
             return
 
         country_names = self.ppg_country_name_map()
         if not country_names:
             return
 
-        self.baseline_df["ISO"] = (
-            self.baseline_df["ISO"]
+        self.pricebook_df["ISO"] = (
+            self.pricebook_df["ISO"]
             .astype("string")
             .fillna("")
             .astype(str)
             .str.strip()
             .str.upper()
         )
-        mapped = self.baseline_df["ISO"].map(country_names)
+        mapped = self.pricebook_df["ISO"].map(country_names)
 
-        ht_mask = self.baseline_df.get(
+        ht_mask = self.pricebook_df.get(
             "Provider",
-            pd.Series("", index=self.baseline_df.index),
+            pd.Series("", index=self.pricebook_df.index),
         ).astype(str).str.strip().eq("HT")
         missing_ht = sorted(
-            self.baseline_df.loc[
-                ht_mask & self.baseline_df["ISO"].str.len().eq(2) & mapped.isna(),
+            self.pricebook_df.loc[
+                ht_mask & self.pricebook_df["ISO"].str.len().eq(2) & mapped.isna(),
                 "ISO",
             ]
             .dropna()
@@ -545,12 +845,12 @@ class EditorState:
         )
         if missing_ht:
             raise ValueError(
-                "HT model rows contain ISO codes without a canonical PPG country name: "
+                "HT price-book rows contain ISO codes without a canonical PPG country name: "
                 + ", ".join(missing_ht)
             )
 
         replace_mask = mapped.notna()
-        self.baseline_df.loc[replace_mask, "Country"] = mapped.loc[replace_mask]
+        self.pricebook_df.loc[replace_mask, "Country"] = mapped.loc[replace_mask]
 
     def set_selection_defaults(self) -> None:
         countries = self.countries()
@@ -578,9 +878,9 @@ class EditorState:
 
     def _base_promos_from_df(self) -> dict[str, dict[str, dict[str, Any]]]:
         out: dict[str, dict[str, dict[str, Any]]] = {c: {} for c in CURRENCIES}
-        if self.baseline_df.empty:
+        if self.pricebook_df.empty:
             return out
-        for _, row in self.baseline_df.iterrows():
+        for _, row in self.pricebook_df.iterrows():
             code = str(row.get("PromoCode", "")).strip()
             if not code:
                 continue
@@ -603,39 +903,39 @@ class EditorState:
                 "promo_currency": "",
                 "promo_label": promo_label,
             }
-            # Legacy/model rows did not distinguish promo assignment by currency.
+            # Older saved rows did not distinguish promo assignment by currency.
             # Preserve that behavior by seeding both currency stores. Explicit
             # saved promo JSON files loaded later can then override each currency.
             for currency in CURRENCIES:
                 out[currency][key] = dict(promo)
         return out
 
-    def preload_baseline(self, df: pd.DataFrame) -> None:
+    def preload_pricebook(self, df: pd.DataFrame) -> None:
         self.clear_runtime()
-        self.baseline_df = df.copy()
-        self._canonicalize_baseline_country_names()
+        self.pricebook_df = df.copy()
+        self._canonicalize_pricebook_country_names()
         allowed_isos = self.allowed_ppg_isos()
 
-        if allowed_isos and "ISO" in self.baseline_df.columns:
-            self.baseline_df["ISO"] = self.baseline_df["ISO"].astype(str).str.strip().str.upper()
-            pricing_source = self.baseline_df.get(
+        if allowed_isos and "ISO" in self.pricebook_df.columns:
+            self.pricebook_df["ISO"] = self.pricebook_df["ISO"].astype(str).str.strip().str.upper()
+            pricing_source = self.pricebook_df.get(
                 "PricingSourceUsed",
-                pd.Series("", index=self.baseline_df.index),
+                pd.Series("", index=self.pricebook_df.index),
             ).astype(str).str.strip().str.lower()
             # Countries still obey the PPG whitelist. Locked regions are first-class
             # pricing units and must not be dropped simply because their ISO field
             # contains a region code instead of an ISO2 country code.
-            keep = self.baseline_df["ISO"].isin(allowed_isos) | pricing_source.eq("region_max")
-            self.baseline_df = self.baseline_df[keep].copy()
+            keep = self.pricebook_df["ISO"].isin(allowed_isos) | pricing_source.eq("region_max")
+            self.pricebook_df = self.pricebook_df[keep].copy()
         self.promo_store_by_currency = self._base_promos_from_df()
 
         unit_lookup: dict[str, set[str]] = {}
-        for _, row in self.baseline_df.iterrows():
+        for _, row in self.pricebook_df.iterrows():
             unit_id = str(row.get("PricingUnitIdUsed", "")).strip()
             if unit_id:
                 unit_lookup.setdefault(unit_id, set()).add(str(row.get("Country", "")).strip())
 
-        for country, cdf in self.baseline_df.groupby("Country", sort=True):
+        for country, cdf in self.pricebook_df.groupby("Country", sort=True):
             country = str(country).strip()
             cdf = cdf[pd.to_numeric(cdf["Days"], errors="coerce").le(self.max_days)].copy()
             if cdf.empty:
@@ -1022,17 +1322,12 @@ class EditorState:
             below[currency] = bool(final_price < floor - 1e-9)
 
         active_currency = self.normalize_current_currency()
-        factual_below_currencies = [currency for currency in CURRENCIES if below.get(currency)]
-        allow_below_cost = bool(point.get("allow_below_cost", False))
-        blocked_currencies = [] if allow_below_cost else factual_below_currencies
         point["cost_floor_by_currency"] = floors
         point["final_price_by_currency"] = final_prices
         point["below_cost_floor_by_currency"] = below
         point["active_currency"] = active_currency
         point["cost_floor"] = floors.get(active_currency)
         point["is_below_cost_floor"] = bool(below.get(active_currency, False))
-        point["is_partner_export_blocked"] = bool(blocked_currencies)
-        point["partner_export_block_reason"] = ",".join(blocked_currencies)
 
 
 
@@ -1328,6 +1623,7 @@ class EditorState:
 
             if "cost_floor_by_currency" not in p:
                 self._refresh_point_floor_status(p)
+            self._attach_recommendation_state(p)
 
         return points
 
@@ -1694,6 +1990,7 @@ class EditorState:
                 else:
                     current_store.pop(promo_key, None)
 
+            self._clear_applied_recommendations_for_point(q, currencies)
             self._apply_point_display(q)
 
 
@@ -1723,52 +2020,8 @@ class EditorState:
                 else:
                     current_store.pop(promo_key, None)
 
+            self._clear_applied_recommendations_for_point(q, currencies)
             self._apply_point_display(q)
-
-    def reload_selected_plan_from_baseline(self) -> None:
-        p = self.selected_point_info()
-        if p is None:
-            return
-
-        selected_plan = str(p["plan"])
-        same = [x for x in self.current_points() if str(x["plan"]) == selected_plan]
-        currencies = self._currencies_for_current_edit()
-
-        for point in same:
-            self.set_scope_prices(str(point["row_id"]), self._base_price_updates_for_point(point, currencies))
-
-    def reload_pricing_unit_from_baseline(self) -> None:
-        """
-        Reset all plans in the selected pricing unit to model baseline.
-        Same logic as reload_selected_plan_from_baseline(),
-        but applied to every point in the selected pricing unit.
-        """
-        p = self.selected_point_info()
-        if p is None:
-            return
-
-        unit_id = str(p.get("pricing_unit_id", "")).strip()
-        if not unit_id:
-            return
-        currencies = self._currencies_for_current_edit()
-
-        for q in self.row_index.values():
-            if str(q.get("pricing_unit_id", "")).strip() != unit_id:
-                continue
-
-            self.set_scope_prices(str(q["row_id"]), self._base_price_updates_for_point(q, currencies))
-
-    def reload_working_from_baseline(self) -> None:
-        self.working_prices = {}
-        self.working_prices_by_currency = {c: {} for c in CURRENCIES}
-        self.promo_store_by_currency = self._base_promos_from_df()
-        for p in self.row_index.values():
-            p["working_prices"] = dict(p.get("base_prices", {}))
-            for currency in CURRENCIES:
-                self.working_prices_by_currency.setdefault(currency, {})[str(p["row_id"])] = float(
-                    p["working_prices"].get(currency, p.get("base_y", 0.0))
-                )
-            self._apply_point_display(p)
 
     def promo_candidates_for_selected(self) -> list[dict[str, Any]]:
         p = self.selected_point_info()

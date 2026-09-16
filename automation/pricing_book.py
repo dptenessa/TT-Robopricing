@@ -299,6 +299,9 @@ def read_pricing_workbook(path: str | Path) -> pd.DataFrame:
         headers = [str(v if v is not None else "").strip() for v in rows[0]]
         data = [list(row[: len(headers)]) for row in rows[1:] if any(v is not None and str(v).strip() for v in row)]
         df = pd.DataFrame(data, columns=headers)
+        # Recommendation is a disposable workbench annotation written after the
+        # canonical workbook is generated. Never feed it back into pricing state.
+        df = df.drop(columns=["Recommendation"], errors="ignore")
         promo_map = _promo_map_from_workbook(wb)
         return normalize_pricing_dataframe(df, promo_catalog=promo_map.values())
     finally:

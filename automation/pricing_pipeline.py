@@ -55,12 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-model",
         action="store_true",
-        help="Skip USD/EUR model proposal generation.",
+        help="Compatibility flag: regression/model generation is skipped by default.",
+    )
+    parser.add_argument(
+        "--run-legacy-model",
+        action="store_true",
+        help="Explicitly run the retired USD/EUR regression model. Not used by the normal workflow.",
     )
     parser.add_argument(
         "--open-editor",
         action="store_true",
-        help="Open the fast editor after proposals are generated.",
+        help="Open the fast editor after market data is prepared.",
     )
     return parser
 
@@ -76,7 +81,7 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
             lambda: scrape_main(resume_successful_today=args.resume_successful_today),
         )
         if scrape_code not in (0, None):
-            print("Scraping failed after retry. Stopping before diff, outlier removal, and model proposal generation.")
+            print("Scraping failed after retry. Stopping before diff and market outlier annotation.")
             return int(scrape_code) if isinstance(scrape_code, int) else 1
     else:
         from combine_scrapes import combine_all_scraped_data
@@ -93,17 +98,20 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
 
         run_step("3. Annotate market outliers", lambda: outlier_main(paths))
 
-    if not args.skip_model:
+    legacy_model_ran = False
+    if args.run_legacy_model and not args.skip_model:
         from pricing_batch import run_batch_pricing
 
-        run_step("4. Generate USD/EUR model proposals", lambda: run_batch_pricing(paths))
+        run_step("4. LEGACY: Generate USD/EUR regression model proposals", lambda: run_batch_pricing(paths))
+        legacy_model_ran = True
 
     print()
     print("Pipeline outputs")
     print(f"- Combined competition latest: {paths.combined_latest}")
     print(f"- Annotated market latest: {paths.market_annotated}")
-    print(f"- USD proposal latest: {paths.model_latest('USD')}")
-    print(f"- EUR proposal latest: {paths.model_latest('EUR')}")
+    if legacy_model_ran:
+        print(f"- LEGACY USD proposal latest: {paths.model_latest('USD')}")
+        print(f"- LEGACY EUR proposal latest: {paths.model_latest('EUR')}")
     print(f"- Manual export folder: {paths.editor_exports_dir}")
 
     if args.open_editor:
