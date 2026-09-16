@@ -1362,8 +1362,24 @@ class MainWindow(QMainWindow):
                 self.clear_busy_cursor()
 
     def open_market_insights(self):
-        if not MARKET_INSIGHTS_PATH.exists():
+        # Always check staleness before opening. Previously an existing HTML file
+        # was opened unconditionally, so dashboard-code changes could leave the UI
+        # showing an old report indefinitely.
+        needs_refresh = not MARKET_INSIGHTS_PATH.exists()
+        if not needs_refresh:
+            try:
+                needs_refresh = market_insights_is_stale(
+                    FILES,
+                    recommendations_path=RECOMMENDATIONS_PATH,
+                    output_path=MARKET_INSIGHTS_PATH,
+                )
+            except Exception as exc:
+                print("Market insights staleness check failed; regenerating:", exc)
+                needs_refresh = True
+
+        if needs_refresh:
             self.refresh_pricing_intelligence(force=False, refresh=False)
+
         if not MARKET_INSIGHTS_PATH.exists():
             QMessageBox.warning(self, "Market insights", "The market insights HTML could not be generated.")
             return

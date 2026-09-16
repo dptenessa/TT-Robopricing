@@ -472,6 +472,12 @@ def _existing_schema_version(db_path: Path) -> int | None:
 
 
 def _remove_sqlite_files(db_path: Path) -> None:
+    """Best-effort removal helper retained for maintenance/debugging only.
+
+    Normal schema migration no longer deletes the SQLite file because Windows
+    prevents unlinking a database that is open in another process (for example
+    the pricing editor, a SQLite viewer, or a sync/indexing process).
+    """
     for candidate in (db_path, Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")):
         try:
             candidate.unlink(missing_ok=True)
@@ -480,12 +486,41 @@ def _remove_sqlite_files(db_path: Path) -> None:
                 candidate.unlink()
 
 
+def _rebuild_history_schema_in_place(db_path: Path) -> None:
+    """Reset the derived analytical cache without deleting the DB file.
+
+    The market-history database is fully rebuildable from dated combined scrape
+    CSVs. Rebuilding the tables in place avoids WinError 32 on Windows when some
+    other process has the SQLite file open. Existing connections can keep their
+    file handle while this process obtains the normal SQLite write lock.
+    """
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.execute("PRAGMA busy_timeout=30000")
+        # A passive checkpoint is harmless if the old DB used WAL and helps keep
+        # the reset compact. Failure is non-fatal; DROP/CREATE below is the real
+        # migration operation.
+        try:
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.DatabaseError:
+            pass
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS market_observations;
+            DROP TABLE IF EXISTS ingested_sources;
+            DROP TABLE IF EXISTS metadata;
+            """
+        )
+        conn.commit()
+        _init_schema(conn)
+
+
 def _ensure_current_history_semantics(paths: PipelineFiles) -> None:
     """Rebuild the derived DB once when observation-date semantics change.
 
     Schema v2 records the dated combined-scrape snapshot as observed_date. The
-    database is a rebuildable analytical cache, so replacing an older cache is
-    safer than trying to mutate historical keys in place.
+    database is a rebuildable analytical cache. Rebuild its tables in place
+    rather than deleting the file so migration is robust on Windows/OneDrive.
     """
     db_path = paths.market_history_db
     version = _existing_schema_version(db_path)
@@ -495,7 +530,7 @@ def _ensure_current_history_semantics(paths: PipelineFiles) -> None:
         f"Market history DB version {version} -> {SCHEMA_VERSION}: "
         "rebuilding derived history with snapshot dates..."
     )
-    _remove_sqlite_files(db_path)
+    _rebuild_history_schema_in_place(db_path)
 
 
 def update_market_history(

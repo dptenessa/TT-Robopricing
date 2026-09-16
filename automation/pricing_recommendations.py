@@ -298,6 +298,74 @@ def _list_price_for_target_net(
     return max(_round_step(raw, step), 0.0)
 
 
+
+def _exclude_temporal_market_anomalies(
+    raw_market: pd.DataFrame,
+    paths: PipelineFiles = FILES,
+) -> tuple[pd.DataFrame, int]:
+    """Exclude current competitor rows rejected by the shared history guard.
+
+    The shared quality classifier prefers a 56-day historical median with at
+    least three prior observations and falls back to latest-vs-previous only
+    when the product series is still too sparse.  Raw/history data is retained;
+    only the in-memory recommendation input is filtered.
+    """
+    if raw_market.empty:
+        return raw_market, 0
+
+    try:
+        try:
+            import market_insights as mi
+            from market_history import stable_product_key
+        except ImportError:
+            from automation import market_insights as mi
+            from automation.market_history import stable_product_key
+
+        quality = mi.current_quality_exclusions(paths)
+        if quality.empty or "QualityExcluded" not in quality.columns:
+            return raw_market, 0
+
+        suspicious = quality[quality["QualityExcluded"].map(_boolish)].copy()
+        if suspicious.empty:
+            return raw_market, 0
+
+        suspicious_keys = set(suspicious.get("product_key", pd.Series(dtype=str)).astype(str))
+        suspicious_keys.discard("")
+        if not suspicious_keys:
+            return raw_market, 0
+
+        work = raw_market.copy()
+        for col, default in (
+            ("Provider", ""), ("ISO", ""), ("ISO3", ""), ("Plan", ""),
+            ("Days", pd.NA), ("GB", pd.NA), ("Currency", "USD"),
+        ):
+            if col not in work.columns:
+                work[col] = default
+
+        def row_key(row: pd.Series) -> str:
+            iso = _text(row.get("ISO")) or _text(row.get("ISO3"))
+            return stable_product_key(
+                row.get("Provider"), iso, row.get("Plan"), row.get("Days"),
+                row.get("GB"), row.get("Currency"),
+            )
+
+        current_keys = work.apply(row_key, axis=1)
+        remove = current_keys.isin(suspicious_keys)
+        excluded = int(remove.sum())
+        if excluded:
+            print(
+                f"Historical outlier guard: excluded {excluded} current market row(s) "
+                "from recommendations."
+            )
+            preview_cols = [c for c in ["Provider", "ISO", "ISO3", "Plan", "Days", "GB", "Price"] if c in work.columns]
+            for _, row in work.loc[remove, preview_cols].head(8).iterrows():
+                print("  - " + " | ".join(f"{c}={row.get(c)}" for c in preview_cols))
+
+        return raw_market.loc[~remove].copy(), excluded
+    except Exception as exc:
+        print(f"Historical outlier guard warning: {exc}")
+        return raw_market, 0
+
 def _prepare_market(raw: pd.DataFrame, eur_to_usd: float) -> pd.DataFrame:
     if raw.empty:
         return pd.DataFrame()
@@ -1886,7 +1954,7 @@ def recommendation_outputs_are_stale(
     recommendations_path = Path(recommendations_path or (paths.work_dir / "pricing_recommendations" / "recommendations_latest.csv"))
     if not recommendations_path.exists():
         return True
-    inputs = [price_book_path, paths.market_annotated, paths.promos_json, paths.pricing_units_json]
+    inputs = [Path(__file__), price_book_path, paths.market_annotated, paths.promos_json, paths.pricing_units_json]
     latest_input = max((p.stat().st_mtime for p in inputs if p.exists()), default=0.0)
     return recommendations_path.stat().st_mtime + 0.001 < latest_input
 
@@ -1922,6 +1990,7 @@ def generate_recommendations_from_files(
 
     prices = read_pricing_workbook(price_book_path) if price_book_path.suffix.lower() == ".xlsx" else pd.read_csv(price_book_path)
     raw_market = pd.read_csv(market_path, low_memory=False)
+    raw_market, temporal_outliers_excluded = _exclude_temporal_market_anomalies(raw_market, paths)
     rate = float(eur_to_usd or _infer_eur_to_usd(raw_market))
     promos = _load_promos(promos_path)
     priority_countries = _load_priority_countries(pricing_units_path)
@@ -1962,6 +2031,7 @@ def generate_recommendations_from_files(
     print(f"Pricing units:      {pricing_units_path}")
     print(f"Priority countries: {len(priority_countries)} configured")
     print(f"EUR/USD used:       {rate:.4f}")
+    print(f"Temporal outliers:  {temporal_outliers_excluded} excluded")
     if not summary.empty:
         for _, row in summary.iterrows():
             print(f"- {row['Metric']}: {row['Value']}")
