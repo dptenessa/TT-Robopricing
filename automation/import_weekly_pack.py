@@ -8,12 +8,14 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 import pandas as pd
-from combined_scrape_diffs import (
-    build_change_report,
-    build_country_summary,
-    build_provider_summary,
-    print_pipe_table,
-)
+def print_pipe_table(df: pd.DataFrame, title: str) -> None:
+    print()
+    print(title)
+    if df.empty:
+        print("No rows.")
+        return
+    print(df.to_string(index=False))
+
 
 try:
     from market_history import print_history_summary, update_market_history
@@ -33,15 +35,10 @@ ALLOWED_PATTERNS = (
     "outputs/combined_scrapes/history/combined_scrape_*.csv",
     "outputs/market_analysis/market_prices_annotated_latest.csv",
     "outputs/market_analysis/outlier_audit_latest.csv",
-    "outputs/diagnostics/scrape_status_latest.csv",
-    "outputs/diagnostics/scrape_status_history/*.csv",
-    "outputs/diagnostics/logs/*.log",
 )
 
 DIAGNOSTIC_PATTERNS = (
     "outputs/diagnostics/scrape_status_latest.csv",
-    "outputs/diagnostics/scrape_status_history/*.csv",
-    "outputs/diagnostics/logs/*.log",
 )
 
 
@@ -94,133 +91,6 @@ def find_pack_root(extracted_or_folder: Path) -> Path:
     raise FileNotFoundError(
         "Could not find scrapes/ plus outputs/ inside the weekly pack."
     )
-
-
-def safe_label(label: str) -> str:
-    cleaned = []
-    for char in label:
-        if char.isalnum() or char in {"-", "_", "."}:
-            cleaned.append(char)
-        else:
-            cleaned.append("_")
-    return "".join(cleaned).strip("_") or "snapshot"
-
-
-def latest_combined_history_label(root: Path, fallback: str) -> str:
-    history_dir = root / "outputs" / "combined_scrapes" / "history"
-    files = sorted(history_dir.glob("combined_scrape_*.csv"))
-    if not files:
-        return fallback
-    return files[-1].stem.replace("combined_scrape_", "")
-
-
-def print_scrape_status(src_root: Path) -> bool:
-    status_path = src_root / "outputs" / "diagnostics" / "scrape_status_latest.csv"
-
-    print()
-    print("Scrape Status")
-
-    if not status_path.exists():
-        print("No scrape status file was included in this weekly pack.")
-        return True
-
-    status_df = pd.read_csv(status_path).fillna("")
-
-    if status_df.empty:
-        print("The scrape status file is empty.")
-        return False
-
-    display_cols = [
-        col for col in [
-            "Category",
-            "Name",
-            "Status",
-            "Quality",
-            "Rows",
-            "Countries",
-            "PreviousRows",
-            "PreviousCountries",
-            "Attempt",
-            "Duration",
-            "Script",
-            "LogFile",
-            "Note",
-        ]
-        if col in status_df.columns
-    ]
-    print_pipe_table(status_df[display_cols], "SCRAPERS AND COMBINE")
-
-    if "Status" not in status_df.columns:
-        return True
-
-    issues = status_df[status_df["Status"].astype(str).str.lower() != "ok"]
-    if issues.empty:
-        print("All scrapers and the combine step finished OK.")
-        return True
-
-    names = ", ".join(issues["Name"].astype(str).tolist())
-    print(f"Needs attention: {names}")
-    return False
-
-
-def compare_incoming_to_local(
-    src_root: Path,
-    project_root: Path,
-    dry_run: bool = False,
-) -> None:
-    local_latest = project_root / "outputs" / "combined_scrapes" / "combined_scrape_latest.csv"
-    incoming_latest = src_root / "outputs" / "combined_scrapes" / "combined_scrape_latest.csv"
-
-    print()
-    print("Changes Versus Local Latest")
-
-    if not incoming_latest.exists():
-        print("No incoming combined scrape file was included in this weekly pack.")
-        return
-
-    if not local_latest.exists():
-        print("No local combined scrape exists yet, so this is treated as the first import.")
-        return
-
-    previous_label = latest_combined_history_label(project_root, "local_previous")
-    current_label = latest_combined_history_label(src_root, "incoming")
-    if previous_label == current_label:
-        current_label = f"{current_label}_incoming"
-
-    previous_df = pd.read_csv(local_latest)
-    current_df = pd.read_csv(incoming_latest)
-
-    changes = build_change_report(previous_df, current_df)
-    country_summary = build_country_summary(changes)
-    provider_summary = build_provider_summary(changes)
-
-    print(f"Total rows with changes: {len(changes)}")
-    print_pipe_table(provider_summary, "PROVIDER SUMMARY")
-    print_pipe_table(country_summary, "COUNTRY SUMMARY")
-
-    if dry_run:
-        print("Dry run: change reports were not saved.")
-        return
-
-    output_dir = project_root / "outputs" / "combined_scrapes" / "diffs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    prev = safe_label(previous_label)
-    curr = safe_label(current_label)
-    diff_file = output_dir / f"diff_{prev}_vs_{curr}.csv"
-    summary_file = output_dir / f"summary_{prev}_vs_{curr}.csv"
-    provider_summary_file = output_dir / f"provider_summary_{prev}_vs_{curr}.csv"
-
-    changes.to_csv(diff_file, index=False)
-    country_summary.to_csv(summary_file, index=False)
-    provider_summary.to_csv(provider_summary_file, index=False)
-
-    print()
-    print("Saved local change reports:")
-    print(f"- {provider_summary_file}")
-    print(f"- {summary_file}")
-    print(f"- {diff_file}")
-
 
 
 def copy_pack(
@@ -298,7 +168,6 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
             )
             import_blocked = True
         else:
-            compare_incoming_to_local(src_root, project_root, dry_run=dry_run)
             copied, skipped = copy_pack(src_root, project_root, dry_run=dry_run)
             import_blocked = False
 

@@ -78,7 +78,7 @@ jobs:
         env:
           RESUME_TODAY: ${{ github.event_name == 'workflow_dispatch' && inputs.reuse_today_successes == true }}
         run: |
-          args=(--scrape --skip-model)
+          args=(--scrape)
           if [ "$RESUME_TODAY" = "true" ]; then
             args+=(--resume-successful-today)
           fi
@@ -113,6 +113,16 @@ jobs:
             outputs/combined_scrapes/history/combined_scrape_*.csv
             outputs/market_analysis/market_prices_annotated_latest.csv
             outputs/market_analysis/outlier_audit_latest.csv
+            outputs/diagnostics/scrape_status_latest.csv
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: weekly-proposal-pack-diagnostics
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
             outputs/diagnostics/scrape_status_latest.csv
             outputs/diagnostics/scrape_status_history/*.csv
             outputs/diagnostics/logs/*.log

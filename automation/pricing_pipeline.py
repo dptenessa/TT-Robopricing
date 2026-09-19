@@ -30,7 +30,7 @@ def run_step(name: str, fn: Callable[[], object]) -> object:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the pricing workflow with the shared file layout."
+        description="Run the current T-Travel market-data preparation workflow."
     )
     parser.add_argument(
         "--scrape",
@@ -43,25 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="When scraping, reuse scraper outputs that already succeeded today and rerun only the rest.",
     )
     parser.add_argument(
-        "--skip-diff",
-        action="store_true",
-        help="Skip scraped-price change reports.",
-    )
-    parser.add_argument(
         "--skip-outliers",
         action="store_true",
         help="Skip market outlier annotation.",
     )
-    parser.add_argument(
-        "--skip-model",
-        action="store_true",
-        help="Compatibility flag: regression/model generation is skipped by default.",
-    )
-    parser.add_argument(
-        "--run-legacy-model",
-        action="store_true",
-        help="Explicitly run the retired USD/EUR regression model. Not used by the normal workflow.",
-    )
+    # Accepted only so old shortcuts do not break; both legacy stages are retired.
+    parser.add_argument("--skip-diff", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-model", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--open-editor",
         action="store_true",
@@ -81,46 +69,31 @@ def run_pipeline(args: argparse.Namespace, paths: PipelineFiles = FILES) -> int:
             lambda: scrape_main(resume_successful_today=args.resume_successful_today),
         )
         if scrape_code not in (0, None):
-            print("Scraping failed after retry. Stopping before diff and market outlier annotation.")
+            print("Scraping failed after retry. Stopping before market outlier annotation.")
             return int(scrape_code) if isinstance(scrape_code, int) else 1
     else:
         from combine_scrapes import combine_all_scraped_data
 
         run_step("1. Combine existing scraper outputs", lambda: combine_all_scraped_data(paths))
 
-    if not args.skip_diff:
-        from combined_scrape_diffs import main as scrape_diff_main
-
-        run_step("2. Compare latest scraped competition snapshot", lambda: scrape_diff_main(paths))
-
     if not args.skip_outliers:
         from outlier_removal import main as outlier_main
 
-        run_step("3. Annotate market outliers", lambda: outlier_main(paths))
-
-    legacy_model_ran = False
-    if args.run_legacy_model and not args.skip_model:
-        from pricing_batch import run_batch_pricing
-
-        run_step("4. LEGACY: Generate USD/EUR regression model proposals", lambda: run_batch_pricing(paths))
-        legacy_model_ran = True
+        run_step("2. Annotate market outliers", lambda: outlier_main(paths))
 
     print()
     print("Pipeline outputs")
     print(f"- Combined competition latest: {paths.combined_latest}")
     print(f"- Annotated market latest: {paths.market_annotated}")
-    if legacy_model_ran:
-        print(f"- LEGACY USD proposal latest: {paths.model_latest('USD')}")
-        print(f"- LEGACY EUR proposal latest: {paths.model_latest('EUR')}")
     print(f"- Manual export folder: {paths.editor_exports_dir}")
 
     if args.open_editor:
         from pricing_editor.main_window import run as run_editor
 
-        run_step("5. Open fast editor", run_editor)
+        run_step("3. Open fast editor", run_editor)
     else:
         print()
-        print("Next: open the editor from START_HERE, or run `python \"automation/fast pricing editor.py\"`.")
+        print('Next: open the editor from START_HERE, or run `python "automation/fast pricing editor.py"`.')
 
     return 0
 
