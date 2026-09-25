@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 import json
+import re
 from string import Template
 from pathlib import Path
 from typing import Any
@@ -51,9 +52,14 @@ MAX_CURRENT_AGE_DAYS = 14   # old observations are not "latest" market movement
 HISTORICAL_BASELINE_DAYS = 56
 HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
-DASHBOARD_VERSION = "history-charts-v12-clean-competitiveness"
-VERY_COMPETITIVE_GAP_PCT = -0.15
+DASHBOARD_VERSION = "history-charts-v15-competitiveness-trends"
+VERY_COMPETITIVE_GAP_PCT = 0.05
+COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
+BEST_MARKET_MIN_PROVIDERS = 2
+BEST_MARKET_MAX_PROVIDERS = 5
+BEST_MARKET_GB_RATIO_MIN = 0.50
+BEST_MARKET_GB_RATIO_MAX = 2.00
 
 # Offline country-centroid coordinates for the geographic movement map.
 # These are embedded so the generated HTML does not require a map service or internet connection.
@@ -535,53 +541,467 @@ def _recommendations_by_country(recommendations: pd.DataFrame, country_names: di
     return pd.DataFrame(rows,columns=cols).sort_values(["Recommendations","AffectedShare","Country"],ascending=[False,False,True]).reset_index(drop=True)
 
 
-def _competitiveness_by_country(recommendations: pd.DataFrame, country_names: dict[str, str] | None = None) -> pd.DataFrame:
-    """Summarize our current net-price position versus the recommendation engine's market benchmark.
+def _latest_trusted_market_offers(
+    paths: PipelineFiles,
+    *,
+    quality: pd.DataFrame,
+    latest_market_date: str,
+) -> pd.DataFrame:
+    """Return trusted competitor offers from the current market snapshot only.
 
-    Negative MarketGapPct means T-Travel is cheaper than the market target.  Regional
-    pricing units are expanded to all covered destination countries, matching the
-    recommendation-concentration view.
+    Historical observations are deliberately excluded from the competitiveness
+    benchmark. History is used elsewhere only for trend analysis and data-quality
+    checks. The pricing recommendation engine itself remains unchanged.
     """
     cols = [
-        "ISO", "Country", "Evaluated", "TrimmedMeanGapPct", "MedianGapPct",
-        "VeryCompetitive", "VeryCompetitiveShare", "MedianProviders", "PricingUnits",
+        "product_key", "provider", "iso", "country", "plan", "plan_type",
+        "days", "gb", "currency", "price", "eur_price", "usd_price",
+        "observed_date",
     ]
-    if recommendations.empty:
+    if not paths.market_history_db.exists():
+        return pd.DataFrame(columns=cols)
+
+    # IMPORTANT: use one snapshot date only. Do not backfill a missing current
+    # competitor product with an older historical observation. That would make
+    # today's competitiveness benchmark partly historical.
+    query = """
+    SELECT
+        product_key, provider, iso, country, plan, plan_type, days, gb,
+        currency, price, eur_price, usd_price, observed_date
+    FROM market_observations
+    WHERE observed_date = ?
+    """
+    with sqlite3.connect(paths.market_history_db) as conn:
+        market = pd.read_sql_query(query, conn, params=[latest_market_date])
+    if market.empty:
+        return pd.DataFrame(columns=cols)
+
+    excluded: set[str] = set()
+    if not quality.empty and "QualityExcluded" in quality.columns and "product_key" in quality.columns:
+        excluded = set(
+            quality.loc[quality["QualityExcluded"].map(_boolish), "product_key"].astype(str)
+        )
+    if excluded:
+        market = market[~market["product_key"].astype(str).isin(excluded)].copy()
+
+    for col in ["days", "gb", "price", "eur_price", "usd_price"]:
+        market[col] = pd.to_numeric(market[col], errors="coerce")
+    market["provider"] = market["provider"].fillna("").astype(str).str.strip()
+    market["iso"] = market["iso"].fillna("").astype(str).str.strip().str.upper()
+    market["plan_type"] = market["plan_type"].fillna("").astype(str).str.strip().str.lower()
+    market["currency"] = market["currency"].fillna("").astype(str).str.strip().str.upper()
+    return market
+
+
+
+def _market_snapshot_on_or_before(paths: PipelineFiles, target_date: str) -> str:
+    """Return the latest archived market snapshot on or before target_date."""
+    if not paths.market_history_db.exists() or not target_date:
+        return ""
+    with sqlite3.connect(paths.market_history_db) as conn:
+        row = conn.execute(
+            "SELECT MAX(observed_date) FROM market_observations WHERE observed_date <= ?",
+            (str(target_date),),
+        ).fetchone()
+    return _text(row[0] if row else "")
+
+
+def _trusted_market_offers_for_date(
+    paths: PipelineFiles,
+    *,
+    snapshot_date: str,
+    quality: pd.DataFrame | None = None,
+    apply_current_quality: bool = False,
+) -> pd.DataFrame:
+    """Return one exact competitor snapshot; never backfill older products.
+
+    Current quality exclusions are only meaningful for the current snapshot and
+    are therefore optional. Historical snapshots are kept independent so the
+    competitiveness trend compares like-for-like archived markets.
+    """
+    cols = [
+        "product_key", "provider", "iso", "country", "plan", "plan_type",
+        "days", "gb", "currency", "price", "eur_price", "usd_price",
+        "observed_date",
+    ]
+    if not paths.market_history_db.exists() or not snapshot_date:
+        return pd.DataFrame(columns=cols)
+    query = """
+    SELECT
+        product_key, provider, iso, country, plan, plan_type, days, gb,
+        currency, price, eur_price, usd_price, observed_date
+    FROM market_observations
+    WHERE observed_date = ?
+    """
+    with sqlite3.connect(paths.market_history_db) as conn:
+        market = pd.read_sql_query(query, conn, params=[snapshot_date])
+    if market.empty:
+        return pd.DataFrame(columns=cols)
+
+    if apply_current_quality and quality is not None and not quality.empty and "QualityExcluded" in quality.columns and "product_key" in quality.columns:
+        excluded = set(
+            quality.loc[quality["QualityExcluded"].map(_boolish), "product_key"].astype(str)
+        )
+        if excluded:
+            market = market[~market["product_key"].astype(str).isin(excluded)].copy()
+
+    for col in ["days", "gb", "price", "eur_price", "usd_price"]:
+        market[col] = pd.to_numeric(market[col], errors="coerce")
+    market["provider"] = market["provider"].fillna("").astype(str).str.strip()
+    market["iso"] = market["iso"].fillna("").astype(str).str.strip().str.upper()
+    market["plan_type"] = market["plan_type"].fillna("").astype(str).str.strip().str.lower()
+    market["currency"] = market["currency"].fillna("").astype(str).str.strip().str.upper()
+    return market
+
+
+def _history_price_snapshot_date(path: Path) -> datetime | None:
+    m = re.search(r"manual_prices_(\d{8})(?:_(\d{6}))?", path.stem, flags=re.IGNORECASE)
+    if not m:
+        return None
+    raw = m.group(1) + (m.group(2) or "000000")
+    try:
+        return datetime.strptime(raw, "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _first_existing_column(df: pd.DataFrame, names: list[str]) -> str | None:
+    lookup = {str(c).strip().lower(): str(c) for c in df.columns}
+    for name in names:
+        found = lookup.get(str(name).strip().lower())
+        if found:
+            return found
+    return None
+
+
+def _manual_pricebook_to_recommendation_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a saved manual-price workbook into competitiveness anchor rows."""
+    out_cols = ["Country", "Countries", "ISO", "PricingUnitIdUsed", "Plan", "Days", "GB", "Currency", "CurrentNetPrice"]
+    if df.empty:
+        return pd.DataFrame(columns=out_cols)
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    unit_col = _first_existing_column(df, ["PricingUnitID", "PricingUnitIdUsed", "PricingUnitId", "Pricing Unit ID"])
+    plan_col = _first_existing_column(df, ["Plan", "Package", "Package Type"])
+    days_col = _first_existing_column(df, ["Days", "Duration", "DurationDays"])
+    gb_col = _first_existing_column(df, ["GB", "AllowanceGB", "Allowance"])
+    country_col = _first_existing_column(df, ["Country", "Destination"])
+    countries_col = _first_existing_column(df, ["Countries", "PricingUnitCountriesUsed"])
+    iso_col = _first_existing_column(df, ["ISO", "ISO2"])
+    currency_col = _first_existing_column(df, ["Currency"])
+    generic_net_col = _first_existing_column(df, ["CurrentNetPrice", "FinalPriceAfterPromo", "Net Price", "NetPrice"])
+
+    if not unit_col or not plan_col or not days_col:
+        return pd.DataFrame(columns=out_cols)
+
+    base = pd.DataFrame({
+        "Country": df[country_col] if country_col else "",
+        "Countries": df[countries_col] if countries_col else "",
+        "ISO": df[iso_col] if iso_col else "",
+        "PricingUnitIdUsed": df[unit_col],
+        "Plan": df[plan_col],
+        "Days": df[days_col],
+        "GB": df[gb_col] if gb_col else pd.NA,
+    })
+
+    frames: list[pd.DataFrame] = []
+    for currency, candidates in {
+        "EUR": ["Net Price EUR", "NetPrice_EUR", "FinalPriceAfterPromo_EUR", "Price_EUR"],
+        "USD": ["Net Price USD", "NetPrice_USD", "FinalPriceAfterPromo_USD", "Price_USD"],
+    }.items():
+        col = _first_existing_column(df, candidates)
+        if col:
+            part = base.copy()
+            part["Currency"] = currency
+            part["CurrentNetPrice"] = pd.to_numeric(df[col], errors="coerce")
+            frames.append(part)
+
+    if generic_net_col and currency_col:
+        part = base.copy()
+        part["Currency"] = df[currency_col].fillna("").astype(str).str.upper().str.strip()
+        part["CurrentNetPrice"] = pd.to_numeric(df[generic_net_col], errors="coerce")
+        frames.append(part)
+
+    if not frames:
+        return pd.DataFrame(columns=out_cols)
+    out = pd.concat(frames, ignore_index=True)
+    out["Days"] = pd.to_numeric(out["Days"], errors="coerce")
+    out["GB"] = pd.to_numeric(out["GB"], errors="coerce")
+    out["CurrentNetPrice"] = pd.to_numeric(out["CurrentNetPrice"], errors="coerce")
+    out = out[out["CurrentNetPrice"].gt(0)].copy()
+    return out[out_cols]
+
+
+def _historical_ttravel_prices_on_or_before(paths: PipelineFiles, target_date: str) -> tuple[pd.DataFrame, str]:
+    """Load the most recent saved T-Travel price book on/before target_date."""
+    root = paths.editor_history_root
+    if not root.exists() or not target_date:
+        return pd.DataFrame(), ""
+    try:
+        target = datetime.strptime(str(target_date)[:10], "%Y-%m-%d") + timedelta(days=1) - timedelta(microseconds=1)
+    except ValueError:
+        return pd.DataFrame(), ""
+
+    candidates: list[tuple[datetime, Path]] = []
+    for pattern in ("manual_prices_*.xlsx", "manual_prices_*.csv"):
+        for path in root.glob(pattern):
+            stamp = _history_price_snapshot_date(path)
+            if stamp and stamp <= target:
+                candidates.append((stamp, path))
+    if not candidates:
+        return pd.DataFrame(), ""
+    stamp, path = max(candidates, key=lambda x: x[0])
+    try:
+        raw = pd.read_excel(path) if path.suffix.lower() in {".xlsx", ".xls"} else pd.read_csv(path, low_memory=False)
+    except Exception:
+        return pd.DataFrame(), ""
+    return _manual_pricebook_to_recommendation_rows(raw), stamp.strftime("%Y-%m-%d")
+
+
+def _competitiveness_trends(
+    paths: PipelineFiles,
+    *,
+    current_recommendations: pd.DataFrame,
+    current_competitiveness: pd.DataFrame,
+    latest_market_date: str,
+    country_names: dict[str, str],
+) -> dict[str, Any]:
+    """Build 4/8/12-week country competitiveness changes.
+
+    Positive ChangePctPts means T-Travel gained competitiveness (our gap versus
+    the best credible market benchmark became smaller). Historical T-Travel
+    price books are used when available. If none exists before a requested
+    window, today's T-Travel prices are held constant and the payload labels the
+    result as market-driven only rather than pretending it is a full historical
+    position comparison.
+    """
+    payload: dict[str, Any] = {}
+    if current_competitiveness.empty or not latest_market_date:
+        return payload
+    try:
+        latest_dt = datetime.strptime(latest_market_date[:10], "%Y-%m-%d")
+    except ValueError:
+        return payload
+
+    current = current_competitiveness[["ISO", "Country", "Evaluated", "TrimmedMeanGapPct"]].copy()
+    current = current.rename(columns={"Evaluated": "CurrentEvaluated", "TrimmedMeanGapPct": "CurrentGapPct"})
+
+    for key, label, days_back in TREND_WINDOWS:
+        if days_back is None:
+            continue
+        target_date = (latest_dt - timedelta(days=int(days_back))).strftime("%Y-%m-%d")
+        market_date = _market_snapshot_on_or_before(paths, target_date)
+        if not market_date:
+            payload[key] = {"label": label, "rows": [], "basis": "No archived market snapshot", "market_date": "", "price_date": ""}
+            continue
+        historical_market = _trusted_market_offers_for_date(paths, snapshot_date=market_date)
+        historical_prices, price_date = _historical_ttravel_prices_on_or_before(paths, market_date)
+        if historical_prices.empty:
+            historical_prices = current_recommendations
+            basis = "Market-driven only (today's T-Travel prices held constant)"
+            price_date = "current"
+        else:
+            basis = "Historical T-Travel prices + historical competitor market"
+
+        historical_comp = _competitiveness_by_country(historical_prices, historical_market, country_names)
+        if historical_comp.empty:
+            payload[key] = {"label": label, "rows": [], "basis": basis, "market_date": market_date, "price_date": price_date}
+            continue
+        previous = historical_comp[["ISO", "Country", "Evaluated", "TrimmedMeanGapPct"]].copy()
+        previous = previous.rename(columns={"Country": "PreviousCountry", "Evaluated": "PreviousEvaluated", "TrimmedMeanGapPct": "PreviousGapPct"})
+        merged = current.merge(previous, on="ISO", how="inner")
+        merged = merged[
+            merged["CurrentEvaluated"].ge(MIN_COMPETITIVE_COUNTRY_ANCHORS)
+            & merged["PreviousEvaluated"].ge(MIN_COMPETITIVE_COUNTRY_ANCHORS)
+        ].copy()
+        if merged.empty:
+            rows: list[dict[str, Any]] = []
+        else:
+            merged["Country"] = merged["Country"].where(merged["Country"].astype(str).str.strip().ne(""), merged["PreviousCountry"])
+            # Lower gap is better. Therefore old - current is a competitiveness gain.
+            merged["ChangePctPts"] = merged["PreviousGapPct"] - merged["CurrentGapPct"]
+            rows = merged[["ISO", "Country", "CurrentGapPct", "PreviousGapPct", "ChangePctPts", "CurrentEvaluated", "PreviousEvaluated"]].to_dict(orient="records")
+        payload[key] = {
+            "label": label,
+            "rows": rows,
+            "basis": basis,
+            "market_date": market_date,
+            "price_date": price_date,
+        }
+    return payload
+
+def _row_country_codes(row: pd.Series) -> list[str]:
+    codes: set[str] = set()
+    raw = _text(row.get("Countries"))
+    if raw:
+        for part in raw.replace(";", ",").split(","):
+            code = part.strip().upper()
+            if len(code) == 2 and code.isalpha():
+                codes.add(code)
+    iso = _text(row.get("ISO")).upper()
+    if len(iso) == 2 and iso.isalpha():
+        codes.add(iso)
+    return sorted(codes)
+
+
+def _best_market_reference_for_country(
+    market: pd.DataFrame,
+    *,
+    iso: str,
+    days: float,
+    gb: float,
+    unlimited: bool,
+    currency: str,
+) -> dict[str, Any] | None:
+    """Build a best-credible benchmark for one T-Travel anchor in one country.
+
+    Rules mirror the recommendation engine's strict comparability envelope:
+    exact duration only; Unlimited compares only with Unlimited; capped packs
+    stay within 0.5x-2.0x of our allowance.  One closest-allowance product is
+    retained per provider (up to five providers), preventing a provider with many
+    near-duplicate SKUs from dominating the evidence.
+
+    The competitive benchmark is the lower of:
+      * the cheapest retained comparable pack price; and
+      * for capped plans, the cheapest retained price/GB multiplied by our GB.
+    """
+    if market.empty or not iso or not math.isfinite(days) or days <= 0:
+        return None
+    cand = market[market["iso"].eq(str(iso).upper())].copy()
+    if cand.empty:
+        return None
+    cand = cand[pd.to_numeric(cand["days"], errors="coerce").sub(float(days)).abs().le(1e-9)].copy()
+    if unlimited:
+        cand = cand[cand["plan_type"].eq("unlimited")].copy()
+    else:
+        cand = cand[~cand["plan_type"].eq("unlimited")].copy()
+        if not math.isfinite(gb) or gb <= 0:
+            return None
+        ratio = pd.to_numeric(cand["gb"], errors="coerce") / float(gb)
+        cand = cand[ratio.ge(BEST_MARKET_GB_RATIO_MIN) & ratio.le(BEST_MARKET_GB_RATIO_MAX)].copy()
+    if cand.empty:
+        return None
+
+    cur = str(currency).upper()
+    price_col = "eur_price" if cur == "EUR" else "usd_price" if cur == "USD" else None
+    if price_col:
+        prices = pd.to_numeric(cand[price_col], errors="coerce")
+        fallback = pd.to_numeric(cand["price"], errors="coerce").where(cand["currency"].eq(cur))
+        cand["_price"] = prices.where(prices.gt(0), fallback)
+    else:
+        cand["_price"] = pd.to_numeric(cand["price"], errors="coerce").where(cand["currency"].eq(cur))
+    cand = cand[cand["_price"].notna() & cand["_price"].gt(0) & cand["provider"].ne("")].copy()
+    if cand.empty:
+        return None
+
+    # Keep the closest allowance once per provider.  Unlimited products have no
+    # allowance dimension, so price is the stable tie-break.
+    if unlimited:
+        cand["_distance"] = 0.0
+    else:
+        ratios = pd.to_numeric(cand["gb"], errors="coerce") / float(gb)
+        cand["_distance"] = ratios.map(lambda x: abs(math.log(max(float(x), 1e-12))) if pd.notna(x) and x > 0 else math.inf)
+    cand = cand.sort_values(["provider", "_distance", "_price"], ascending=[True, True, True])
+    cand = cand.groupby("provider", as_index=False, sort=False).first()
+    cand = cand.sort_values(["_distance", "provider"], ascending=[True, True]).head(BEST_MARKET_MAX_PROVIDERS)
+    providers = int(cand["provider"].nunique())
+    if providers < BEST_MARKET_MIN_PROVIDERS:
+        return None
+
+    comparable_min = float(pd.to_numeric(cand["_price"], errors="coerce").min())
+    ppg_min = None
+    ppg_equivalent = None
+    if not unlimited:
+        valid_gb = pd.to_numeric(cand["gb"], errors="coerce")
+        ppg = pd.to_numeric(cand["_price"], errors="coerce") / valid_gb.where(valid_gb.gt(0))
+        ppg = ppg.replace([math.inf, -math.inf], pd.NA).dropna()
+        if len(ppg):
+            ppg_min = float(ppg.min())
+            ppg_equivalent = ppg_min * float(gb)
+
+    benchmark = comparable_min
+    method = "comparable pack"
+    if ppg_equivalent is not None and math.isfinite(ppg_equivalent) and ppg_equivalent < benchmark:
+        benchmark = float(ppg_equivalent)
+        method = "price/GB equivalent"
+
+    return {
+        "BestBenchmarkPrice": float(benchmark),
+        "ComparablePackMinPrice": comparable_min,
+        "BestPricePerGB": ppg_min,
+        "PricePerGBEquivalent": ppg_equivalent,
+        "BenchmarkMethod": method,
+        "ProviderCount": providers,
+        "Providers": ", ".join(sorted(cand["provider"].astype(str).unique())),
+    }
+
+
+def _competitiveness_by_country(
+    recommendations: pd.DataFrame,
+    market: pd.DataFrame,
+    country_names: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Compare T-Travel with the best credible competitor benchmark by country.
+
+    This deliberately does *not* use the recommendation engine's median market
+    target.  Each T-Travel anchor is compared with the lower of the cheapest
+    trusted comparable pack and the cheapest trusted price/GB equivalent.
+    """
+    cols = [
+        "ISO", "Country", "Evaluated", "TrimmedMeanGapPct", "MeanGapPct",
+        "VeryCompetitive", "VeryCompetitiveShare", "CompetitiveShare",
+        "AvgProviders", "ComparablePackWins", "PricePerGBWins", "PricingUnits",
+    ]
+    if recommendations.empty or market.empty:
         return pd.DataFrame(columns=cols)
 
     names = {str(k).upper(): str(v) for k, v in (country_names or {}).items() if k and v}
     rec = recommendations.copy()
-    rec["MarketGapPct"] = pd.to_numeric(rec.get("MarketGapPct"), errors="coerce")
-    rec["MarketProviderCount"] = pd.to_numeric(rec.get("MarketProviderCount"), errors="coerce")
-    rec = rec[rec["MarketGapPct"].notna() & rec["MarketProviderCount"].ge(2)].copy()
+    rec["Days"] = pd.to_numeric(rec.get("Days"), errors="coerce")
+    rec["GB"] = pd.to_numeric(rec.get("GB"), errors="coerce")
+    rec["CurrentNetPrice"] = pd.to_numeric(rec.get("CurrentNetPrice"), errors="coerce")
+    rec = rec[rec["Days"].isin([1, 3, 7, 10, 15, 30]) & rec["CurrentNetPrice"].gt(0)].copy()
     if rec.empty:
         return pd.DataFrame(columns=cols)
 
     expanded: list[dict[str, Any]] = []
     for _, row in rec.iterrows():
-        codes: set[str] = set()
-        raw = _text(row.get("Countries"))
-        if raw:
-            for part in raw.replace(";", ",").split(","):
-                code = part.strip().upper()
-                if len(code) == 2 and code.isalpha():
-                    codes.add(code)
-        iso = _text(row.get("ISO")).upper()
-        if len(iso) == 2 and iso.isalpha():
-            codes.add(iso)
-        if not codes:
+        days = _num(row.get("Days"))
+        gb_value = _num(row.get("GB"))
+        current = _num(row.get("CurrentNetPrice"))
+        if days is None or current is None or current <= 0:
             continue
-        for code in sorted(codes):
+        plan = _text(row.get("Plan")).lower()
+        unlimited = "unlimited" in plan or gb_value is None or gb_value <= 0
+        gb = float(gb_value or 0.0)
+        currency = _text(row.get("Currency")).upper() or "EUR"
+        for code in _row_country_codes(row):
+            ref = _best_market_reference_for_country(
+                market,
+                iso=code,
+                days=float(days),
+                gb=gb,
+                unlimited=unlimited,
+                currency=currency,
+            )
+            if not ref:
+                continue
+            benchmark = float(ref["BestBenchmarkPrice"])
+            if not math.isfinite(benchmark) or benchmark <= 0:
+                continue
+            gap = float(current / benchmark - 1.0)
             country = names.get(code)
-            if not country and len(codes) == 1:
+            if not country:
                 label = _text(row.get("Country"))
-                if label and label.upper() != code and label != _text(row.get("PricingUnitIdUsed")):
+                if label and len(_row_country_codes(row)) == 1 and label.upper() != code:
                     country = label
             expanded.append({
                 "ISO": code,
                 "Country": country or code,
-                "MarketGapPct": float(row["MarketGapPct"]),
-                "MarketProviderCount": float(row["MarketProviderCount"]),
+                "GapPct": gap,
+                "ProviderCount": int(ref["ProviderCount"]),
+                "BenchmarkMethod": str(ref["BenchmarkMethod"]),
                 "PricingUnitIdUsed": _text(row.get("PricingUnitIdUsed")),
             })
 
@@ -591,30 +1011,37 @@ def _competitiveness_by_country(recommendations: pd.DataFrame, country_names: di
     exp = pd.DataFrame(expanded)
     rows: list[dict[str, Any]] = []
     for (iso, country), g in exp.groupby(["ISO", "Country"], dropna=False, sort=False):
-        gaps = pd.to_numeric(g["MarketGapPct"], errors="coerce").dropna().sort_values()
+        gaps = pd.to_numeric(g["GapPct"], errors="coerce").dropna().sort_values()
         n = len(gaps)
         if not n:
             continue
         trim = int(math.floor(n * 0.10))
         core = gaps.iloc[trim:n-trim] if trim > 0 and n - 2 * trim > 0 else gaps
         very = int((gaps <= VERY_COMPETITIVE_GAP_PCT).sum())
+        competitive = int((gaps <= COMPETITIVE_GAP_PCT).sum())
+        methods = g["BenchmarkMethod"].fillna("").astype(str)
         rows.append({
             "ISO": iso,
             "Country": country,
             "Evaluated": n,
             "TrimmedMeanGapPct": float(core.mean()),
-            "MedianGapPct": float(gaps.median()),
+            "MeanGapPct": float(gaps.mean()),
             "VeryCompetitive": very,
             "VeryCompetitiveShare": very / n,
-            "MedianProviders": float(pd.to_numeric(g["MarketProviderCount"], errors="coerce").median()),
+            "CompetitiveShare": competitive / n,
+            "AvgProviders": float(pd.to_numeric(g["ProviderCount"], errors="coerce").mean()),
+            "ComparablePackWins": int((methods == "comparable pack").sum()),
+            "PricePerGBWins": int((methods == "price/GB equivalent").sum()),
             "PricingUnits": int(g["PricingUnitIdUsed"].replace("", pd.NA).dropna().nunique()),
         })
 
     out = pd.DataFrame(rows, columns=cols)
     if out.empty:
         return out
-    return out.sort_values(["TrimmedMeanGapPct", "VeryCompetitiveShare", "Evaluated"], ascending=[True, False, False]).reset_index(drop=True)
-
+    return out.sort_values(
+        ["VeryCompetitiveShare", "TrimmedMeanGapPct", "Evaluated"],
+        ascending=[False, True, False],
+    ).reset_index(drop=True)
 
 def _fmt_pct(value: Any, digits: int = 1) -> str:
     val = _num(value)
@@ -1010,7 +1437,19 @@ def generate_market_insights(
             code=_text(iso).upper(); name=_text(country)
             if len(code)==2 and name: country_name_map.setdefault(code,name)
     recommendation_countries = _recommendations_by_country(recs, country_name_map)
-    competitiveness_countries = _competitiveness_by_country(recs, country_name_map)
+    trusted_market = _latest_trusted_market_offers(
+        paths, quality=quality, latest_market_date=latest_market_date
+    )
+    competitiveness_countries = _competitiveness_by_country(
+        recs, trusted_market, country_name_map
+    )
+    competitiveness_trends = _competitiveness_trends(
+        paths,
+        current_recommendations=recs,
+        current_competitiveness=competitiveness_countries,
+        latest_market_date=latest_market_date,
+        country_names=country_name_map,
+    )
 
     actionable = recs[recs.get("Actionable", False).map(_boolish)].copy() if not recs.empty and "Actionable" in recs.columns else pd.DataFrame()
     rec_up = int((actionable.get("Direction", pd.Series(dtype=str)).astype(str).str.upper() == "UP").sum()) if not actionable.empty else 0
@@ -1040,12 +1479,12 @@ def generate_market_insights(
     )
 
     timeline = _history_timeline(paths)
-    dashboard_json = json.dumps({"windows": window_data, "timeline": timeline, "country_coords": WORLD_COUNTRY_COORDS, "map_land": WORLD_MAP_LAND, "map_lakes": WORLD_MAP_LAKES, "map_borders": WORLD_MAP_BORDERS, "recommendation_countries": json.loads(recommendation_countries.to_json(orient="records")) if not recommendation_countries.empty else [], "competitiveness_countries": json.loads(competitiveness_countries.to_json(orient="records")) if not competitiveness_countries.empty else []}, ensure_ascii=False).replace("</", "<\\/")
+    dashboard_json = json.dumps({"windows": window_data, "timeline": timeline, "country_coords": WORLD_COUNTRY_COORDS, "map_land": WORLD_MAP_LAND, "map_lakes": WORLD_MAP_LAKES, "map_borders": WORLD_MAP_BORDERS, "recommendation_countries": json.loads(recommendation_countries.to_json(orient="records")) if not recommendation_countries.empty else [], "competitiveness_countries": json.loads(competitiveness_countries.to_json(orient="records")) if not competitiveness_countries.empty else [], "competitiveness_trends": competitiveness_trends}, ensure_ascii=False).replace("</", "<\\/")
 
     quality_table = _table_html(
         quality_exclusions,
         [
-            ("provider", "Provider", "text"), ("iso", "ISO", "text"), ("country", "Country", "text"),
+            ("provider", "Operator / provider", "text"), ("iso", "ISO", "text"), ("country", "Country", "text"),
             ("plan", "Plan", "text"), ("days", "Days", "dec"), ("gb", "GB", "dec"),
             ("currency", "Currency", "text"), ("PreviousPrice", "Baseline", "dec"),
             ("CurrentPrice", "Current", "dec"), ("PctChange", "Vs baseline", "pct"),
@@ -1067,7 +1506,7 @@ def generate_market_insights(
     plans_table = _table_html(by_plan, [("Plan","Plan","text"),("Recommendations","Total","num"),("Up","Up","num"),("Down","Down","num")], "plans", 30)
     units_table = _table_html(unit_sorted, [("PricingUnitIdUsed","Pricing unit","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("HighConfidence","High confidence","num"),("MedianMarketGapPct","Median market gap","pct")], "units", 100)
     recommendation_country_table = _table_html(recommendation_countries, [("ISO","ISO","text"),("Country","Country","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("AffectedShare","Anchors affected","pct"),("AvgSuggestedChangePct","Avg suggested change","pct"),("PricingUnits","Pricing units","num")], "recommendation_countries", 200)
-    competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors compared","num"),("TrimmedMeanGapPct","10% trimmed gap vs market","pct"),("MedianGapPct","Median gap","pct"),("VeryCompetitive","≥15% cheaper anchors","num"),("VeryCompetitiveShare","Share ≥15% cheaper","pct"),("MedianProviders","Median providers","dec"),("PricingUnits","Pricing units","num")], "competitiveness_countries", 200)
+    competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors compared","num"),("TrimmedMeanGapPct","10% trimmed gap vs best","pct"),("MeanGapPct","Mean gap vs best","pct"),("VeryCompetitive","Within 5% of best","num"),("VeryCompetitiveShare","Share within 5%","pct"),("CompetitiveShare","Share within 15%","pct"),("AvgProviders","Avg providers","dec"),("ComparablePackWins","Pack-price benchmark","num"),("PricePerGBWins","PPG benchmark","num"),("PricingUnits","Pricing units","num")], "competitiveness_countries", 200)
 
     template = Template(r'''<!doctype html>
 <html lang="en">
@@ -1085,7 +1524,7 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 .table-wrap{overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:7px}table{width:100%;border-collapse:collapse;background:#fff}th{position:sticky;top:0;background:#f0f2f4;text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}td{padding:7px 8px;border-bottom:1px solid #edf0f2;white-space:nowrap}tr:hover td{background:#fafbfc}.table-search{width:100%;max-width:330px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin:0 0 8px}.note{color:var(--muted);font-size:12px;margin-top:8px}.empty{color:var(--muted);padding:18px 0}.method{border-left:4px solid var(--magenta);padding-left:12px}
 .chart{min-height:260px}.bar-row{display:grid;grid-template-columns:minmax(95px,150px) 1fr 64px;gap:8px;align-items:center;margin:7px 0}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bar-track{height:16px;background:#eef1f4;border-radius:8px;position:relative;overflow:hidden}.bar-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#b9c1c9}.bar-fill{position:absolute;top:2px;bottom:2px;border-radius:6px;background:var(--magenta)}.bar-value{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}.chart-titleline{display:flex;justify-content:space-between;gap:10px;align-items:end;margin-bottom:8px}.chart-sub{font-size:12px;color:var(--muted)}
 .spark-wrap{height:250px;position:relative}.spark-wrap svg{width:100%;height:100%;display:block}.axis-text{font-size:10px;fill:#74808c}.timeline-line{fill:none;stroke:var(--magenta);stroke-width:3}.timeline-area{fill:rgba(226,0,116,.08)}.timeline-dot{fill:var(--magenta)}.map-wrap{height:470px;position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:linear-gradient(#f8fbfd,#eef4f7)}.map-wrap svg{width:100%;height:100%;display:block}.map-land{fill:#e3eaef;stroke:#b8c5ce;stroke-width:.65}.map-lake{fill:#f4f8fb;stroke:#c6d1d8;stroke-width:.45}.map-border{fill:none;stroke:#c4ced5;stroke-width:.42;opacity:.95}.map-grid{stroke:#d9e2e8;stroke-width:1}.map-equator{stroke:#c0ccd5;stroke-width:1.3}.map-label{font-size:13px;fill:#9aa8b4;font-weight:600;letter-spacing:.05em}.map-dot{stroke:#fff;stroke-width:1.2;cursor:pointer;transition:r .12s,opacity .12s}.map-dot:hover{stroke:#20242a;stroke-width:2;opacity:1!important}.map-iso{font-size:9px;fill:#44515d;font-weight:700;pointer-events:none}.map-legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--muted)}.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}.map-tooltip{position:absolute;display:none;pointer-events:none;z-index:5;min-width:220px;max-width:300px;background:#20242a;color:#fff;border-radius:7px;padding:9px 11px;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:12px;line-height:1.45}.map-tooltip b{font-size:13px}.map-tooltip .muted{color:#cbd2d9}
-.competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
+.competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.evolution-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.evolution-chart{min-height:285px}.evo-row{display:grid;grid-template-columns:minmax(110px,180px) 1fr 72px;gap:8px;align-items:center;margin:7px 0}.evo-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.evo-fill{position:absolute;left:0;top:3px;bottom:3px;border-radius:5px}.evo-gain{background:var(--green)}.evo-loss{background:var(--red)}.evo-value{text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.evo-controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.evo-controls button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}.evo-controls button.active{background:#111827;color:#fff;border-color:#111827}@media(max-width:900px){.evolution-grid{grid-template-columns:1fr}}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
 @media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}.three,.chart-grid{grid-template-columns:1fr}}@media(max-width:750px){.grid,.two,.three,.chart-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -1124,10 +1563,10 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 </section>
 
 <section class="card">
- <div class="chart-titleline"><div><h2>Where T-Travel is most competitive</h2><div class="chart-sub">Current net price versus the same local market benchmark used by the recommendation engine</div></div></div>
+ <div class="chart-titleline"><div><h2>Where T-Travel is most competitive</h2><div class="chart-sub">Current net price versus the best credible benchmark from the latest competitor snapshot only</div></div></div>
  <div class="two">
-  <div><div id="competitivenessCountryChart" class="competitive-chart"></div><div class="note">More negative = cheaper versus the market benchmark. “Very competitive” means at least 15% below the market target. Countries with fewer than 3 comparable anchors are omitted from the chart but remain in the table.</div></div>
-  <div>$competitiveness_country_table<div class="note">Only anchors with at least 2 competitor providers contribute. Regional pricing units are expanded to the destinations they cover.</div></div>
+  <div><div id="competitivenessCountryChart" class="competitive-chart"></div><div class="note">Benchmark per anchor = the lower of the cheapest trusted exact-duration comparable pack and, for capped plans, the cheapest trusted price/GB × our allowance. At least 2 providers are required. “Very competitive” means our current net price is within 5% of that best benchmark or cheaper. Countries with fewer than 3 comparable anchors are omitted from the chart but remain in the table.</div></div>
+  <div>$competitiveness_country_table<div class="note">Only 1/3/7/10/15/30-day anchors contribute. Capped competitor packs must be 0.5×–2× our GB; one closest-allowance offer per provider is retained (max 5). Only offers present in the latest competitor snapshot contribute; historical prices never enter this benchmark. Quality-excluded rows do not contribute. Regional pricing units are evaluated separately in each covered destination.</div></div>
  </div>
 </section>
 
@@ -1148,6 +1587,17 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 
 <section class="card dynamic-table"><h2>Largest trusted competitor moves</h2><input class="table-search" id="movesSearch" type="search" placeholder="Filter move…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>ISO</th><th>Country</th><th>Plan</th><th>Days</th><th>GB</th><th>Previous</th><th>Current</th><th>Change</th><th>Previous date</th><th>Current date</th></tr></thead><tbody id="movesBody"></tbody></table></div><div class="note">The table follows the selected time window. Product identity is provider + market + plan + duration + allowance + currency.</div></section>
 
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where T-Travel competitiveness is changing</h2><div class="chart-sub">Change in our gap versus the best credible competitor benchmark; positive = gaining competitiveness</div></div></div>
+ <div class="evo-controls" id="evoControls"></div>
+ <div id="evoBasis" class="note"></div>
+ <div class="evolution-grid">
+  <div><h3>Top 10 gaining competitiveness</h3><div id="competitivenessGainers" class="evolution-chart"></div></div>
+  <div><h3>Top 10 losing competitiveness</h3><div id="competitivenessLosers" class="evolution-chart"></div></div>
+ </div>
+ <div class="note">Metric = previous gap versus best credible market − current gap versus best credible market, shown in percentage points. A +10 pp result means our relative position improved by 10 points. Historical T-Travel price snapshots are used when available; otherwise the card explicitly labels the comparison as market-driven only.</div>
+</section>
+
 <section class="card"><h2>Data quality — excluded suspicious current prices</h2>$quality_table<div class="note">For historical-median rows, “Baseline” is the median of prior observations, not a single snapshot. These rows remain in SQLite for audit/review and are excluded only from trusted analytics/recommendations.</div></section>
 <section class="card"><h2>Provider coverage & freshness</h2>$coverage_table<div class="note">Freshness is measured against the newest observation date in the DB: current ≤7 days, watch 8–14 days, stale &gt;14 days. Coverage deltas can reveal partial/failed scrapes.</div></section>
 <section class="card"><h2>Pricing units with the most signals</h2>$units_table<div class="note">Recommendation signals use the current quality-filtered market and are separate from the historical trend window selected above.</div></section>
@@ -1160,8 +1610,16 @@ function pct(v,d=1){if(v===null||v===undefined||!isFinite(Number(v)))return '—
 Object.entries(windows).forEach(([key,w])=>{const o=document.createElement('option');o.value=key;o.textContent=w.label;selector.appendChild(o)});selector.value='$default_key';
 function barChart(id,rows,labelKey,valueKey,maxRows=12){const el=document.getElementById(id);el.innerHTML='';const vals=(rows||[]).filter(r=>isFinite(Number(r[valueKey]))&&Math.abs(Number(r[valueKey]))>=0.0001).sort((a,b)=>Math.abs(Number(b[valueKey]))-Math.abs(Number(a[valueKey]))).slice(0,maxRows);if(!vals.length){el.innerHTML='<div class="empty">No material movement in this view.</div>';return}const max=Math.max(...vals.map(r=>Math.abs(Number(r[valueKey]))),0.01);vals.forEach(r=>{const v=Number(r[valueKey]);const row=document.createElement('div');row.className='bar-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r[labelKey]??'');label.textContent=String(r[labelKey]??'');const track=document.createElement('div');track.className='bar-track';const zero=document.createElement('div');zero.className='bar-zero';track.appendChild(zero);const fill=document.createElement('div');fill.className='bar-fill';const width=Math.min(49,Math.abs(v)/max*49);fill.style.width=width+'%';fill.style.left=(v>=0?50:50-width)+'%';fill.style.background=v>=0?'var(--green)':'var(--red)';track.appendChild(fill);const value=document.createElement('div');value.className='bar-value '+(v>=0?'up':'down');value.textContent=pct(v);row.append(label,track,value);el.appendChild(row)})}
 function renderRecommendationCountries(){const el=document.getElementById('recommendationCountryChart');if(!el)return;const rows=(dashboard.recommendation_countries||[]).filter(r=>Number(r.Recommendations)>0).sort((a,b)=>Number(b.Recommendations)-Number(a.Recommendations)).slice(0,18);el.innerHTML='';if(!rows.length){el.innerHTML='<div class="empty">No actionable country recommendations.</div>';return}const max=Math.max(...rows.map(r=>Math.max(Number(r.Up)||0,Number(r.Down)||0)),1);rows.forEach(r=>{const row=document.createElement('div');row.className='rec-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r.Country||r.ISO||'');label.textContent=String(r.Country||r.ISO||'');const track=document.createElement('div');track.className='rec-track';const zero=document.createElement('div');zero.className='rec-zero';track.appendChild(zero);const up=Number(r.Up)||0,down=Number(r.Down)||0;if(down){const b=document.createElement('div');b.className='rec-down';b.style.width=Math.min(49,down/max*49)+'%';track.appendChild(b)}if(up){const b=document.createElement('div');b.className='rec-up';b.style.width=Math.min(49,up/max*49)+'%';track.appendChild(b)}const count=document.createElement('div');count.className='rec-count';count.innerHTML='<span class="up">↑ '+up+'</span> <span class="down">↓ '+down+'</span>';row.append(label,track,count);el.appendChild(row)})}
-function renderCompetitivenessCountries(){const el=document.getElementById('competitivenessCountryChart');if(!el)return;const rows=(dashboard.competitiveness_countries||[]).filter(r=>Number(r.Evaluated)>=3&&Number(r.TrimmedMeanGapPct)<0).sort((a,b)=>Number(a.TrimmedMeanGapPct)-Number(b.TrimmedMeanGapPct)).slice(0,18);el.innerHTML='';if(!rows.length){el.innerHTML='<div class="empty">No countries currently meet the competitiveness view criteria.</div>';return}const max=Math.max(...rows.map(r=>Math.abs(Number(r.TrimmedMeanGapPct)||0)),0.01);rows.forEach(r=>{const row=document.createElement('div');row.className='competitive-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r.Country||r.ISO||'');label.textContent=String(r.Country||r.ISO||'');const track=document.createElement('div');track.className='competitive-track';const fill=document.createElement('div');fill.className='competitive-fill';fill.style.width=Math.min(100,Math.abs(Number(r.TrimmedMeanGapPct)||0)/max*100)+'%';track.appendChild(fill);const value=document.createElement('div');value.className='competitive-value';value.textContent=pct(Number(r.TrimmedMeanGapPct)||0);row.append(label,track,value);el.appendChild(row)})}
+function renderCompetitivenessCountries(){const el=document.getElementById('competitivenessCountryChart');if(!el)return;const rows=(dashboard.competitiveness_countries||[]).filter(r=>Number(r.Evaluated)>=3).sort((a,b)=>Number(b.VeryCompetitiveShare)-Number(a.VeryCompetitiveShare)||Number(a.TrimmedMeanGapPct)-Number(b.TrimmedMeanGapPct)).slice(0,18);el.innerHTML='';if(!rows.length){el.innerHTML='<div class="empty">Not enough country-level comparable anchors yet.</div>';return}rows.forEach(r=>{const row=document.createElement('div');row.className='competitive-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r.Country||r.ISO||'');label.textContent=String(r.Country||r.ISO||'');const track=document.createElement('div');track.className='competitive-track';const fill=document.createElement('div');fill.className='competitive-fill';const share=Math.max(0,Math.min(1,Number(r.VeryCompetitiveShare)||0));fill.style.width=(share*100)+'%';track.appendChild(fill);const value=document.createElement('div');value.className='competitive-value';value.textContent=pct(share);value.title='Trimmed mean gap vs best: '+pct(Number(r.TrimmedMeanGapPct)||0);row.append(label,track,value);el.appendChild(row)})}
 
+function renderCompetitivenessEvolution(key){
+ const trends=dashboard.competitiveness_trends||{}; const d=trends[key]||{}; const rows=d.rows||[];
+ const controls=document.getElementById('evoControls'); if(controls){controls.innerHTML='';['28','56','84'].forEach(k=>{if(!trends[k])return;const b=document.createElement('button');b.textContent=trends[k].label||k;b.className=k===key?'active':'';b.onclick=()=>renderCompetitivenessEvolution(k);controls.appendChild(b)})}
+ const basis=document.getElementById('evoBasis'); if(basis)basis.textContent=(d.basis||'')+(d.market_date?' · competitor snapshot '+d.market_date:'')+(d.price_date?' · T-Travel price snapshot '+d.price_date:'');
+ const gain=document.getElementById('competitivenessGainers'), loss=document.getElementById('competitivenessLosers');
+ const draw=(el,data,positive)=>{if(!el)return;el.innerHTML='';if(!data.length){el.innerHTML='<div class="empty">Not enough comparable country history for this window.</div>';return}const max=Math.max(...data.map(r=>Math.abs(Number(r.ChangePctPts)||0)),.001);data.forEach(r=>{const v=Number(r.ChangePctPts)||0;const row=document.createElement('div');row.className='evo-row';const label=document.createElement('div');label.className='bar-label';label.textContent=String(r.Country||r.ISO||'');label.title='Previous gap '+pct(Number(r.PreviousGapPct)||0)+' → current '+pct(Number(r.CurrentGapPct)||0);const track=document.createElement('div');track.className='evo-track';const fill=document.createElement('div');fill.className='evo-fill '+(positive?'evo-gain':'evo-loss');fill.style.width=Math.max(2,Math.min(100,Math.abs(v)/max*100))+'%';track.appendChild(fill);const value=document.createElement('div');value.className='evo-value '+(positive?'up':'down');value.textContent=(v>=0?'+':'')+(v*100).toFixed(1)+' pp';row.append(label,track,value);el.appendChild(row)})};
+ const valid=rows.filter(r=>isFinite(Number(r.ChangePctPts))); const gainers=[...valid].filter(r=>Number(r.ChangePctPts)>0).sort((a,b)=>Number(b.ChangePctPts)-Number(a.ChangePctPts)).slice(0,10); const losers=[...valid].filter(r=>Number(r.ChangePctPts)<0).sort((a,b)=>Number(a.ChangePctPts)-Number(b.ChangePctPts)).slice(0,10); draw(gain,gainers,true);draw(loss,losers,false);
+}
 function renderWindowChart(){const el=document.getElementById('windowChart');el.innerHTML='';const rows=Object.values(windows);const max=Math.max(...rows.flatMap(w=>[Math.abs(Number(w.trimmed_mean)||0),Math.abs(Number(w.mover_trimmed_mean)||0)]),0.01);rows.forEach(w=>{const block=document.createElement('div');block.style.margin='10px 0 14px';const title=document.createElement('div');title.className='bar-label';title.style.fontWeight='700';title.style.marginBottom='5px';title.textContent=w.label;block.appendChild(title);[['Overall',Number(w.trimmed_mean)||0],['Movers',Number(w.mover_trimmed_mean)||0]].forEach(([name,v])=>{const row=document.createElement('div');row.className='bar-row';const label=document.createElement('div');label.className='bar-label';label.textContent=name;const track=document.createElement('div');track.className='bar-track';const zero=document.createElement('div');zero.className='bar-zero';track.appendChild(zero);const fill=document.createElement('div');fill.className='bar-fill';const width=Math.min(49,Math.abs(v)/max*49);fill.style.width=width+'%';fill.style.left=(v>=0?50:50-width)+'%';fill.style.background=v>=0?'var(--green)':'var(--red)';track.appendChild(fill);const value=document.createElement('div');value.className='bar-value '+(v>=0?'up':'down');value.textContent=pct(v);row.append(label,track,value);block.appendChild(row)});el.appendChild(block)})}
 function renderTimeline(){const el=document.getElementById('timelineChart');const data=dashboard.timeline||[];if(data.length<2){el.innerHTML='<div class="empty">More snapshot dates are needed for a history chart.</div>';return}const W=720,H=220,p=28;const ys=data.map(d=>Number(d.Observations)||0);const max=Math.max(...ys,1),min=Math.min(...ys,0);const range=Math.max(max-min,1);const pts=data.map((d,i)=>{const x=p+(W-2*p)*(i/(data.length-1));const y=H-p-(H-2*p)*((ys[i]-min)/range);return [x,y]});const line=pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ');const area='M'+pts[0][0]+','+(H-p)+' '+pts.map(q=>'L'+q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')+' L'+pts[pts.length-1][0]+','+(H-p)+' Z';const first=esc(data[0].Date),last=esc(data[data.length-1].Date);el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none"><path class="timeline-area" d="'+area+'"></path><path class="timeline-line" d="'+line+'"></path><text class="axis-text" x="'+p+'" y="'+(H-8)+'">'+first+'</text><text class="axis-text" text-anchor="end" x="'+(W-p)+'" y="'+(H-8)+'">'+last+'</text><text class="axis-text" x="4" y="'+(p+4)+'">'+max.toLocaleString()+'</text><text class="axis-text" x="4" y="'+(H-p)+'">'+min.toLocaleString()+'</text></svg>'}
 function tableRows(id,rows,cols,searchId,limit=120){const body=document.getElementById(id);const q=(document.getElementById(searchId)?.value||'').toLowerCase();body.innerHTML='';(rows||[]).filter(r=>JSON.stringify(r).toLowerCase().includes(q)).slice(0,limit).forEach(r=>{const tr=document.createElement('tr');cols.forEach(c=>{const td=document.createElement('td');let v=r[c[0]];td.textContent=c[1]==='pct'?pct(v):c[1]==='num'?n(v):(v??'—');if(c[1]==='pct'&&isFinite(Number(v)))td.className=Number(v)>0.005?'up':(Number(v)<-0.005?'down':'neutral');tr.appendChild(td)});body.appendChild(tr)});if(!body.children.length)body.innerHTML='<tr><td colspan="12" class="neutral">No rows for this view/filter.</td></tr>'}
@@ -1186,7 +1644,7 @@ function renderMovementMap(w){
  host.insertBefore(svg,tip); document.getElementById('mapSub').textContent=w.label+' · real country map; overall trimmed mean color; bubble size = share of matched offers changed';
 }
 function renderSelected(){const w=windows[selector.value];if(!w)return;const tm=Number(w.trimmed_mean)||0;const med=Number(w.median)||0;const mtm=Number(w.mover_trimmed_mean)||0;const mmed=Number(w.mover_median)||0;const changed=Number(w.changed||0), matched=Number(w.matched||0);const changedShare=matched?changed/matched:0;const up=Number(w.up||0),down=Number(w.down||0),downShare=changed?down/changed:0;document.getElementById('directionLabel').textContent=w.label+' overall market';const dv=document.getElementById('directionValue');dv.textContent=pct(tm);dv.className='value '+(tm>0.005?'up':(tm<-0.005?'down':'neutral'));const state=tm>0.005?'higher':(tm<-0.005?'lower':'broadly stable');document.getElementById('directionNote').textContent='10% trimmed mean across all matched offers (stable included) · '+state+' · median '+pct(med);document.getElementById('moverLabel').textContent=w.label+' active movers';const mv=document.getElementById('moverValue');mv.textContent=pct(mtm);mv.className='value '+(mtm>0.005?'up':(mtm<-0.005?'down':'neutral'));document.getElementById('moveNote').textContent='10% trimmed mean among materially changed offers · '+changed.toLocaleString()+' of '+matched.toLocaleString()+' changed ('+pct(changedShare)+') · '+pct(downShare)+' of movers down · median '+pct(mmed);renderMovementMap(w);const countries=w.countries||[];const rising=countries.filter(r=>Number(r.TrimmedMeanChangePct)>0).sort((a,b)=>Number(b.TrimmedMeanChangePct)-Number(a.TrimmedMeanChangePct));const falling=countries.filter(r=>Number(r.TrimmedMeanChangePct)<0).sort((a,b)=>Number(a.TrimmedMeanChangePct)-Number(b.TrimmedMeanChangePct));barChart('countryChart',countries.map(r=>({...r,Label:(r.iso||'')+' '+(r.country||'')})),'Label','TrimmedMeanChangePct',12);barChart('providerChart',w.providers||[],'Provider','TrimmedMeanChangePct',12);document.getElementById('countryChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the tables below';document.getElementById('providerChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the table below';const ccols=[['iso','text'],['country','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['ProviderCount','num'],['LatestDataDate','text'],['PreviousDataDate','text']];tableRows('risingBody',rising,ccols,'risingSearch',120);tableRows('fallingBody',falling,ccols,'fallingSearch',120);tableRows('providerBody',w.providers||[],[['Provider','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['UpProducts','num'],['DownProducts','num'],['LatestDataDate','text']],'providerSearch',120);tableRows('movesBody',w.moves||[],[['provider','text'],['iso','text'],['country','text'],['plan','text'],['days','num'],['gb','num'],['PreviousPrice','num'],['CurrentPrice','num'],['PctChange','pct'],['PreviousDate','text'],['CurrentDate','text']],'movesSearch',250)}
-selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderRecommendationCountries();renderCompetitivenessCountries();renderWindowChart();renderTimeline();renderSelected();
+selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderRecommendationCountries();renderCompetitivenessCountries();renderCompetitivenessEvolution((dashboard.competitiveness_trends||{})["56"]?"56":((dashboard.competitiveness_trends||{})["28"]?"28":"84"));renderWindowChart();renderTimeline();renderSelected();
 function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' tbody tr').forEach(r=>{r.style.display=r.innerText.toLowerCase().includes(q)?'':'none'})}
 </script>
 </body></html>''')

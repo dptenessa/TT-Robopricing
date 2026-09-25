@@ -93,6 +93,54 @@ def find_pack_root(extracted_or_folder: Path) -> Path:
     )
 
 
+def print_scrape_status(src_root: Path) -> bool:
+    status_path = src_root / "outputs" / "diagnostics" / "scrape_status_latest.csv"
+
+    print()
+    print("Scrape Status")
+
+    if not status_path.exists():
+        print("No scrape status file was included in this weekly pack.")
+        return True
+
+    status_df = pd.read_csv(status_path).fillna("")
+
+    if status_df.empty:
+        print("The scrape status file is empty.")
+        return False
+
+    display_cols = [
+        col for col in [
+            "Category",
+            "Name",
+            "Status",
+            "Quality",
+            "Rows",
+            "Countries",
+            "PreviousRows",
+            "PreviousCountries",
+            "Attempt",
+            "Duration",
+            "Script",
+            "LogFile",
+            "Note",
+        ]
+        if col in status_df.columns
+    ]
+    print_pipe_table(status_df[display_cols], "SCRAPERS AND COMBINE")
+
+    if "Status" not in status_df.columns:
+        return True
+
+    issues = status_df[status_df["Status"].astype(str).str.lower() != "ok"]
+    if issues.empty:
+        print("All scrapers and the combine step finished OK.")
+        return True
+
+    names = ", ".join(issues["Name"].astype(str).tolist())
+    print(f"Needs attention: {names}")
+    return False
+
 def copy_pack(
     src_root: Path,
     project_root: Path,
@@ -172,8 +220,8 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
             import_blocked = False
 
             if not dry_run:
+                local_paths = PipelineFiles(base_dir=project_root)
                 try:
-                    local_paths = PipelineFiles(base_dir=project_root)
                     history_stats = update_market_history(local_paths)
                     print_history_summary(history_stats)
                 except Exception as exc:
@@ -182,6 +230,28 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
                     print()
                     print(f"Warning: market-history DB update failed: {exc}")
                     print("The weekly market data was imported successfully; the DB can be rebuilt later.")
+
+                # Precompute the heavy recommendation + Market Insights outputs now,
+                # while the fresh weekly market data is being imported.  The pricing
+                # editor still keeps its existing staleness checks, so a later manual
+                # price edit will trigger a refresh when needed.
+                try:
+                    try:
+                        from pricing_recommendations import generate_recommendations_from_files
+                    except ImportError:
+                        from automation.pricing_recommendations import generate_recommendations_from_files
+
+                    print()
+                    print("Refreshing pricing recommendations and Market Insights...")
+                    generate_recommendations_from_files(paths=local_paths)
+                    print("Recommendations and Market Insights are ready for the pricing editor.")
+                except Exception as exc:
+                    # Do not roll back a valid weekly market-data import just because
+                    # the optional local recommendation/report refresh failed.
+                    print()
+                    print(f"Warning: post-import recommendation refresh failed: {exc}")
+                    print("The weekly market data was imported successfully.")
+                    print("The pricing editor can recalculate stale recommendations later.")
     finally:
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
