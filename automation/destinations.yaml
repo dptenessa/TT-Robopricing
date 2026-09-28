@@ -1,0 +1,3217 @@
+schema_version: 1
+metadata:
+  purpose: Single commercial destination catalogue for T-Travel
+  country_count: 155
+  region_count: 49
+  note: Draft migration catalogue. Not consumed by production code yet. Country IDs are the future commercial pricing keys;
+    coverage controls where a country product works; region members control region membership independently.
+partner_classes:
+  COUNTRY:
+    limited: '190447115'
+    unlimited: '190447245'
+  MEDIUM_REGION:
+    limited: '190640635'
+    unlimited: '190640665'
+  LARGE_REGION:
+    limited: '190447125'
+    unlimited: '190447255'
+  GLOBAL:
+    limited: '190447135'
+    unlimited: '190447265'
+destinations:
+  AD:
+    type: country
+    coverage:
+    - AD
+    partner_class: COUNTRY
+    translations:
+      en: Andorra
+  AE:
+    type: country
+    coverage:
+    - AE
+    partner_class: COUNTRY
+    translations:
+      en: United Arab Emirates
+      hr: Ujedinjeni Arapski Emirati
+      de: Vereinigte Arabische Emirate
+      fr: Émirats Arabes Unis
+      ja: アラブ首長国連邦
+      it: Emirati Arabi Uniti
+      es: Emiratos Árabes Unidos
+      pt: Emirados Árabes Unidos
+  AF:
+    type: country
+    coverage:
+    - AF
+    partner_class: COUNTRY
+    translations:
+      en: Afghanistan
+      hr: Afganistan
+      de: Afghanistan
+      fr: Afghanistan
+      ja: アフガニスタン
+      it: Afghanistan
+      es: Afganistán
+      pt: Afeganistão
+  AG:
+    type: country
+    coverage:
+    - AG
+    partner_class: COUNTRY
+    translations:
+      en: Antigua and Barbuda
+      hr: Antigva i Barbuda
+      de: Antigua und Barbuda
+      fr: Antigua-et-Barbuda
+      ja: アンティグア・バーブーダ
+      it: Antigua e Barbuda
+      es: Antigua y Barbuda
+      pt: Antígua e Barbuda
+  AI:
+    type: country
+    coverage:
+    - AI
+    partner_class: COUNTRY
+    translations:
+      en: Anguilla
+      hr: Angvila
+      de: Anguilla
+      fr: Anguilla
+      ja: アンギラ
+      it: Anguilla
+      es: Anguila
+      pt: Anguila
+  AL:
+    type: country
+    coverage:
+    - AL
+    partner_class: COUNTRY
+    translations:
+      en: Albania
+      hr: Albanija
+      de: Albanien
+      fr: Albanie
+      ja: アルバニア
+      it: Albania
+      es: Albania
+      pt: Albânia
+  AM:
+    type: country
+    coverage:
+    - AM
+    partner_class: COUNTRY
+    translations:
+      en: Armenia
+      hr: Armenija
+      de: Armenien
+      fr: Arménie
+      ja: アルメニア
+      it: Armenia
+      es: Armenia
+      pt: Arménia
+  AO:
+    type: country
+    coverage:
+    - AO
+    partner_class: COUNTRY
+    translations:
+      en: Angola
+      hr: Angola
+      de: Angola
+      fr: Angola
+      ja: アンゴラ
+      it: Angola
+      es: Angola
+      pt: Angola
+  AR:
+    type: country
+    coverage:
+    - AR
+    partner_class: COUNTRY
+    translations:
+      en: Argentina
+      hr: Argentina
+      de: Argentinien
+      fr: Argentine
+      ja: アルゼンチン
+      it: Argentina
+      es: Argentina
+      pt: Argentina
+  AT:
+    type: country
+    coverage: &id004
+    - AT
+    - HR
+    - SI
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Austria
+      hr: Austrija
+      de: Österreich
+      fr: Autriche
+      ja: オーストリア
+      it: Austria
+      es: Austria
+      pt: Áustria
+  AU:
+    type: country
+    coverage:
+    - AU
+    partner_class: COUNTRY
+    translations:
+      en: Australia
+      hr: Australija
+      de: Australien
+      fr: Australie
+      ja: オーストラリア
+      it: Australia
+      es: Australia
+      pt: Austrália
+  AZ:
+    type: country
+    coverage:
+    - AZ
+    partner_class: COUNTRY
+    translations:
+      en: Azerbaijan
+      hr: Azerbajdžan
+      de: Aserbaidschan
+      fr: Azerbaïdjan
+      ja: アゼルバイジャン
+      it: Azerbaigian
+      es: Azerbaiyán
+      pt: Azerbaijão
+  BA:
+    type: country
+    coverage:
+    - BA
+    partner_class: COUNTRY
+    translations:
+      en: Bosnia and Herzegovina
+      hr: Bosna i Hercegovina
+      de: Bosnien und Herzegowina
+      fr: Bosnie-Herzégovine
+      ja: ボスニア・ヘルツェゴビナ
+      it: Bosnia ed Erzegovina
+      es: Bosnia y Herzegovina
+      pt: Bósnia e Herzegovina
+  BB:
+    type: country
+    coverage:
+    - BB
+    partner_class: COUNTRY
+    translations:
+      en: Barbados
+      hr: Barbados
+      de: Barbados
+      fr: Barbade
+      ja: バルバドス
+      it: Barbados
+      es: Barbados
+      pt: Barbados
+  BE:
+    type: country
+    coverage: &id007
+    - BE
+    - NL
+    - LU
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Belgium
+      hr: Belgija
+      de: Belgien
+      fr: Belgique
+      ja: ベルギー
+      it: Belgio
+      es: Bélgica
+      pt: Bélgica
+  BG:
+    type: country
+    coverage: &id013
+    - RO
+    - BG
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Bulgaria
+      hr: Bugarska
+      de: Bulgarien
+      fr: Bulgarie
+      ja: ブルガリア
+      it: Bulgaria
+      es: Bulgaria
+      pt: Bulgária
+  BH:
+    type: country
+    coverage:
+    - BH
+    partner_class: COUNTRY
+    translations:
+      en: Bahrain
+      hr: Bahrein
+      de: Bahrain
+      fr: Bahreïn
+      ja: バーレーン
+      it: Bahrain
+      es: Bahrein
+      pt: Barém
+  BM:
+    type: country
+    coverage:
+    - BM
+    partner_class: COUNTRY
+    translations:
+      en: Bermuda
+      hr: Bermudi
+      de: Bermuda
+      fr: Bermudes
+      ja: バミューダ
+      it: Bermuda
+      es: Bermudas
+      pt: Bermudas
+  BQ:
+    type: country
+    coverage:
+    - BQ
+    partner_class: COUNTRY
+    translations:
+      en: Bonaire, Sint Eustatius and Saba
+      hr: Karipski otoci Nizozemske
+      de: Bonaire
+      fr: Bonaire, Saint-Eustache et Saba
+      ja: ボネール、シント・ユースタティウスおよびサバ
+      it: Isole BES
+      es: Bonaire, San Eustaquio y Saba
+      pt: Bonaire, Santo Eustáquio e Saba
+  BR:
+    type: country
+    coverage:
+    - BR
+    partner_class: COUNTRY
+    translations:
+      en: Brazil
+      hr: Brazil
+      de: Brasilien
+      fr: Brésil
+      ja: ブラジル
+      it: Brasile
+      es: Brasil
+      pt: Brasil
+  BS:
+    type: country
+    coverage:
+    - BS
+    partner_class: COUNTRY
+    translations:
+      en: Bahamas
+      hr: Bahami
+      de: Bahamas
+      fr: Bahamas
+      ja: バハマ
+      it: Bahamas
+      es: Bahamas
+      pt: Baamas
+  BW:
+    type: country
+    coverage:
+    - BW
+    partner_class: COUNTRY
+    translations:
+      en: Botswana
+      hr: Bocvana
+      de: Botswana
+      fr: Botswana
+      ja: ボツワナ
+      it: Botswana
+      es: Botswana
+      pt: Botsuana
+  BY:
+    type: country
+    coverage:
+    - BY
+    partner_class: COUNTRY
+    translations:
+      en: Belarus
+      hr: Bjelorusija
+      de: Belarus
+      fr: Biélorussie
+      ja: ベラルーシ
+      it: Bielorussia
+      es: Bielorrusia
+      pt: Bielorrússia
+  BZ:
+    type: country
+    coverage:
+    - BZ
+    partner_class: COUNTRY
+    translations:
+      en: Belize
+  CA:
+    type: country
+    coverage:
+    - CA
+    partner_class: COUNTRY
+    translations:
+      en: Canada
+      hr: Kanada
+      de: Kanada
+      fr: Canada
+      ja: カナダ
+      it: Canada
+      es: Canadá
+      pt: Canadá
+  CD:
+    type: country
+    coverage:
+    - CD
+    partner_class: COUNTRY
+    translations:
+      en: Democratic Republic of the Congo
+      hr: Kongo - Kinshasa
+      de: Kongo
+      fr: République démocratique du Congo
+      ja: コンゴ民主共和国
+      it: Repubblica Democratica del Congo
+      es: Congo (República Democrática del)
+      pt: República Democrática do Congo
+  CH:
+    type: country
+    coverage: &id002
+    - FR
+    - CH
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Switzerland
+      hr: Švicarska
+      de: Schweiz
+      fr: Suisse
+      ja: スイス
+      it: Svizzera
+      es: Suiza
+      pt: Suíça
+  CL:
+    type: country
+    coverage:
+    - CL
+    partner_class: COUNTRY
+    translations:
+      en: Chile
+      hr: Čile
+      de: Chile
+      fr: Chili
+      ja: チリ
+      it: Cile
+      es: Chile
+      pt: Chile
+  CN:
+    type: country
+    coverage:
+    - CN
+    partner_class: COUNTRY
+    translations:
+      en: People's Republic of China
+      hr: Kina
+      de: China
+      fr: Chine
+      ja: 中華人民共和国
+      it: Cina
+      es: China
+      pt: China
+  CO:
+    type: country
+    coverage:
+    - CO
+    partner_class: COUNTRY
+    translations:
+      en: Colombia
+      hr: Kolumbija
+      de: Kolumbien
+      fr: Colombie
+      ja: コロンビア
+      it: Colombia
+      es: Colombia
+      pt: Colômbia
+  CR:
+    type: country
+    coverage:
+    - CR
+    partner_class: COUNTRY
+    translations:
+      en: Costa Rica
+      hr: Kostarika
+      de: Costa Rica
+      fr: Costa Rica
+      ja: コスタリカ
+      it: Costa Rica
+      es: Costa Rica
+      pt: Costa Rica
+  CU:
+    type: country
+    coverage:
+    - CU
+    partner_class: COUNTRY
+    translations:
+      en: Cuba
+      hr: Kuba
+      de: Kuba
+      fr: Cuba
+      ja: キューバ
+      it: Cuba
+      es: Cuba
+      pt: Cuba
+  CV:
+    type: country
+    coverage:
+    - CV
+    partner_class: COUNTRY
+    translations:
+      en: Cape Verde
+      hr: Zelenortska Republika
+      de: Kap Verde
+      fr: Cap-Vert
+      ja: カーボベルデ
+      it: Capo Verde
+      es: Cabo Verde
+      pt: Cabo Verde
+  CY:
+    type: country
+    coverage: &id003
+    - GR
+    - CY
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Cyprus
+      hr: Cipar
+      de: Zypern
+      fr: Chypre
+      ja: キプロス
+      it: Cipro
+      es: Chipre
+      pt: Chipre
+  CZ:
+    type: country
+    coverage: &id011
+    - PL
+    - CZ
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Czech Republic
+      hr: Češka
+      de: Tschechische Republik
+      fr: République Tchèque
+      ja: チェコ
+      it: Repubblica Ceca
+      es: República Checa
+      pt: República Checa
+  DE:
+    type: country
+    coverage: &id006
+    - DE
+    - LI
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Germany
+      hr: Njemačka
+      de: Deutschland
+      fr: Allemagne
+      ja: ドイツ
+      it: Germania
+      es: Alemania
+      pt: Alemanha
+  DK:
+    type: country
+    coverage: &id010
+    - DK
+    - 'NO'
+    - SE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Denmark
+      hr: Danska
+      de: Dänemark
+      fr: Danemark
+      ja: デンマーク
+      it: Danimarca
+      es: Dinamarca
+      pt: Dinamarca
+  DZ:
+    type: country
+    coverage:
+    - DZ
+    partner_class: COUNTRY
+    translations:
+      en: Algeria
+      hr: Alžir
+      de: Algerien
+      fr: Algérie
+      ja: アルジェリア
+      it: Algeria
+      es: Argelia
+      pt: Argélia
+  EC:
+    type: country
+    coverage:
+    - EC
+    partner_class: COUNTRY
+    translations:
+      en: Ecuador
+      hr: Ekvador
+      de: Ecuador
+      fr: Équateur
+      ja: エクアドル
+      it: Ecuador
+      es: Ecuador
+      pt: Equador
+  EE:
+    type: country
+    coverage: &id001
+    - FI
+    - EE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Estonia
+      hr: Estonija
+      de: Estland
+      fr: Estonie
+      ja: エストニア
+      it: Estonia
+      es: Estonia
+      pt: Estónia
+  EG:
+    type: country
+    coverage:
+    - EG
+    partner_class: COUNTRY
+    translations:
+      en: Egypt
+      hr: Egipat
+      de: Ägypten
+      fr: Égypte
+      ja: エジプト
+      it: Egitto
+      es: Egipto
+      pt: Egito
+  ES:
+    type: country
+    coverage: &id012
+    - ES
+    - PT
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Spain
+      hr: Španjolska
+      de: Spanien
+      fr: Espagne
+      ja: スペイン
+      it: Spagna
+      es: España
+      pt: Espanha
+  ET:
+    type: country
+    coverage:
+    - ET
+    partner_class: COUNTRY
+    translations:
+      en: Ethiopia
+      hr: Etiopija
+      de: Äthiopien
+      fr: Éthiopie
+      ja: エチオピア
+      it: Etiopia
+      es: Etiopía
+      pt: Etiópia
+  FI:
+    type: country
+    coverage: *id001
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Finland
+      hr: Finska
+      de: Finnland
+      fr: Finlande
+      ja: フィンランド
+      it: Finlandia
+      es: Finlandia
+      pt: Finlândia
+  FJ:
+    type: country
+    coverage:
+    - FJ
+    partner_class: COUNTRY
+    translations:
+      en: Fiji
+      hr: Fidži
+      de: Fidschi
+      fr: Fidji
+      ja: フィジー
+      it: Figi
+      es: Fiji
+      pt: Fiji
+  FO:
+    type: country
+    coverage:
+    - FO
+    partner_class: COUNTRY
+    translations:
+      en: Faroe Islands
+      hr: Farski otoci
+      de: Färöer
+      fr: Îles Féroé
+      ja: フェロー諸島
+      it: Isole Fær Øer
+      es: Islas Feroe
+      pt: Ilhas Faroé
+  FR:
+    type: country
+    coverage: *id002
+    partner_class: MEDIUM_REGION
+    translations:
+      en: France
+      hr: Francuska
+      de: Frankreich
+      fr: France
+      ja: フランス
+      it: Francia
+      es: Francia
+      pt: França
+  GB:
+    type: country
+    coverage: &id005
+    - GB
+    - IE
+    - IS
+    partner_class: MEDIUM_REGION
+    translations:
+      en: United Kingdom
+      hr: Ujedinjeno Kraljevstvo
+      de: Vereinigtes Königreich
+      fr: Royaume-Uni
+      ja: イギリス
+      it: Regno Unito
+      es: Reino Unido
+      pt: Reino Unido
+  GE:
+    type: country
+    coverage:
+    - GE
+    partner_class: COUNTRY
+    translations:
+      en: Georgia
+      hr: Gruzija
+      de: Georgien
+      fr: Géorgie
+      ja: ジョージア
+      it: Georgia
+      es: Georgia
+      pt: Geórgia
+  GG:
+    type: country
+    coverage:
+    - GG
+    partner_class: COUNTRY
+    translations:
+      en: Guernsey
+      hr: Guernsey
+      de: Guernsey
+      fr: Guernesey
+      ja: ガーンジー
+      it: Guernsey
+      es: Guernsey
+      pt: Guernsey
+  GH:
+    type: country
+    coverage:
+    - GH
+    partner_class: COUNTRY
+    translations:
+      en: Ghana
+      hr: Gana
+      de: Ghana
+      fr: Ghana
+      ja: ガーナ
+      it: Ghana
+      es: Ghana
+      pt: Gana
+  GL:
+    type: country
+    coverage:
+    - GL
+    partner_class: COUNTRY
+    translations:
+      en: Greenland
+      hr: Grenland
+      de: Grönland
+      fr: Groenland
+      ja: グリーンランド
+      it: Groenlandia
+      es: Groenlandia
+      pt: Gronelândia
+  GM:
+    type: country
+    coverage:
+    - GM
+    partner_class: COUNTRY
+    translations:
+      en: Republic of The Gambia
+      hr: Gambija
+      de: Gambia
+      fr: Gambie
+      ja: ガンビア
+      it: Gambia
+      es: Gambia
+      pt: Gâmbia
+  GP:
+    type: country
+    coverage:
+    - GP
+    partner_class: COUNTRY
+    translations:
+      en: Guadeloupe
+      hr: Guadalupe
+      de: Guadeloupe
+      fr: Guadeloupe
+      ja: グアドループ
+      it: Guadalupa
+      es: Guadalupe
+      pt: Guadalupe
+  GR:
+    type: country
+    coverage: *id003
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Greece
+      hr: Grčka
+      de: Griechenland
+      fr: Grèce
+      ja: ギリシャ
+      it: Grecia
+      es: Grecia
+      pt: Grécia
+  GT:
+    type: country
+    coverage:
+    - GT
+    partner_class: COUNTRY
+    translations:
+      en: Guatemala
+      hr: Gvatemala
+      de: Guatemala
+      fr: Guatemala
+      ja: グアテマラ
+      it: Guatemala
+      es: Guatemala
+      pt: Guatemala
+  HK:
+    type: country
+    coverage:
+    - HK
+    partner_class: COUNTRY
+    translations:
+      en: Hong Kong
+      hr: PUP Hong Kong Kina
+      de: Hongkong
+      fr: Hong Kong
+      ja: 香港
+      it: Hong Kong
+      es: Hong Kong
+      pt: Hong Kong
+  HR:
+    type: country
+    coverage: *id004
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Croatia
+      hr: Hrvatska
+      de: Kroatien
+      fr: Croatie
+      ja: クロアチア
+      it: Croazia
+      es: Croacia
+      pt: Croácia
+  HU:
+    type: country
+    coverage: &id014
+    - SK
+    - HU
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Hungary
+      hr: Mađarska
+      de: Ungarn
+      fr: Hongrie
+      ja: ハンガリー
+      it: Ungheria
+      es: Hungría
+      pt: Hungria
+  ID:
+    type: country
+    coverage:
+    - ID
+    partner_class: COUNTRY
+    translations:
+      en: Indonesia
+      hr: Indonezija
+      de: Indonesien
+      fr: Indonésie
+      ja: インドネシア
+      it: Indonesia
+      es: Indonesia
+      pt: Indonésia
+  IE:
+    type: country
+    coverage: *id005
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Ireland
+      hr: Irska
+      de: Irland
+      fr: Irlande
+      ja: アイルランド
+      it: Irlanda
+      es: Irlanda
+      pt: Irlanda
+  IL:
+    type: country
+    coverage:
+    - IL
+    partner_class: COUNTRY
+    translations:
+      en: Israel
+      hr: Izrael
+      de: Israel
+      fr: Israël
+      ja: イスラエル
+      it: Israele
+      es: Israel
+      pt: Israel
+  IN:
+    type: country
+    coverage:
+    - IN
+    partner_class: COUNTRY
+    translations:
+      en: India
+      hr: Indija
+      de: Indien
+      fr: Inde
+      ja: インド
+      it: India
+      es: India
+      pt: Índia
+  IQ:
+    type: country
+    coverage:
+    - IQ
+    partner_class: COUNTRY
+    translations:
+      en: Iraq
+      hr: Irak
+      de: Irak
+      fr: Irak
+      ja: イラク
+      it: Iraq
+      es: Iraq
+      pt: Iraque
+  IR:
+    type: country
+    coverage:
+    - IR
+    partner_class: COUNTRY
+    translations:
+      en: Islamic Republic of Iran
+      hr: Iran
+      de: Iran
+      fr: Iran
+      ja: イラン・イスラム共和国
+      it: Iran
+      es: Irán
+      pt: Irão
+  IS:
+    type: country
+    coverage: *id005
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Iceland
+      hr: Island
+      de: Island
+      fr: Islande
+      ja: アイスランド
+      it: Islanda
+      es: Islandia
+      pt: Islândia
+  IT:
+    type: country
+    coverage: &id009
+    - IT
+    - MT
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Italy
+      hr: Italija
+      de: Italien
+      fr: Italie
+      ja: イタリア
+      it: Italia
+      es: Italia
+      pt: Itália
+  JE:
+    type: country
+    coverage:
+    - JE
+    partner_class: COUNTRY
+    translations:
+      en: Jersey
+      hr: Jersey
+      de: Jersey
+      fr: Jersey
+      ja: ジャージー
+      it: Jersey
+      es: Jersey
+      pt: Jersey
+  JM:
+    type: country
+    coverage:
+    - JM
+    partner_class: COUNTRY
+    translations:
+      en: Jamaica
+      hr: Jamajka
+      de: Jamaika
+      fr: Jamaïque
+      ja: ジャマイカ
+      it: Giamaica
+      es: Jamaica
+      pt: Jamaica
+  JO:
+    type: country
+    coverage:
+    - JO
+    partner_class: COUNTRY
+    translations:
+      en: Jordan
+      hr: Jordan
+      de: Jordanien
+      fr: Jordanie
+      ja: ヨルダン
+      it: Giordania
+      es: Jordania
+      pt: Jordânia
+  JP:
+    type: country
+    coverage:
+    - JP
+    partner_class: COUNTRY
+    translations:
+      en: Japan
+      hr: Japan
+      de: Japan
+      fr: Japon
+      ja: 日本
+      it: Giappone
+      es: Japón
+      pt: Japão
+  KE:
+    type: country
+    coverage:
+    - KE
+    partner_class: COUNTRY
+    translations:
+      en: Kenya
+      hr: Kenija
+      de: Kenia
+      fr: Kenya
+      ja: ケニア
+      it: Kenya
+      es: Kenia
+      pt: Quénia
+  KG:
+    type: country
+    coverage:
+    - KG
+    partner_class: COUNTRY
+    translations:
+      en: Kyrgyzstan
+      hr: Kirgistan
+      de: Kirgisistan
+      fr: Kirghizistan
+      ja: キルギス
+      it: Kirghizistan
+      es: Kirguistán
+      pt: Quirguistão
+  KH:
+    type: country
+    coverage:
+    - KH
+    partner_class: COUNTRY
+    translations:
+      en: Cambodia
+      hr: Kambodža
+      de: Kambodscha
+      fr: Cambodge
+      ja: カンボジア
+      it: Cambogia
+      es: Camboya
+      pt: Camboja
+  KN:
+    type: country
+    coverage:
+    - KN
+    partner_class: COUNTRY
+    translations:
+      en: Saint Kitts and Nevis
+      hr: Sveti Kristofor i Nevis
+      de: St. Kitts und Nevis
+      fr: Saint-Christophe-et-Niévès
+      ja: セントクリストファー・ネイビス
+      it: Saint Kitts e Nevis
+      es: Saint Kitts y Nevis
+      pt: São Cristóvão e Neves
+  KR:
+    type: country
+    coverage:
+    - KR
+    partner_class: COUNTRY
+    translations:
+      en: South Korea
+      hr: Južna Koreja
+      de: Südkorea
+      fr: Corée du Sud
+      ja: 大韓民国
+      it: Corea del Sud
+      es: República de Corea
+      pt: Coreia do Sul
+  KW:
+    type: country
+    coverage:
+    - KW
+    partner_class: COUNTRY
+    translations:
+      en: Kuwait
+      hr: Kuvajt
+      de: Kuwait
+      fr: Koweït
+      ja: クウェート
+      it: Kuwait
+      es: Kuwait
+      pt: Kuwait
+  KY:
+    type: country
+    coverage:
+    - KY
+    partner_class: COUNTRY
+    translations:
+      en: Cayman Islands
+      hr: Kajmanski otoci
+      de: Kaimaninseln
+      fr: Îles Caïmans
+      ja: ケイマン諸島
+      it: Isole Cayman
+      es: Islas Caimán
+      pt: Ilhas Caimão
+  KZ:
+    type: country
+    coverage:
+    - KZ
+    partner_class: COUNTRY
+    translations:
+      en: Kazakhstan
+      hr: Kazahstan
+      de: Kasachstan
+      fr: Kazakhstan
+      ja: カザフスタン
+      it: Kazakistan
+      es: Kazajistán
+      pt: Cazaquistão
+  LA:
+    type: country
+    coverage:
+    - LA
+    partner_class: COUNTRY
+    translations:
+      en: Lao People's Democratic Republic
+      hr: Laos
+      de: Laos
+      fr: Laos
+      ja: ラオス人民民主共和国
+      it: Laos
+      es: República Democrática Popular de Lao
+      pt: Laos
+  LB:
+    type: country
+    coverage:
+    - LB
+    partner_class: COUNTRY
+    translations:
+      en: Lebanon
+  LC:
+    type: country
+    coverage:
+    - LC
+    partner_class: COUNTRY
+    translations:
+      en: Saint Lucia
+      hr: Sveta Lucija
+      de: St. Lucia
+      fr: Sainte-Lucie
+      ja: セントルシア
+      it: Santa Lucia
+      es: Santa Lucía
+      pt: Santa Lúcia
+  LI:
+    type: country
+    coverage: *id006
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Liechtenstein
+      hr: Lihtenštajn
+      de: Liechtenstein
+      fr: Liechtenstein
+      ja: リヒテンシュタイン
+      it: Liechtenstein
+      es: Liechtenstein
+      pt: Liechtenstein
+  LK:
+    type: country
+    coverage:
+    - LK
+    partner_class: COUNTRY
+    translations:
+      en: Sri Lanka
+      hr: Šri Lanka
+      de: Sri Lanka
+      fr: Sri Lanka
+      ja: スリランカ
+      it: Sri Lanka
+      es: Sri Lanka
+      pt: Sri Lanca
+  LR:
+    type: country
+    coverage:
+    - LR
+    partner_class: COUNTRY
+    translations:
+      en: Liberia
+      hr: Liberija
+      de: Liberia
+      fr: Libéria
+      ja: リベリア
+      it: Liberia
+      es: Liberia
+      pt: Libéria
+  LS:
+    type: country
+    coverage:
+    - LS
+    partner_class: COUNTRY
+    translations:
+      en: Lesotho
+  LT:
+    type: country
+    coverage: &id008
+    - LV
+    - LT
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Lithuania
+      hr: Litva
+      de: Litauen
+      fr: Lituanie
+      ja: リトアニア
+      it: Lituania
+      es: Lituania
+      pt: Lituânia
+  LU:
+    type: country
+    coverage: *id007
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Luxembourg
+      hr: Luksemburg
+      de: Luxemburg
+      fr: Luxembourg
+      ja: ルクセンブルク
+      it: Lussemburgo
+      es: Luxemburgo
+      pt: Luxemburgo
+  LV:
+    type: country
+    coverage: *id008
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Latvia
+      hr: Latvija
+      de: Lettland
+      fr: Lettonie
+      ja: ラトビア
+      it: Lettonia
+      es: Letonia
+      pt: Letónia
+  LY:
+    type: country
+    coverage:
+    - LY
+    partner_class: COUNTRY
+    translations:
+      en: Libya
+  MA:
+    type: country
+    coverage:
+    - MA
+    partner_class: COUNTRY
+    translations:
+      en: Morocco
+      hr: Maroko
+      de: Marokko
+      fr: Maroc
+      ja: モロッコ
+      it: Marocco
+      es: Marruecos
+      pt: Marrocos
+  MC:
+    type: country
+    coverage:
+    - MC
+    partner_class: COUNTRY
+    translations:
+      en: Monaco
+      hr: Monako
+      de: Monaco
+      fr: Monaco
+      ja: モナコ
+      it: Monaco
+      es: Mónaco
+      pt: Mónaco
+  MD:
+    type: country
+    coverage:
+    - MD
+    partner_class: COUNTRY
+    translations:
+      en: Moldova, Republic of
+      hr: Moldavija
+      de: Moldawien
+      fr: Moldavie
+      ja: モルドバ共和国
+      it: Moldavia
+      es: Moldavia
+      pt: Moldávia
+  ME:
+    type: country
+    coverage:
+    - ME
+    partner_class: COUNTRY
+    translations:
+      en: Montenegro
+      hr: Crna Gora
+      de: Montenegro
+      fr: Monténégro
+      ja: モンテネグロ
+      it: Montenegro
+      es: Montenegro
+      pt: Montenegro
+  MK:
+    type: country
+    coverage:
+    - MK
+    partner_class: COUNTRY
+    translations:
+      en: The Republic of North Macedonia
+      hr: Sjeverna Makedonija
+      de: Nordmazedonien
+      fr: Macédoine du Nord
+      ja: 北マケドニア
+      it: Macedonia del Nord
+      es: Macedonia del Norte
+      pt: Macedónia do Norte
+  ML:
+    type: country
+    coverage:
+    - ML
+    partner_class: COUNTRY
+    translations:
+      en: Mali
+      hr: Mali
+      de: Mali
+      fr: Mali
+      ja: マリ
+      it: Mali
+      es: Malí
+      pt: Mali
+  MO:
+    type: country
+    coverage:
+    - MO
+    partner_class: COUNTRY
+    translations:
+      en: Macao
+      hr: PUP Makao Kina
+      de: Macao
+      fr: Macao
+      ja: マカオ
+      it: Macao
+      es: Macao
+      pt: Macau
+  MT:
+    type: country
+    coverage: *id009
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Malta
+      hr: Malta
+      de: Malta
+      fr: Malte
+      ja: マルタ
+      it: Malta
+      es: Malta
+      pt: Malta
+  MU:
+    type: country
+    coverage:
+    - MU
+    partner_class: COUNTRY
+    translations:
+      en: Mauritius
+      hr: Mauricijus
+      de: Mauritius
+      fr: Maurice
+      ja: モーリシャス
+      it: Mauritius
+      es: Mauricio
+      pt: Maurícia
+  MV:
+    type: country
+    coverage:
+    - MV
+    partner_class: COUNTRY
+    translations:
+      en: Maldives
+      hr: Maldivi
+      de: Malediven
+      fr: Maldives
+      ja: モルディブ
+      it: Maldive
+      es: Maldivas
+      pt: Maldivas
+  MX:
+    type: country
+    coverage:
+    - MX
+    partner_class: COUNTRY
+    translations:
+      en: Mexico
+      hr: Meksiko
+      de: Mexiko
+      fr: Mexique
+      ja: メキシコ
+      it: Messico
+      es: México
+      pt: México
+  MY:
+    type: country
+    coverage:
+    - MY
+    partner_class: COUNTRY
+    translations:
+      en: Malaysia
+      hr: Malezija
+      de: Malaysia
+      fr: Malaisie
+      ja: マレーシア
+      it: Malesia
+      es: Malasia
+      pt: Malásia
+  NG:
+    type: country
+    coverage:
+    - NG
+    partner_class: COUNTRY
+    translations:
+      en: Nigeria
+      hr: Nigerija
+      de: Nigeria
+      fr: Nigéria
+      ja: ナイジェリア
+      it: Nigeria
+      es: Nigeria
+      pt: Nigéria
+  NI:
+    type: country
+    coverage:
+    - NI
+    partner_class: COUNTRY
+    translations:
+      en: Nicaragua
+      hr: Nikaragva
+      de: Nicaragua
+      fr: Nicaragua
+      ja: ニカラグア
+      it: Nicaragua
+      es: Nicaragua
+      pt: Nicarágua
+  NL:
+    type: country
+    coverage: *id007
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Netherlands
+      hr: Nizozemska
+      de: Niederlande
+      fr: Pays-Bas
+      ja: オランダ
+      it: Paesi Bassi
+      es: Países Bajos
+      pt: Países Baixos
+  'NO':
+    type: country
+    coverage: *id010
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Norway
+      hr: Norveška
+      de: Norwegen
+      fr: Norvège
+      ja: ノルウェー
+      it: Norvegia
+      es: Noruega
+      pt: Noruega
+  NP:
+    type: country
+    coverage:
+    - NP
+    partner_class: COUNTRY
+    translations:
+      en: Nepal
+      hr: Nepal
+      de: Nepal
+      fr: Népal
+      ja: ネパール
+      it: Nepal
+      es: Nepal
+      pt: Nepal
+  NZ:
+    type: country
+    coverage:
+    - NZ
+    partner_class: COUNTRY
+    translations:
+      en: New Zealand
+      hr: Novi Zeland
+      de: Neuseeland
+      fr: Nouvelle-Zélande
+      ja: ニュージーランド
+      it: Nuova Zelanda
+      es: Nueva Zelanda
+      pt: Nova Zelândia
+  OM:
+    type: country
+    coverage:
+    - OM
+    partner_class: COUNTRY
+    translations:
+      en: Oman
+      hr: Oman
+      de: Oman
+      fr: Oman
+      ja: オマーン
+      it: Oman
+      es: Omán
+      pt: Omã
+  PA:
+    type: country
+    coverage:
+    - PA
+    partner_class: COUNTRY
+    translations:
+      en: Panama
+      hr: Panama
+      de: Panama
+      fr: Panama
+      ja: パナマ
+      it: Panamá
+      es: Panamá
+      pt: Panamá
+  PE:
+    type: country
+    coverage:
+    - PE
+    partner_class: COUNTRY
+    translations:
+      en: Peru
+      hr: Peru
+      de: Peru
+      fr: Pérou
+      ja: ペルー
+      it: Perù
+      es: Perú
+      pt: Peru
+  PF:
+    type: country
+    coverage:
+    - PF
+    partner_class: COUNTRY
+    translations:
+      en: French Polynesia
+  PG:
+    type: country
+    coverage:
+    - PG
+    partner_class: COUNTRY
+    translations:
+      en: Papua New Guinea
+      hr: Papua Nova Gvineja
+      de: Papua-Neuguinea
+      fr: Papouasie-Nouvelle-Guinée
+      ja: パプアニューギニア
+      it: Papua Nuova Guinea
+      es: Papua Nueva Guinea
+      pt: Papua-Nova Guiné
+  PH:
+    type: country
+    coverage:
+    - PH
+    partner_class: COUNTRY
+    translations:
+      en: Philippines
+      hr: Filipini
+      de: Philippinen
+      fr: Philippines
+      ja: フィリピン
+      it: Filippine
+      es: Filipinas
+      pt: Filipinas
+  PK:
+    type: country
+    coverage:
+    - PK
+    partner_class: COUNTRY
+    translations:
+      en: Pakistan
+      hr: Pakistan
+      de: Pakistan
+      fr: Pakistan
+      ja: パキスタン
+      it: Pakistan
+      es: Pakistán
+      pt: Paquistão
+  PL:
+    type: country
+    coverage: *id011
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Poland
+      hr: Poljska
+      de: Polen
+      fr: Pologne
+      ja: ポーランド
+      it: Polonia
+      es: Polonia
+      pt: Polónia
+  PR:
+    type: country
+    coverage:
+    - PR
+    partner_class: COUNTRY
+    translations:
+      en: Puerto Rico
+      hr: Portoriko
+      de: Puerto Rico
+      fr: Porto Rico
+      ja: プエルトリコ
+      it: Porto Rico
+      es: Puerto Rico
+      pt: Porto Rico
+  PT:
+    type: country
+    coverage: *id012
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Portugal
+      hr: Portugal
+      de: Portugal
+      fr: Portugal
+      ja: ポルトガル
+      it: Portogallo
+      es: Portugal
+      pt: Portugal
+  PY:
+    type: country
+    coverage:
+    - PY
+    partner_class: COUNTRY
+    translations:
+      en: Paraguay
+      hr: Paragvaj
+      de: Paraguay
+      fr: Paraguay
+      ja: パラグアイ
+      it: Paraguay
+      es: Paraguay
+      pt: Paraguai
+  QA:
+    type: country
+    coverage:
+    - QA
+    partner_class: COUNTRY
+    translations:
+      en: Qatar
+      hr: Katar
+      de: Katar
+      fr: Qatar
+      ja: カタール
+      it: Qatar
+      es: Catar
+      pt: Catar
+  RE:
+    type: country
+    coverage:
+    - RE
+    partner_class: COUNTRY
+    translations:
+      en: Reunion
+      hr: Réunion
+      de: Réunion
+      fr: Réunion
+      ja: レユニオン
+      it: Réunion
+      es: Reunión
+      pt: Reunião
+  RO:
+    type: country
+    coverage: *id013
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Romania
+      hr: Rumunjska
+      de: Rumänien
+      fr: Roumanie
+      ja: ルーマニア
+      it: Romania
+      es: Rumanía
+      pt: Roménia
+  RS:
+    type: country
+    coverage:
+    - RS
+    partner_class: COUNTRY
+    translations:
+      en: Serbia
+      hr: Srbija
+      de: Serbien
+      fr: Serbie
+      ja: セルビア
+      it: Serbia
+      es: Serbia
+      pt: Sérvia
+  RU:
+    type: country
+    coverage:
+    - RU
+    partner_class: COUNTRY
+    translations:
+      en: Russian Federation
+      hr: Rusija
+      de: Russische Föderation
+      fr: Russie
+      ja: ロシア連邦
+      it: Russia
+      es: Rusia
+      pt: Rússia
+  RW:
+    type: country
+    coverage:
+    - RW
+    partner_class: COUNTRY
+    translations:
+      en: Rwanda
+      hr: Ruanda
+      de: Ruanda
+      fr: Rwanda
+      ja: ルワンダ
+      it: Ruanda
+      es: Ruanda
+      pt: Ruanda
+  SA:
+    type: country
+    coverage:
+    - SA
+    partner_class: COUNTRY
+    translations:
+      en: Saudi Arabia
+      hr: Saudijska Arabija
+      de: Saudi-Arabien
+      fr: Arabie Saoudite
+      ja: サウジアラビア
+      it: Arabia Saudita
+      es: Arabia Saudita
+      pt: Arábia Saudita
+  SD:
+    type: country
+    coverage:
+    - SD
+    partner_class: COUNTRY
+    translations:
+      en: Sudan
+      hr: Sudan
+      de: Sudan
+      fr: Soudan
+      ja: スーダン
+      it: Sudan
+      es: Sudán
+      pt: Sudão
+  SE:
+    type: country
+    coverage: *id010
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Sweden
+      hr: Švedska
+      de: Schweden
+      fr: Suède
+      ja: スウェーデン
+      it: Svezia
+      es: Suecia
+      pt: Suécia
+  SG:
+    type: country
+    coverage:
+    - SG
+    partner_class: COUNTRY
+    translations:
+      en: Singapore
+      hr: Singapur
+      de: Singapur
+      fr: Singapour
+      ja: シンガポール
+      it: Singapore
+      es: Singapur
+      pt: Singapura
+  SI:
+    type: country
+    coverage: *id004
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Slovenia
+      hr: Slovenija
+      de: Slowenien
+      fr: Slovénie
+      ja: スロベニア
+      it: Slovenia
+      es: Eslovenia
+      pt: Eslovénia
+  SK:
+    type: country
+    coverage: *id014
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Slovakia
+      hr: Slovačka
+      de: Slowakei
+      fr: Slovaquie
+      ja: スロバキア
+      it: Slovacchia
+      es: Eslovaquia
+      pt: Eslováquia
+  SL:
+    type: country
+    coverage:
+    - SL
+    partner_class: COUNTRY
+    translations:
+      en: Sierra Leone
+      hr: Sijera Leone
+      de: Sierra Leone
+      fr: Sierra Leone
+      ja: シエラレオネ
+      it: Sierra Leone
+      es: Sierra Leona
+      pt: Serra Leoa
+  SN:
+    type: country
+    coverage:
+    - SN
+    partner_class: COUNTRY
+    translations:
+      en: Senegal
+      hr: Senegal
+      de: Senegal
+      fr: Sénégal
+      ja: セネガル
+      it: Senegal
+      es: Senegal
+      pt: Senegal
+  SR:
+    type: country
+    coverage:
+    - SR
+    partner_class: COUNTRY
+    translations:
+      en: Suriname
+      hr: Surinam
+      de: Suriname
+      fr: Suriname
+      ja: スリナム
+      it: Suriname
+      es: Surinam
+      pt: Suriname
+  SV:
+    type: country
+    coverage:
+    - SV
+    partner_class: COUNTRY
+    translations:
+      en: El Salvador
+      hr: Salvador
+      de: El Salvador
+      fr: El Salvador
+      ja: エルサルバドル
+      it: El Salvador
+      es: El Salvador
+      pt: El Salvador
+  TC:
+    type: country
+    coverage:
+    - TC
+    partner_class: COUNTRY
+    translations:
+      en: Turks and Caicos Islands
+      hr: Otoci Turks i Caicos
+      de: Turks- und Caicosinseln
+      fr: Îles Turques-et-Caïques
+      ja: タークス・カイコス諸島
+      it: Isole Turks e Caicos
+      es: Islas Turcas y Caicos
+      pt: Ilhas Turcas e Caicos
+  TD:
+    type: country
+    coverage:
+    - TD
+    partner_class: COUNTRY
+    translations:
+      en: Chad
+      hr: Čad
+      de: Tschad
+      fr: Tchad
+      ja: チャド
+      it: Ciad
+      es: Chad
+      pt: Chade
+  TG:
+    type: country
+    coverage:
+    - TG
+    partner_class: COUNTRY
+    translations:
+      en: Togo
+      hr: Togo
+      de: Togo
+      fr: Togo
+      ja: トーゴ
+      it: Togo
+      es: Togo
+      pt: Togo
+  TH:
+    type: country
+    coverage:
+    - TH
+    partner_class: COUNTRY
+    translations:
+      en: Thailand
+      hr: Tajland
+      de: Thailand
+      fr: Thaïlande
+      ja: タイ
+      it: Thailandia
+      es: Tailandia
+      pt: Tailândia
+  TJ:
+    type: country
+    coverage:
+    - TJ
+    partner_class: COUNTRY
+    translations:
+      en: Tajikistan
+      hr: Tadžikistan
+      de: Tadschikistan
+      fr: Tadjikistan
+      ja: タジキスタン
+      it: Tagikistan
+      es: Tayikistán
+      pt: Tajiquistão
+  TN:
+    type: country
+    coverage:
+    - TN
+    partner_class: COUNTRY
+    translations:
+      en: Tunisia
+      hr: Tunis
+      de: Tunesien
+      fr: Tunisie
+      ja: チュニジア
+      it: Tunisia
+      es: Túnez
+      pt: Tunísia
+  TO:
+    type: country
+    coverage:
+    - TO
+    partner_class: COUNTRY
+    translations:
+      en: Tonga
+      hr: Tonga
+      de: Tonga
+      fr: Tonga
+      ja: トンガ
+      it: Tonga
+      es: Tonga
+      pt: Tonga
+  TR:
+    type: country
+    coverage:
+    - TR
+    partner_class: COUNTRY
+    translations:
+      en: Türkiye
+      hr: Turska
+      de: Türkei
+      fr: Turquie
+      ja: トルコ
+      it: Turchia
+      es: Turquía
+      pt: Turquia
+  TW:
+    type: country
+    coverage:
+    - TW
+    partner_class: COUNTRY
+    translations:
+      en: Taiwan, Province of China
+      hr: Tajvan
+      de: Taiwan
+      fr: Taïwan
+      ja: 台湾
+      it: Repubblica di Cina
+      es: Taiwán
+      pt: Taiwan
+  TZ:
+    type: country
+    coverage:
+    - TZ
+    partner_class: COUNTRY
+    translations:
+      en: United Republic of Tanzania
+      hr: Tanzanija
+      de: Tansania, Vereinigte Republik
+      fr: République unie de Tanzanie
+      ja: タンザニア
+      it: Tanzania
+      es: Tanzania
+      pt: Tanzânia
+  UA:
+    type: country
+    coverage:
+    - UA
+    partner_class: COUNTRY
+    translations:
+      en: Ukraine
+      hr: Ukrajina
+      de: Ukraine
+      fr: Ukraine
+      ja: ウクライナ
+      it: Ucraina
+      es: Ucrania
+      pt: Ucrânia
+  US:
+    type: country
+    coverage:
+    - US
+    partner_class: COUNTRY
+    translations:
+      en: United States of America
+      hr: Sjedinjene Američke Države
+      de: Vereinigte Staaten von Amerika
+      fr: États-Unis d'Amérique
+      ja: アメリカ合衆国
+      it: Stati Uniti d'America
+      es: Estados Unidos
+      pt: Estados Unidos da América
+  UY:
+    type: country
+    coverage:
+    - UY
+    partner_class: COUNTRY
+    translations:
+      en: Uruguay
+      hr: Urugvaj
+      de: Uruguay
+      fr: Uruguay
+      ja: ウルグアイ
+      it: Uruguay
+      es: Uruguay
+      pt: Uruguai
+  UZ:
+    type: country
+    coverage:
+    - UZ
+    partner_class: COUNTRY
+    translations:
+      en: Uzbekistan
+      hr: Uzbekistan
+      de: Usbekistan
+      fr: Ouzbékistan
+      ja: ウズベキスタン
+      it: Uzbekistan
+      es: Uzbekistán
+      pt: Usbequistão
+  VE:
+    type: country
+    coverage:
+    - VE
+    partner_class: COUNTRY
+    translations:
+      en: Venezuela
+      hr: Venezuela
+      de: Venezuela
+      fr: Venezuela
+      ja: ベネズエラ・ボリバル共和国
+      it: Venezuela
+      es: Venezuela
+      pt: Venezuela
+  VG:
+    type: country
+    coverage:
+    - VG
+    partner_class: COUNTRY
+    translations:
+      en: Virgin Islands, British
+      hr: Britanski Djevičanski otoci
+      de: Britische Jungferninseln
+      fr: Îles vierges britanniques
+      ja: イギリス領ヴァージン諸島
+      it: Isole Vergini Britanniche
+      es: Islas Vírgenes británicas
+      pt: Ilhas Virgens Britânicas
+  VN:
+    type: country
+    coverage:
+    - VN
+    partner_class: COUNTRY
+    translations:
+      en: Vietnam
+      hr: Vijetnam
+      de: Vietnam
+      fr: Vietnam
+      ja: ベトナム
+      it: Vietnam
+      es: Vietnam
+      pt: Vietname
+  XK:
+    type: country
+    coverage:
+    - XK
+    partner_class: COUNTRY
+    translations:
+      en: Kosovo
+      hr: Kosovo
+      de: Kosovo
+      fr: Kosovo
+      ja: コソボ
+      it: Kosovo
+      es: Kosovo
+      pt: Kosovo
+  ZA:
+    type: country
+    coverage:
+    - ZA
+    partner_class: COUNTRY
+    translations:
+      en: South Africa
+      hr: Južnoafrička Republika
+      de: Südafrika
+      fr: Afrique du Sud
+      ja: 南アフリカ
+      it: Sudafrica
+      es: Sudáfrica
+      pt: África do Sul
+  PW:
+    type: country
+    coverage:
+    - PW
+    partner_class: COUNTRY
+    translations:
+      en: Palau
+  GLOBAL:
+    type: global
+    members:
+    - AL
+    - AM
+    - AR
+    - AT
+    - AU
+    - BA
+    - BE
+    - BG
+    - BH
+    - BR
+    - BS
+    - CA
+    - CH
+    - CL
+    - CN
+    - CO
+    - CR
+    - CY
+    - CZ
+    - DE
+    - DK
+    - DZ
+    - EC
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GE
+    - GG
+    - GR
+    - GT
+    - HK
+    - HR
+    - HU
+    - ID
+    - IE
+    - IL
+    - IN
+    - IQ
+    - IS
+    - IT
+    - JE
+    - JM
+    - JO
+    - JP
+    - KG
+    - KR
+    - KW
+    - LI
+    - LT
+    - LU
+    - LV
+    - MA
+    - MD
+    - ME
+    - MK
+    - MT
+    - MX
+    - MY
+    - NI
+    - NL
+    - 'NO'
+    - NZ
+    - PE
+    - PH
+    - PK
+    - PL
+    - PR
+    - PT
+    - PY
+    - QA
+    - RE
+    - RO
+    - RS
+    - RU
+    - SE
+    - SG
+    - SI
+    - SK
+    - SV
+    - TC
+    - TH
+    - TR
+    - TW
+    - UA
+    - US
+    - UY
+    - UZ
+    - VG
+    - VN
+    - XK
+    partner_class: GLOBAL
+    translations:
+      en: Global
+      hr: Global
+      de: Global
+      fr: Global
+      ja: Global
+      it: Global
+      es: Global
+      pt: Global
+  EUROPA:
+    type: region
+    members:
+    - AL
+    - AT
+    - BA
+    - BE
+    - BG
+    - BY
+    - CH
+    - CY
+    - CZ
+    - DE
+    - DK
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GG
+    - GR
+    - HR
+    - HU
+    - IE
+    - IS
+    - IT
+    - JE
+    - LI
+    - LT
+    - LU
+    - LV
+    - MD
+    - ME
+    - MK
+    - MT
+    - NL
+    - 'NO'
+    - PL
+    - PT
+    - RO
+    - RS
+    - RU
+    - SE
+    - SI
+    - SK
+    - TR
+    - UA
+    - XK
+    partner_class: LARGE_REGION
+    translations:
+      en: Europe
+      hr: Evropa
+      de: Europa
+      fr: Europe
+      ja: ヨーロッパ
+      it: Europa
+      es: Europa
+      pt: Europa
+  EU_UK_NOR:
+    type: region
+    members:
+    - AT
+    - BE
+    - BG
+    - HR
+    - CY
+    - CZ
+    - DK
+    - EE
+    - FI
+    - FR
+    - DE
+    - GR
+    - HU
+    - IE
+    - IT
+    - LV
+    - LT
+    - LU
+    - MT
+    - NL
+    - PL
+    - PT
+    - RO
+    - SK
+    - SI
+    - ES
+    - SE
+    - 'NO'
+    - GB
+    partner_class: LARGE_REGION
+    translations:
+      en: EU+UK+NOR
+      hr: EU+UK+NOR
+      de: EU+UK+NOR
+      fr: EU+UK+NOR
+      ja: EU+UK+NOR
+      it: EU+UK+NOR
+      es: EU+UK+NOR
+      pt: EU+UK+NOR
+  NORTH_AMERICA:
+    type: region
+    members:
+    - CA
+    - MX
+    - US
+    partner_class: LARGE_REGION
+    translations:
+      en: North America
+      hr: North America
+      de: North America
+      fr: North America
+      ja: 北アメリカ
+      it: North America
+      es: América del Norte
+      pt: América do Norte
+  MENA:
+    type: region
+    members:
+    - BH
+    - EG
+    - IQ
+    - IL
+    - JO
+    - KW
+    - MA
+    - OM
+    - QA
+    - SA
+    - TN
+    partner_class: LARGE_REGION
+    translations:
+      en: Middle East and North Africa
+      hr: Middle East and North Africa
+      de: Middle East and North Africa
+      fr: Middle East and North Africa
+      ja: 中東と北アフリカ
+      it: Middle East and North Africa
+      es: Medio Oriente y Norte de África
+      pt: Médio Oriente e Norte de África
+  AFRICA:
+    type: region
+    members:
+    - BW
+    - CD
+    - DZ
+    - EG
+    - GH
+    - GM
+    - LR
+    - MA
+    - ML
+    - MU
+    - NG
+    - RE
+    - RW
+    - SL
+    - SN
+    - TD
+    - TN
+    - ZA
+    partner_class: LARGE_REGION
+    translations:
+      en: Africa
+      hr: Afrika
+      de: Afrika
+      fr: Afrique
+      ja: アフリカ
+      it: Africa
+      es: África
+      pt: África
+  LATAM:
+    type: region
+    members:
+    - AR
+    - BR
+    - CL
+    - CO
+    - CR
+    - EC
+    - GT
+    - MX
+    - NI
+    - PE
+    - PY
+    - SR
+    - SV
+    - UY
+    - VE
+    partner_class: LARGE_REGION
+    translations:
+      en: Latin America
+      hr: Latin America
+      de: Latin America
+      fr: Latin America
+      ja: ラテンアメリカ
+      it: America Latina
+      es: América Latina
+      pt: América Latina
+  OCEANIA:
+    type: region
+    members:
+    - AU
+    - NZ
+    partner_class: LARGE_REGION
+    translations:
+      en: Oceania
+      hr: Oceania
+      de: Oceania
+      fr: Oceanie
+      ja: オセアニア
+      it: Oceania
+      es: Oceanía
+      pt: Oceânia
+  ASIA:
+    type: region
+    members:
+    - AF
+    - AM
+    - CN
+    - GE
+    - HK
+    - ID
+    - IN
+    - IQ
+    - JP
+    - KG
+    - KR
+    - MO
+    - MY
+    - PH
+    - PK
+    - SG
+    - TH
+    - TW
+    - UZ
+    - VN
+    partner_class: LARGE_REGION
+    translations:
+      en: Asia
+      hr: Azija
+      de: Asien
+      fr: Asie
+      ja: アジア
+      it: Asia
+      es: Asia
+      pt: Ásia
+  CARIBBEAN:
+    type: region
+    members:
+    - AG
+    - AI
+    - BB
+    - BM
+    - BQ
+    - BS
+    - GP
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - SR
+    - TC
+    - VG
+    partner_class: LARGE_REGION
+    translations:
+      en: Caribbean
+      hr: Karibski
+      de: Karibik
+      fr: Caraïbes
+      ja: カリブ海
+      it: Caribbean
+      es: Caribe
+      pt: Caraíbas
+  SE_EUROPE:
+    type: region
+    members:
+    - GR
+    - RO
+    - BG
+    - HR
+    - RS
+    - BA
+    - AL
+    - ME
+    - MK
+    - XK
+    partner_class: MEDIUM_REGION
+    translations:
+      en: South-East Europe
+      hr: Jugoistočna Europa
+      de: Südosteuropa
+      fr: Europe du Sud-Est
+      ja: 南欧
+      it: Europa del Sud-Est
+      es: Europa del Sud-Este
+      pt: Sudeste da Europa
+  WEST_BALKANS:
+    type: region
+    members:
+    - HR
+    - BA
+    - RS
+    - ME
+    - AL
+    - MK
+    - XK
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Western Balkans
+      hr: Zapadni Balkan
+      de: Westlicher Balkan
+      fr: Balkans occidentaux
+      ja: 西バルカン
+      it: Balcani occidentali
+      es: Balcanes occidentales
+      pt: Balcãs Ocidentais
+  ADRIATIC:
+    type: region
+    members:
+    - IT
+    - SI
+    - HR
+    - ME
+    - AL
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Adriatic
+      hr: Jadranska regija
+      de: Adria
+      fr: Adriatique
+      ja: アドリア
+      it: Adriatico
+      es: Adriático
+      pt: Adriático
+  WEST_EUROPE:
+    type: region
+    members:
+    - FR
+    - ES
+    - PT
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Western Europe
+      hr: Zapadna Europa
+      de: Westeuropa
+      fr: Europe de l'Ouest
+      ja: 西ヨーロッパ
+      it: Europa occidentale
+      es: Europa Occidental
+      pt: Europa Ocidental
+  BRITISH_ISLES_IR:
+    type: region
+    members:
+    - GB
+    - IE
+    - GG
+    - JE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: British Isles & Ireland
+      hr: Britanski otoci i Irska
+      de: Britische Inseln & Irland
+      fr: Îles britanniques & Irlande
+      ja: イギリス諸島・アイルランド
+      it: Isole britanniche e Irlanda
+      es: Islas británicas e Irlanda
+      pt: Ilhas Britânicas e Irlanda
+  CENTRAL_EUROPE:
+    type: region
+    members:
+    - DE
+    - AT
+    - CH
+    - CZ
+    - SK
+    - HU
+    - PL
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Central Europe
+      hr: Srednja Europa
+      de: Mitteleuropa
+      fr: Europe centrale
+      ja: 中央ヨーロッパ
+      it: Europa centrale
+      es: Europa Central
+      pt: Europa Central
+  NORDICS:
+    type: region
+    members:
+    - DK
+    - SE
+    - 'NO'
+    - FI
+    - IS
+    - FO
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Nordics
+      hr: Nordijske zemlje
+      de: Nordische Länder
+      fr: Pays nordiques
+      ja: 北欧
+      it: Paesi nordici
+      es: Países nórdicos
+      pt: Países Nórdicos
+  BALTICS_FI:
+    type: region
+    members:
+    - EE
+    - LV
+    - LT
+    - FI
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Baltics & Finland
+      hr: Baltik i Finska
+      de: Baltikum & Finnland
+      fr: Pays baltes & Finlande
+      ja: バルト諸国・フィンランド
+      it: Paesi Baltici e Finlandia
+      es: Países bálticos y Finlandia
+      pt: Bálticos e Finlândia
+  BENELUX_FR:
+    type: region
+    members:
+    - BE
+    - NL
+    - LU
+    - FR
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Benelux & France
+      hr: Beneluks i Francuska
+      de: Benelux & Frankreich
+      fr: Benelux & France
+      ja: ベネルクス・フランス
+      it: Benelux e Francia
+      es: Benelux y Francia
+      pt: Benelux e França
+  MEDITERRANEAN:
+    type: region
+    members:
+    - ES
+    - FR
+    - IT
+    - HR
+    - GR
+    - MT
+    - CY
+    - TR
+    - ME
+    - AL
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Mediterranean
+      hr: Mediteran
+      de: Mittelmeer
+      fr: Méditerranée
+      ja: 地中海
+      it: Mediterraneo
+      es: Meditáneo
+      pt: Mediterrâneo
+  EAST_EUROPE:
+    type: region
+    members:
+    - PL
+    - CZ
+    - SK
+    - HU
+    - RO
+    - BG
+    - MD
+    - UA
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Eastern Europe
+      hr: Istočna Europa
+      de: Osteuropa
+      fr: Europe de l'Est
+      ja: 東ヨーロッパ
+      it: Europa orientale
+      es: Europa del Este
+      pt: Europa de Leste
+  ALPINE_REGION:
+    type: region
+    members:
+    - AT
+    - CH
+    - LI
+    - SI
+    - IT
+    - FR
+    - DE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Alpine Region
+      hr: Alpska regija
+      de: Alpenregion
+      fr: Région alpine
+      ja: アルプス地方
+      it: Regione alpina
+      es: Región alpina
+      pt: Região Alpina
+  GULF_TRAVEL:
+    type: region
+    members:
+    - BH
+    - KW
+    - OM
+    - QA
+    - SA
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Gulf Travel
+      hr: Putovanje u Zaljev
+      de: Golf-Reise
+      fr: Voyage dans le Golfe
+      ja: 湾岸旅行
+      it: Viaggio nel Golfo
+      es: Viaje al Golfo
+      pt: Viagem no Golfo
+  LEVANT:
+    type: region
+    members:
+    - IL
+    - JO
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Levant
+      hr: Levant
+      de: Levante
+      fr: Levant
+      ja: レバント
+      it: Levante
+      es: Levante
+      pt: Levante
+  CAUCASUS:
+    type: region
+    members:
+    - AM
+    - AZ
+    - GE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Caucasus
+      hr: Kavkaz
+      de: Kaukasus
+      fr: Caucase
+      ja: コーカサス
+      it: Caucaso
+      es: Cáucaso
+      pt: Cáucaso
+  CENTRAL_ASIA:
+    type: region
+    members:
+    - KG
+    - TJ
+    - UZ
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Central Asia
+      hr: Srednja Azija
+      de: Zentralasien
+      fr: Asie centrale
+      ja: 中央アジア
+      it: Asia centrale
+      es: Asia Central
+      pt: Ásia Central
+  INDOCHINA:
+    type: region
+    members:
+    - TH
+    - VN
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Indochina
+      hr: Indokina
+      de: Indochina
+      fr: Indochine
+      ja: インドシナ
+      it: Indocina
+      es: Indochina
+      pt: Indochina
+  SOUTHEAST_ASIA:
+    type: region
+    members:
+    - SG
+    - MY
+    - TH
+    - ID
+    - VN
+    - PH
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Southeast Asia
+      hr: Jugoistočna Azija
+      de: Südostasien
+      fr: Asie du Sud-Est
+      ja: 東南アジア
+      it: Sud-est asiatico
+      es: Sudeste asiático
+      pt: Sudeste Asiático
+  ISLAND_SE_ASIA:
+    type: region
+    members:
+    - SG
+    - MY
+    - ID
+    - PH
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Island Southeast Asia
+      hr: Otočna Jugoistočna Azija
+      de: Insel-Südostasien
+      fr: Asie du Sud-Est insulaire
+      ja: 島嶼東南アジア
+      it: Asia sud-orientale insulare
+      es: Sudeste asiático insular
+      pt: Sudeste Asiático Insular
+  EAST_ASIA_PLUS:
+    type: region
+    members:
+    - CN
+    - HK
+    - MO
+    - TW
+    partner_class: MEDIUM_REGION
+    translations:
+      en: East Asia Plus
+      hr: Istočna Azija Plus
+      de: Ostasien Plus
+      fr: Asie de l'Est Plus
+      ja: 東アジアプラス
+      it: Asia orientale Plus
+      es: Asia Oriental Plus
+      pt: Ásia Oriental Plus
+  JP_KR_TW:
+    type: region
+    members:
+    - JP
+    - KR
+    - TW
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Japan, Korea & Taiwan
+      hr: Japan, Koreja i Tajvan
+      de: Japan, Korea & Taiwan
+      fr: Japon, Corée & Taïwan
+      ja: 日本・韓国・台湾
+      it: Giappone, Corea e Taiwan
+      es: Japón, Corea y Taiwán
+      pt: Japão, Coreia e Taiwan
+  SUBCONTINENT:
+    type: region
+    members:
+    - IN
+    - PK
+    - LK
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Subcontinent
+      hr: Potkontinent
+      de: Subkontinent
+      fr: Sous-continent
+      ja: 亜大陸
+      it: Subcontinente
+      es: Subcontinente
+      pt: Subcontinente
+  NORTH_AFRICA:
+    type: region
+    members:
+    - MA
+    - DZ
+    - TN
+    - EG
+    partner_class: MEDIUM_REGION
+    translations:
+      en: North Africa
+      hr: Sjeverna Afrika
+      de: Nordafrika
+      fr: Afrique du Nord
+      ja: 北アフリカ
+      it: Nord Africa
+      es: África del Norte
+      pt: Norte de África
+  EAST_AFRICA:
+    type: region
+    members:
+    - TZ
+    - RW
+    partner_class: MEDIUM_REGION
+    translations:
+      en: East Africa
+      hr: Istočna Afrika
+      de: Ostafrika
+      fr: Afrique de l'Est
+      ja: 東アフリカ
+      it: Africa orientale
+      es: África Oriental
+      pt: África Oriental
+  SOUTHERN_AFRICA:
+    type: region
+    members:
+    - ZA
+    - BW
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Southern Africa
+      hr: Južna Afrika
+      de: Südafrika
+      fr: Afrique australe
+      ja: 南アフリカ
+      it: Africa meridionale
+      es: África Austral
+      pt: África Austral
+  WEST_AFRICA:
+    type: region
+    members:
+    - GH
+    - SN
+    - NG
+    - GM
+    - SL
+    - TG
+    - ML
+    - LR
+    partner_class: MEDIUM_REGION
+    translations:
+      en: West Africa
+      hr: Zapadna Afrika
+      de: Westafrika
+      fr: Afrique de l'Ouest
+      ja: 西アフリカ
+      it: Africa occidentale
+      es: África Occidental
+      pt: África Ocidental
+  AFRICA_SAFARI:
+    type: region
+    members:
+    - TZ
+    - ZA
+    - BW
+    - RW
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Africa Safari
+      hr: Afrika safari
+      de: Afrika Safari
+      fr: Safari en Afrique
+      ja: アフリカサファリ
+      it: Safari in Africa
+      es: Safari en África
+      pt: Safari na África
+  INDIAN_OCEAN:
+    type: region
+    members:
+    - MU
+    - RE
+    - MV
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Indian Ocean
+      hr: Indijski ocean
+      de: Indischer Ozean
+      fr: Océan Indien
+      ja: インド洋
+      it: Oceano Indiano
+      es: Océano Índico
+      pt: Oceano Índico
+  CENTRAL_AFRICA:
+    type: region
+    members:
+    - CD
+    - TD
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Central Africa
+      hr: Srednja Afrika
+      de: Zentralafrika
+      fr: Afrique centrale
+      ja: 中央アフリカ
+      it: Africa centrale
+      es: África Central
+      pt: África Central
+  CENTRAL_AMERICA:
+    type: region
+    members:
+    - CR
+    - GT
+    - MX
+    - NI
+    - SV
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Central America
+      hr: Srednja Amerika
+      de: Mittelamerika
+      fr: Amérique centrale
+      ja: 中央アメリカ
+      it: America centrale
+      es: América Central
+      pt: América Central
+  SOUTH_AMERICA:
+    type: region
+    members:
+    - AR
+    - BR
+    - CL
+    - CO
+    - EC
+    - PE
+    - PY
+    - SR
+    - UY
+    - VE
+    partner_class: MEDIUM_REGION
+    translations:
+      en: South America
+      hr: Južna Amerika
+      de: Südamerika
+      fr: Amérique du Sud
+      ja: 南アメリカ
+      it: Sudamerica
+      es: América del Sur
+      pt: América do Sul
+  ANDEAN:
+    type: region
+    members:
+    - CO
+    - EC
+    - PE
+    - CL
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Andean
+      hr: Ande
+      de: Anden
+      fr: Andes
+      ja: アンデス
+      it: Ande
+      es: Andes
+      pt: Andino
+  SOUTH_CONE:
+    type: region
+    members:
+    - BR
+    - AR
+    - CL
+    - UY
+    - PY
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Southern Cone
+      hr: Južni stožer
+      de: Südkegel
+      fr: Cône sud
+      ja: 南部コーン
+      it: Cono Sud
+      es: Cono Sur
+      pt: Cone Sul
+  CARIBBEAN_CRUISE:
+    type: region
+    members:
+    - AG
+    - BB
+    - BS
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - TC
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Caribbean Cruise
+      hr: Karipsko krstarenje
+      de: Karibik-Kreuzfahrt
+      fr: Croisière aux Caraïbes
+      ja: カリブ海クルーズ
+      it: Crociera nei Caraibi
+      es: Crucero por el Caribe
+      pt: Cruzeiro nas Caraíbas
+  LESSER_ANTILLES:
+    type: region
+    members:
+    - AG
+    - AI
+    - BB
+    - BQ
+    - GP
+    - KN
+    - LC
+    - VG
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Lesser Antilles
+      hr: Mali Antili
+      de: Kleine Antillen
+      fr: Petites Antilles
+      ja: 小アンティル諸島
+      it: Piccole Antille
+      es: Antillas Menores
+      pt: Pequenas Antilhas
+  NORTH_ATLANTIC_ISLANDS:
+    type: region
+    members:
+    - BM
+    - BS
+    - TC
+    - PR
+    partner_class: MEDIUM_REGION
+    translations:
+      en: North Atlantic Islands
+      hr: Sjevernoatlantski otoci
+      de: Nordatlantische Inseln
+      fr: Îles de l'Atlantique Nord
+      ja: 北大西洋諸島
+      it: Isole dell'Atlantico settentrionale
+      es: Islas del Atlántico Norte
+      pt: Ilhas do Atlântico Norte
+  USA_CANADA:
+    type: region
+    members:
+    - US
+    - CA
+    partner_class: MEDIUM_REGION
+    translations:
+      en: USA & Canada
+      hr: SAD i Kanada
+      de: USA & Kanada
+      fr: États-Unis & Canada
+      ja: アメリカ・カナダ
+      it: USA e Canada
+      es: EE. UU. y Canadá
+      pt: EUA e Canadá
+  AUS_NZ:
+    type: region
+    members:
+    - AU
+    - NZ
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Australia & New Zealand
+      hr: Australija i Novi Zeland
+      de: Australien & Neuseeland
+      fr: Australie & Nouvelle-Zélande
+      ja: オーストラリア・ニュージーランド
+      it: Australia e Nuova Zelanda
+      es: Australia y Nueva Zelanda
+      pt: Austrália e Nova Zelândia
+  PACIFIC_LONG_HAUL:
+    type: region
+    members:
+    - AU
+    - NZ
+    partner_class: MEDIUM_REGION
+    translations:
+      en: Pacific Long Haul
+      hr: Daleki Pacifik
+      de: Pazifik Langstrecke
+      fr: Long-courrier Pacifique
+      ja: 太平洋長距離
+      it: Lungo raggio Pacifico
+      es: Largo recorrido Pacífico
+      pt: Pacífico Longo Curso

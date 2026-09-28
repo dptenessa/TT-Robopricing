@@ -52,7 +52,7 @@ MAX_CURRENT_AGE_DAYS = 14   # old observations are not "latest" market movement
 HISTORICAL_BASELINE_DAYS = 56
 HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
-DASHBOARD_VERSION = "history-charts-v15-competitiveness-trends"
+DASHBOARD_VERSION = "history-charts-v16-commercial-destinations"
 VERY_COMPETITIVE_GAP_PCT = 0.05
 COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
@@ -510,31 +510,36 @@ def _recommendation_aggregates(recommendations: pd.DataFrame) -> tuple[pd.DataFr
 
 
 def _recommendations_by_country(recommendations: pd.DataFrame, country_names: dict[str, str] | None = None) -> pd.DataFrame:
-    """Expand recommendation scopes to destination countries and aggregate current signals."""
+    """Aggregate recommendation signals by the commercial destination being priced.
+
+    IMPORTANT: `Countries` describes technical coverage. It must not be used to
+    fan a recommendation out to every covered country. After the destination-ID
+    refactor, AT, HR and SI (for example) are separate commercial destinations
+    even when a purchased product technically covers more than one country.
+    """
     cols=["ISO","Country","Evaluated","Recommendations","Up","Down","NetSignal","AffectedShare","AvgSuggestedChangePct","PricingUnits"]
     if recommendations.empty: return pd.DataFrame(columns=cols)
     names={str(k).upper():str(v) for k,v in (country_names or {}).items() if k and v}
     rec=recommendations.copy(); rec["Actionable"]=rec.get("Actionable",False).map(_boolish); rec["Direction"]=rec.get("Direction","").fillna("").astype(str).str.upper()
     current=pd.to_numeric(rec.get("CurrentNetPrice",pd.Series(float("nan"),index=rec.index)),errors="coerce"); suggested=pd.to_numeric(rec.get("SuggestedNetPrice",pd.Series(float("nan"),index=rec.index)),errors="coerce"); delta=pd.to_numeric(rec.get("SuggestedNetDelta",pd.Series(float("nan"),index=rec.index)),errors="coerce"); denom=current.where(current.abs()>1e-12)
     rec["_SuggestedChangePct"]=(suggested.div(denom)-1.0).where(suggested.notna(),delta.div(denom))
-    expanded=[]
+    commercial=[]
     for _,row in rec.iterrows():
-        codes=set(); raw=_text(row.get("Countries"))
-        if raw:
-            for part in raw.replace(";",",").split(","):
-                code=part.strip().upper()
-                if len(code)==2 and code.isalpha(): codes.add(code)
-        iso=_text(row.get("ISO")).upper()
-        if len(iso)==2 and iso.isalpha(): codes.add(iso)
-        if not codes: continue
-        for code in sorted(codes):
-            country=names.get(code)
-            if not country and len(codes)==1:
-                label=_text(row.get("Country"))
-                if label and label.upper()!=code and label!=_text(row.get("PricingUnitIdUsed")): country=label
-            expanded.append({"ISO":code,"Country":country or code,"Actionable":bool(row.get("Actionable",False)),"Direction":_text(row.get("Direction")).upper(),"SuggestedChangePct":_num(row.get("_SuggestedChangePct")),"PricingUnitIdUsed":_text(row.get("PricingUnitIdUsed"))})
-    if not expanded: return pd.DataFrame(columns=cols)
-    exp=pd.DataFrame(expanded); rows=[]
+        unit=_text(row.get("PricingUnitIdUsed")).strip().upper()
+        iso=_text(row.get("ISO")).strip().upper()
+        key=unit or iso
+        if not key: continue
+        if len(key)==2 and key.isalpha():
+            label=names.get(key) or _text(row.get("Country")) or key
+        else:
+            # A true region/global product remains one commercial destination;
+            # it is not expanded to all countries in its technical coverage.
+            label=_text(row.get("Country")) or key
+            if len(iso)==2 and iso.isalpha() and label.upper()==iso:
+                label=key
+        commercial.append({"ISO":key,"Country":label,"Actionable":bool(row.get("Actionable",False)),"Direction":_text(row.get("Direction")).upper(),"SuggestedChangePct":_num(row.get("_SuggestedChangePct")),"PricingUnitIdUsed":unit or key})
+    if not commercial: return pd.DataFrame(columns=cols)
+    exp=pd.DataFrame(commercial); rows=[]
     for (iso,country),g in exp.groupby(["ISO","Country"],dropna=False,sort=False):
         a=g[g["Actionable"]]; moves=pd.to_numeric(a.get("SuggestedChangePct"),errors="coerce").dropna(); evaluated=len(g); recn=len(a); up=int((a.get("Direction",pd.Series(dtype=str))=="UP").sum()); down=int((a.get("Direction",pd.Series(dtype=str))=="DOWN").sum())
         rows.append({"ISO":iso,"Country":country,"Evaluated":int(evaluated),"Recommendations":int(recn),"Up":up,"Down":down,"NetSignal":up-down,"AffectedShare":recn/evaluated if evaluated else 0.0,"AvgSuggestedChangePct":float(moves.mean()) if len(moves) else 0.0,"PricingUnits":int(a.get("PricingUnitIdUsed",pd.Series(dtype=str)).replace("",pd.NA).dropna().nunique())})
@@ -1039,8 +1044,8 @@ def _competitiveness_by_country(
     if out.empty:
         return out
     return out.sort_values(
-        ["VeryCompetitiveShare", "TrimmedMeanGapPct", "Evaluated"],
-        ascending=[False, True, False],
+        ["TrimmedMeanGapPct", "Evaluated"],
+        ascending=[False, True],
     ).reset_index(drop=True)
 
 def _fmt_pct(value: Any, digits: int = 1) -> str:
@@ -1423,7 +1428,7 @@ def generate_market_insights(
         key: _window_payload(raw_windows[key], label)
         for key, label, _days_back in TREND_WINDOWS
     }
-    default_key = "56" if window_data.get("56", {}).get("matched", 0) else ("28" if window_data.get("28", {}).get("matched", 0) else "latest")
+    default_key = "28" if window_data.get("28", {}).get("matched", 0) else ("56" if window_data.get("56", {}).get("matched", 0) else "latest")
     default_payload = window_data.get(default_key, {})
 
     provider_coverage = _provider_coverage(paths, latest_market_date)
@@ -1506,7 +1511,7 @@ def generate_market_insights(
     plans_table = _table_html(by_plan, [("Plan","Plan","text"),("Recommendations","Total","num"),("Up","Up","num"),("Down","Down","num")], "plans", 30)
     units_table = _table_html(unit_sorted, [("PricingUnitIdUsed","Pricing unit","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("HighConfidence","High confidence","num"),("MedianMarketGapPct","Median market gap","pct")], "units", 100)
     recommendation_country_table = _table_html(recommendation_countries, [("ISO","ISO","text"),("Country","Country","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("AffectedShare","Anchors affected","pct"),("AvgSuggestedChangePct","Avg suggested change","pct"),("PricingUnits","Pricing units","num")], "recommendation_countries", 200)
-    competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors compared","num"),("TrimmedMeanGapPct","10% trimmed gap vs best","pct"),("MeanGapPct","Mean gap vs best","pct"),("VeryCompetitive","Within 5% of best","num"),("VeryCompetitiveShare","Share within 5%","pct"),("CompetitiveShare","Share within 15%","pct"),("AvgProviders","Avg providers","dec"),("ComparablePackWins","Pack-price benchmark","num"),("PricePerGBWins","PPG benchmark","num"),("PricingUnits","Pricing units","num")], "competitiveness_countries", 200)
+    competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors","num"),("TrimmedMeanGapPct","Gap vs best","pct"),("VeryCompetitiveShare","Within 5%","pct"),("AvgProviders","Avg providers","dec")], "competitiveness_countries", 200)
 
     template = Template(r'''<!doctype html>
 <html lang="en">
@@ -1520,8 +1525,8 @@ def generate_market_insights(
 header{background:var(--dark);color:#fff;padding:20px 28px;border-bottom:5px solid var(--magenta)} header h1{margin:0;font-size:25px} header .sub{margin-top:4px;color:#cbd2d9}.version{display:inline-block;margin-left:8px;padding:2px 7px;border:1px solid #65707b;border-radius:999px;font-size:11px;color:#e8edf2;vertical-align:2px}
 main{max-width:1550px;margin:0 auto;padding:20px}.grid{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
 .kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.kpi .value{font-size:28px;font-weight:700;margin-top:4px}.up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}.neutral{color:var(--muted)}.warn{color:var(--orange);font-weight:600}
-section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;margin:0 0 8px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.toolbar label{font-weight:600}.toolbar select{padding:8px 34px 8px 10px;border:1px solid var(--line);border-radius:7px;background:#fff}
-.table-wrap{overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:7px}table{width:100%;border-collapse:collapse;background:#fff}th{position:sticky;top:0;background:#f0f2f4;text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}td{padding:7px 8px;border-bottom:1px solid #edf0f2;white-space:nowrap}tr:hover td{background:#fafbfc}.table-search{width:100%;max-width:330px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin:0 0 8px}.note{color:var(--muted);font-size:12px;margin-top:8px}.empty{color:var(--muted);padding:18px 0}.method{border-left:4px solid var(--magenta);padding-left:12px}
+section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;margin:0 0 8px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.two>*{min-width:0}.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.toolbar label{font-weight:600}.toolbar select{padding:8px 34px 8px 10px;border:1px solid var(--line);border-radius:7px;background:#fff}
+.table-wrap{overflow:auto;max-width:100%;max-height:520px;border:1px solid var(--line);border-radius:7px}table{width:100%;border-collapse:collapse;background:#fff}th{position:sticky;top:0;background:#f0f2f4;text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}td{padding:7px 8px;border-bottom:1px solid #edf0f2;white-space:nowrap}tr:hover td{background:#fafbfc}.table-search{width:100%;max-width:330px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin:0 0 8px}.note{color:var(--muted);font-size:12px;margin-top:8px}.empty{color:var(--muted);padding:18px 0}.method{border-left:4px solid var(--magenta);padding-left:12px}
 .chart{min-height:260px}.bar-row{display:grid;grid-template-columns:minmax(95px,150px) 1fr 64px;gap:8px;align-items:center;margin:7px 0}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bar-track{height:16px;background:#eef1f4;border-radius:8px;position:relative;overflow:hidden}.bar-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#b9c1c9}.bar-fill{position:absolute;top:2px;bottom:2px;border-radius:6px;background:var(--magenta)}.bar-value{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}.chart-titleline{display:flex;justify-content:space-between;gap:10px;align-items:end;margin-bottom:8px}.chart-sub{font-size:12px;color:var(--muted)}
 .spark-wrap{height:250px;position:relative}.spark-wrap svg{width:100%;height:100%;display:block}.axis-text{font-size:10px;fill:#74808c}.timeline-line{fill:none;stroke:var(--magenta);stroke-width:3}.timeline-area{fill:rgba(226,0,116,.08)}.timeline-dot{fill:var(--magenta)}.map-wrap{height:470px;position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:linear-gradient(#f8fbfd,#eef4f7)}.map-wrap svg{width:100%;height:100%;display:block}.map-land{fill:#e3eaef;stroke:#b8c5ce;stroke-width:.65}.map-lake{fill:#f4f8fb;stroke:#c6d1d8;stroke-width:.45}.map-border{fill:none;stroke:#c4ced5;stroke-width:.42;opacity:.95}.map-grid{stroke:#d9e2e8;stroke-width:1}.map-equator{stroke:#c0ccd5;stroke-width:1.3}.map-label{font-size:13px;fill:#9aa8b4;font-weight:600;letter-spacing:.05em}.map-dot{stroke:#fff;stroke-width:1.2;cursor:pointer;transition:r .12s,opacity .12s}.map-dot:hover{stroke:#20242a;stroke-width:2;opacity:1!important}.map-iso{font-size:9px;fill:#44515d;font-weight:700;pointer-events:none}.map-legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--muted)}.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}.map-tooltip{position:absolute;display:none;pointer-events:none;z-index:5;min-width:220px;max-width:300px;background:#20242a;color:#fff;border-radius:7px;padding:9px 11px;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:12px;line-height:1.45}.map-tooltip b{font-size:13px}.map-tooltip .muted{color:#cbd2d9}
 .competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.evolution-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.evolution-chart{min-height:285px}.evo-row{display:grid;grid-template-columns:minmax(110px,180px) 1fr 72px;gap:8px;align-items:center;margin:7px 0}.evo-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.evo-fill{position:absolute;left:0;top:3px;bottom:3px;border-radius:5px}.evo-gain{background:var(--green)}.evo-loss{background:var(--red)}.evo-value{text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.evo-controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.evo-controls button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}.evo-controls button.active{background:#111827;color:#fff;border-color:#111827}@media(max-width:900px){.evolution-grid{grid-template-columns:1fr}}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
@@ -1555,10 +1560,10 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 </section>
 
 <section class="card">
- <div class="chart-titleline"><div><h2>Where our pricing recommendations are concentrated</h2><div class="chart-sub">Current actionable recommendations by destination country · regional pricing-unit signals are expanded to every destination they affect</div></div></div>
+ <div class="chart-titleline"><div><h2>Where our pricing recommendations are concentrated</h2><div class="chart-sub">Current actionable recommendations by commercial destination · technical coverage is not expanded into extra country signals</div></div></div>
  <div class="two">
   <div><div id="recommendationCountryChart" class="rec-country-chart"></div><div class="note"><span class="up">Right = price-up recommendations</span> · <span class="down">Left = price-down recommendations</span>. Bar length is recommendation count.</div></div>
-  <div>$recommendation_country_table<div class="note">“Anchors affected” = actionable destination exposures ÷ all evaluated destination exposures for that country. Regional recommendations appear in each covered destination.</div></div>
+  <div>$recommendation_country_table<div class="note">“Anchors affected” = actionable anchors ÷ all evaluated anchors for that commercial destination. A country appears only when that country pricing unit itself has a recommendation.</div></div>
  </div>
 </section>
 
@@ -1644,7 +1649,7 @@ function renderMovementMap(w){
  host.insertBefore(svg,tip); document.getElementById('mapSub').textContent=w.label+' · real country map; overall trimmed mean color; bubble size = share of matched offers changed';
 }
 function renderSelected(){const w=windows[selector.value];if(!w)return;const tm=Number(w.trimmed_mean)||0;const med=Number(w.median)||0;const mtm=Number(w.mover_trimmed_mean)||0;const mmed=Number(w.mover_median)||0;const changed=Number(w.changed||0), matched=Number(w.matched||0);const changedShare=matched?changed/matched:0;const up=Number(w.up||0),down=Number(w.down||0),downShare=changed?down/changed:0;document.getElementById('directionLabel').textContent=w.label+' overall market';const dv=document.getElementById('directionValue');dv.textContent=pct(tm);dv.className='value '+(tm>0.005?'up':(tm<-0.005?'down':'neutral'));const state=tm>0.005?'higher':(tm<-0.005?'lower':'broadly stable');document.getElementById('directionNote').textContent='10% trimmed mean across all matched offers (stable included) · '+state+' · median '+pct(med);document.getElementById('moverLabel').textContent=w.label+' active movers';const mv=document.getElementById('moverValue');mv.textContent=pct(mtm);mv.className='value '+(mtm>0.005?'up':(mtm<-0.005?'down':'neutral'));document.getElementById('moveNote').textContent='10% trimmed mean among materially changed offers · '+changed.toLocaleString()+' of '+matched.toLocaleString()+' changed ('+pct(changedShare)+') · '+pct(downShare)+' of movers down · median '+pct(mmed);renderMovementMap(w);const countries=w.countries||[];const rising=countries.filter(r=>Number(r.TrimmedMeanChangePct)>0).sort((a,b)=>Number(b.TrimmedMeanChangePct)-Number(a.TrimmedMeanChangePct));const falling=countries.filter(r=>Number(r.TrimmedMeanChangePct)<0).sort((a,b)=>Number(a.TrimmedMeanChangePct)-Number(b.TrimmedMeanChangePct));barChart('countryChart',countries.map(r=>({...r,Label:(r.iso||'')+' '+(r.country||'')})),'Label','TrimmedMeanChangePct',12);barChart('providerChart',w.providers||[],'Provider','TrimmedMeanChangePct',12);document.getElementById('countryChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the tables below';document.getElementById('providerChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the table below';const ccols=[['iso','text'],['country','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['ProviderCount','num'],['LatestDataDate','text'],['PreviousDataDate','text']];tableRows('risingBody',rising,ccols,'risingSearch',120);tableRows('fallingBody',falling,ccols,'fallingSearch',120);tableRows('providerBody',w.providers||[],[['Provider','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['UpProducts','num'],['DownProducts','num'],['LatestDataDate','text']],'providerSearch',120);tableRows('movesBody',w.moves||[],[['provider','text'],['iso','text'],['country','text'],['plan','text'],['days','num'],['gb','num'],['PreviousPrice','num'],['CurrentPrice','num'],['PctChange','pct'],['PreviousDate','text'],['CurrentDate','text']],'movesSearch',250)}
-selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderRecommendationCountries();renderCompetitivenessCountries();renderCompetitivenessEvolution((dashboard.competitiveness_trends||{})["56"]?"56":((dashboard.competitiveness_trends||{})["28"]?"28":"84"));renderWindowChart();renderTimeline();renderSelected();
+selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderRecommendationCountries();renderCompetitivenessCountries();renderCompetitivenessEvolution((dashboard.competitiveness_trends||{})["28"]?"28":((dashboard.competitiveness_trends||{})["56"]?"56":"84"));renderWindowChart();renderTimeline();renderSelected();
 function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' tbody tr').forEach(r=>{r.style.display=r.innerText.toLowerCase().includes(q)?'':'none'})}
 </script>
 </body></html>''')

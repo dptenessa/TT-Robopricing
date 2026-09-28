@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+import os
 
 from currency_support import DEFAULT_CURRENCY, normalize_currency
 
@@ -68,24 +69,53 @@ class PipelineFiles:
         return self.inputs_dir / "WS_PPG.xlsx"
 
     @property
+    def destinations_yaml(self) -> Path:
+        return self.inputs_dir / "destinations.yaml"
+
+    @property
     def pricing_units_json(self) -> Path:
-        return self.inputs_dir / "pricing_units.json"
+        # Compatibility alias: pricing-unit metadata now lives in destinations.yaml.
+        return self.destinations_yaml
 
     @property
     def promos_json(self) -> Path:
         return self.inputs_dir / "promos.json"
 
     @property
+    def sales_master_csv(self) -> Path:
+        """Transaction-level T-Travel reporting master used by the pricing editor.
+
+        This file intentionally lives outside the repository. Set the
+        TTRAVEL_SALES_MASTER_CSV environment variable to override the location
+        on another workstation.
+        """
+        override = str(os.environ.get("TTRAVEL_SALES_MASTER_CSV", "")).strip()
+        if override:
+            return Path(override)
+        return (
+            Path.home()
+            / "Deutsche Telekom AG"
+            / "HT-TD Travel eSIM Launch - Documents"
+            / "General"
+            / "11_Reporting"
+            / "T-Travel_sales_master.csv"
+        )
+
+    @property
     def sales_volumes_xlsx(self) -> Path:
-        return self.inputs_dir / "sales_volumes_last_month_test.xlsx"
+        # Compatibility alias for any older caller; live editor sales now come
+        # from the maintained reporting CSV outside the repository.
+        return self.sales_master_csv
 
     @property
     def regions_yaml(self) -> Path:
-        return self.inputs_dir / "regions.yaml"
+        # Compatibility alias: region definitions now live in destinations.yaml.
+        return self.destinations_yaml
 
     @property
     def destination_table_json(self) -> Path:
-        return self.inputs_dir / "export-destination-table_reviewed.json"
+        # Compatibility alias: translations/destination hierarchy now live in destinations.yaml.
+        return self.destinations_yaml
 
     @property
     def region_country_exclusions_json(self) -> Path:

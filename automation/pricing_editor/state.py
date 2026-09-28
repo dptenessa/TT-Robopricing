@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from functools import lru_cache
 import json
 import math
 
@@ -20,6 +21,87 @@ try:
 except Exception:
     DEFAULT_EUR_TO_USD = 1.10
     EDITOR_DUAL_CURRENCY_DEFAULT = False
+
+try:
+    from destination_catalog import destination_specs
+except ImportError:
+    from automation.destination_catalog import destination_specs
+try:
+    from pipeline_files import FILES
+except ImportError:
+    from automation.pipeline_files import FILES
+
+try:
+    from plan_labels import partner_display_plan_label
+except ImportError:
+    from automation.plan_labels import partner_display_plan_label
+
+
+SALES_LOOKBACK_DAYS = 30
+
+
+@lru_cache(maxsize=1)
+def _destination_specs_cached() -> dict[str, dict[str, Any]]:
+    try:
+        return destination_specs(FILES.destinations_yaml)
+    except Exception:
+        return {}
+
+
+def destination_sales_name(destination_id: Any, fallback: Any = "") -> str:
+    """Canonical Amdocs/report Destination label from destinations.yaml."""
+    code = str(destination_id or "").strip().upper()
+    spec = _destination_specs_cached().get(code, {}) if code else {}
+    amdocs_code = str(spec.get("amdocs_code", "") or "").strip()
+    if amdocs_code:
+        return amdocs_code
+    translations = spec.get("translations") or {}
+    english = str(translations.get("en", "") or "").strip() if isinstance(translations, dict) else ""
+    if english:
+        return english
+    return str(fallback or code or "").strip()
+
+
+def _sales_name_norm(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.lower() in {"nan", "none", "<na>"}:
+        return ""
+    return " ".join(text.split()).casefold()
+
+
+def canonical_sales_destination(value: Any) -> str:
+    """Return the raw Amdocs/report destination label.
+
+    Sales matching is intentionally strict: the billing/report Destination must
+    match destinations.yaml amdocs_code (case/whitespace normalization happens
+    in build_sales_sku_key). Customer-facing translations are not aliases.
+    """
+    raw = str(value or "").strip()
+    return " ".join(raw.split())
+
+
+def destination_display_type(destination_id: Any) -> str:
+    code = str(destination_id or "").strip().upper()
+    if not code:
+        return "-"
+    spec = _destination_specs_cached().get(code, {})
+    raw_type = str(spec.get("type", "")).strip().lower()
+    partner_class = str(spec.get("partner_class", "")).strip().upper()
+    coverage = [str(x).strip().upper() for x in (spec.get("coverage") or []) if str(x).strip()]
+
+    # Commercial country IDs that technically cover more than one country are
+    # the former shared pricing units (for example CH covers CH+FR). Present
+    # those to the user as mini-regions rather than exposing legacy source names.
+    if raw_type == "country":
+        if partner_class == "MEDIUM_REGION" or len(coverage) > 1:
+            return "mini_region"
+        return "country"
+    if raw_type == "region":
+        return "region"
+    if raw_type == "global":
+        return "global"
+    return raw_type or "-"
+
 
 from currency_support import (
     CURRENCIES,
@@ -77,6 +159,22 @@ def build_sku_scope_key(pricing_unit_id, package, days) -> str:
         days_f = float(days)
         days_part = str(int(days_f)) if days_f.is_integer() else str(days_f)
     return f"{pricing_unit}|{package}|{days_part}"
+
+
+def build_sales_sku_key(destination, validity_days, package_size) -> str:
+    """Direct sales/UI SKU key: Destination + ValidityDays + PackageSize."""
+    destination_text = str(destination).strip()
+    package_text = str(package_size).strip()
+    if destination_text.lower() in {"nan", "none", "<na>"}:
+        destination_text = ""
+    if package_text.lower() in {"nan", "none", "<na>"}:
+        package_text = ""
+    if pd.isna(validity_days):
+        days_part = ""
+    else:
+        days_f = float(validity_days)
+        days_part = str(int(days_f)) if days_f.is_integer() else str(days_f)
+    return f"{destination_text.casefold()}|{days_part}|{package_text.casefold()}"
 
 
 def _identity_part(value: Any, *, upper: bool = False) -> str:
@@ -232,6 +330,7 @@ class EditorState:
     market_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     ppg_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     ppg_cost_by_iso: dict[str, float] = field(default_factory=dict)
+    ppg_country_names: dict[str, str] = field(default_factory=dict)
     units_sold_by_scope: dict[str, float] = field(default_factory=dict)
     sales_by_scope: dict[str, dict[str, float]] = field(default_factory=dict)
     promo_catalog: list[dict[str, Any]] = field(default_factory=list)
@@ -258,6 +357,7 @@ class EditorState:
     competitors_by_country: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     row_index: dict[str, dict[str, Any]] = field(default_factory=dict)
     scope_to_row_ids: dict[str, list[str]] = field(default_factory=dict)
+    sales_key_to_row_ids: dict[str, list[str]] = field(default_factory=dict)
     country_floor_points_by_key: dict[tuple[str, str, float], list[dict[str, Any]]] = field(default_factory=dict)
 
     working_prices: dict[str, float] = field(default_factory=dict)
@@ -279,10 +379,7 @@ class EditorState:
 
     def is_region_destination(self, destination: str) -> bool:
         points = self.points_by_country.get(str(destination), [])
-        return any(
-            str(point.get("pricing_source", "")).strip().lower() == "region_max"
-            for point in points
-        )
+        return any(self._is_region_point(point) for point in points)
 
     @staticmethod
     def _recommendation_float_key(value: Any) -> float | None:
@@ -743,7 +840,14 @@ class EditorState:
         }
 
     def ppg_country_name_map(self) -> dict[str, str]:
-        """Return the authoritative ISO A2 -> country display-name mapping."""
+        """Return the authoritative ISO A2 -> country display-name mapping.
+
+        The map is cached because regional floor diagnostics may request it for
+        thousands of price points while the editor is loading. Rebuilding the
+        pandas groupby for every point makes startup appear to hang.
+        """
+        if self.ppg_country_names:
+            return self.ppg_country_names
         if self.ppg_df.empty:
             return {}
 
@@ -805,11 +909,12 @@ class EditorState:
                 + ", ".join(conflicts.index.tolist())
             )
 
-        return (
+        self.ppg_country_names = (
             ppg.drop_duplicates(subset=["_iso"], keep="last")
             .set_index("_iso")["_country"]
             .to_dict()
         )
+        return self.ppg_country_names
 
     def _canonicalize_pricebook_country_names(self) -> None:
         """Force loaded price-book country names to the current PPG value by ISO."""
@@ -864,6 +969,7 @@ class EditorState:
         self.competitors_by_country = {}
         self.row_index = {}
         self.scope_to_row_ids = {}
+        self.sales_key_to_row_ids = {}
         self.country_floor_points_by_key = {}
         self.working_prices = {}
         self.working_price_by_scope = {}
@@ -975,12 +1081,19 @@ class EditorState:
                     "plan": str(row["Plan"]),
                     "promo": "",
                     "scope_key": scope_key,
+                    "sales_destination": destination_sales_name(unit_id, country),
+                    "sales_key": build_sales_sku_key(
+                        destination_sales_name(unit_id, country),
+                        row.get("Days", None),
+                        partner_display_plan_label(row.get("Plan", "")),
+                    ),
                     "promo_scope_key": str(row.get("PromoScopeKey", "")).strip() or scope_key,
                     "iso": str(row.get("ISO", "")).strip().upper(),
                     "iso3": str(row.get("ISO3", "")).strip().upper(),
                     "country": country,
                     "provider": str(row.get("Provider", "")).strip() or "HT",
                     "pricing_unit_id": unit_id,
+                    "destination_type": destination_display_type(unit_id),
                     "pricing_source": str(row.get("PricingSourceUsed", "")).strip(),
                     "pricing_region": str(row.get("PricingRegionUsed", "")).strip(),
                     "pricing_unit_countries": str(row.get("PricingUnitCountriesUsed", "")).strip(),
@@ -998,7 +1111,9 @@ class EditorState:
                 points.append(pt)
                 self.row_index[pt["row_id"]] = pt
                 self.scope_to_row_ids.setdefault(scope_key, []).append(pt["row_id"])
-                if str(pt.get("pricing_source", "")).strip().lower() != "region_max":
+                if pt.get("sales_key"):
+                    self.sales_key_to_row_ids.setdefault(str(pt["sales_key"]), []).append(pt["row_id"])
+                if not self._is_region_point(pt):
                     floor_key = (
                         str(pt.get("provider", "HT")).strip(),
                         str(pt.get("plan", "")).strip(),
@@ -1014,12 +1129,13 @@ class EditorState:
             if country_iso:
                 self.country_iso_map[country] = country_iso
 
+            row0_unit_id = str(row0.get("PricingUnitIdUsed", "")).strip()
+            type_label = destination_display_type(row0_unit_id).replace("_", " ")
+            region_label = str(row0.get("PricingRegionUsed", "")).strip() or "-"
+            coverage_label = str(row0.get("PricingUnitCountriesUsed", "")).strip() or "-"
             self.country_info_map[country] = (
-                f"Country: {country} | ISO: {str(row0.get('ISO','')).strip() or '-'}\n"
-                f"Pricing unit: {str(row0.get('PricingUnitIdUsed','')).strip() or '-'} | "
-                f"Source: {str(row0.get('PricingSourceUsed','')).strip() or '-'} | "
-                f"Region: {str(row0.get('PricingRegionUsed','')).strip() or '-'}\n"
-                f"Covered countries: {str(row0.get('PricingUnitCountriesUsed','')).strip() or '-'}"
+                f"{type_label} · {region_label}\n"
+                f"Coverage: {coverage_label}"
             )
 
         self._refresh_all_display_prices()
@@ -1110,13 +1226,114 @@ class EditorState:
             self._apply_point_display(q)
 
 
+    @staticmethod
+    def _sales_text(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        text = str(value).strip()
+        return "" if text.lower() in {"nan", "none", "<na>"} else text
+
+    def _sales_master_to_direct_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize the transaction master without ISO/PPG/pricing-unit matching.
+
+        The sales SKU is exactly Destination + ValidityDays + PackageSize.
+        Only settled SALE transactions from the latest rolling 30-day window
+        are included.
+        """
+        required = {
+            "TransactionType", "DocumentStatus", "Destination",
+            "ValidityDays", "PackageSize", "Quantity",
+        }
+        if not required.issubset(set(df.columns)):
+            missing = sorted(required.difference(set(df.columns)))
+            print("Sales master ignored; missing columns:", ", ".join(missing))
+            return pd.DataFrame()
+
+        work = df.copy()
+        for col in work.columns:
+            if work[col].dtype == object:
+                work[col] = work[col].map(self._sales_text)
+
+        transaction_type = work["TransactionType"].astype(str).str.strip().str.upper()
+        document_status = work["DocumentStatus"].astype(str).str.strip().str.lower()
+        work = work[
+            transaction_type.eq("SALE")
+            & document_status.str.contains("settled", na=False)
+        ].copy()
+        if work.empty:
+            print("Sales master: no settled SALE rows found.")
+            return pd.DataFrame()
+
+        # Reporting export uses month/day/year dates (e.g. 9/1/2026 = Sep 1).
+        date_series = pd.Series(pd.NaT, index=work.index, dtype="datetime64[ns]")
+        for col in ("TransactionDate", "TransactionTimestamp"):
+            if col not in work.columns:
+                continue
+            parsed = pd.to_datetime(work[col], errors="coerce", format="mixed", dayfirst=False)
+            date_series = date_series.fillna(parsed)
+        if date_series.notna().any():
+            latest_day = date_series.max().normalize()
+            first_day = latest_day - pd.Timedelta(days=SALES_LOOKBACK_DAYS - 1)
+            keep = date_series.dt.normalize().between(first_day, latest_day, inclusive="both")
+            work = work.loc[keep].copy()
+            print(
+                f"Sales master period: {first_day.date()} to {latest_day.date()} "
+                f"({SALES_LOOKBACK_DAYS} rolling days)"
+            )
+
+        standardized: list[dict[str, Any]] = []
+        invalid = 0
+        for _, row in work.iterrows():
+            destination_raw = self._sales_text(row.get("Destination"))
+            destination = canonical_sales_destination(destination_raw)
+            package = self._sales_text(row.get("PackageSize"))
+            days = pd.to_numeric(row.get("ValidityDays"), errors="coerce")
+            quantity = pd.to_numeric(row.get("Quantity"), errors="coerce")
+            if not destination or not package or pd.isna(days) or pd.isna(quantity) or float(quantity) <= 0:
+                invalid += 1
+                continue
+
+            qty = float(quantity)
+            total = pd.to_numeric(row.get("TotalAmount"), errors="coerce")
+            unit_price = pd.to_numeric(row.get("UnitPrice"), errors="coerce")
+            if pd.notna(total) and qty:
+                effective_price = float(total) / qty
+            elif pd.notna(unit_price):
+                effective_price = float(unit_price)
+            else:
+                invalid += 1
+                continue
+
+            currency = self._sales_text(row.get("ConnectXPriceCurrency")) or "EUR"
+            standardized.append({
+                "Destination": destination,
+                "ValidityDays": float(days),
+                "PackageSize": package,
+                "UnitsSoldLastMonth": qty,
+                "Price": effective_price,
+                "Currency": currency,
+            })
+
+        print(
+            f"Sales master loaded: {len(standardized)} usable row(s), "
+            f"{invalid} invalid row(s). Direct match: Destination + ValidityDays + PackageSize."
+        )
+        return pd.DataFrame(standardized)
+
     def preload_sales_volumes(self, df: pd.DataFrame) -> None:
         self.sales_by_scope = {}
 
         if df.empty:
             return
 
-        if "UnitsSoldLastMonth" not in df.columns or "Price" not in df.columns:
+        if {"TransactionType", "Destination", "ValidityDays", "PackageSize"}.issubset(set(df.columns)):
+            df = self._sales_master_to_direct_rows(df)
+            if df.empty:
+                return
+
+        required = {"Destination", "ValidityDays", "PackageSize", "UnitsSoldLastMonth", "Price"}
+        if not required.issubset(set(df.columns)):
+            print("Sales data ignored; expected Destination, ValidityDays, PackageSize, UnitsSoldLastMonth and Price.")
             return
 
         df = add_currency_price_columns(
@@ -1126,33 +1343,74 @@ class EditorState:
             fill_missing_with_conversion=True,
         )
 
+        matched_rows = 0
+        unmatched_rows = 0
+        unmatched_examples: list[str] = []
         for _, row in df.iterrows():
-            scope_key = build_sku_scope_key(
-                row.get("PricingUnitIdUsed", ""),
-                row.get("Plan", row.get("Package", "")),
-                row.get("Days", None),
+            sales_key = build_sales_sku_key(
+                row.get("Destination", ""),
+                row.get("ValidityDays", None),
+                row.get("PackageSize", ""),
             )
-
             units = pd.to_numeric(row.get("UnitsSoldLastMonth", 0), errors="coerce")
             old_price = pd.to_numeric(row.get("Price", 0), errors="coerce")
 
-            if scope_key and pd.notna(units) and pd.notna(old_price):
-                if scope_key not in self.sales_by_scope:
-                    self.sales_by_scope[scope_key] = {
-                        "units": 0.0,
-                        "old_revenue": 0.0,
-                        "old_revenue_by_currency": {c: 0.0 for c in CURRENCIES},
-                    }
+            if not sales_key or sales_key not in self.sales_key_to_row_ids:
+                unmatched_rows += 1
+                if len(unmatched_examples) < 10:
+                    unmatched_examples.append(
+                        f"{row.get('Destination', '')} | {row.get('ValidityDays', '')} | {row.get('PackageSize', '')}"
+                    )
+                continue
+            if pd.isna(units) or pd.isna(old_price):
+                unmatched_rows += 1
+                continue
 
-                self.sales_by_scope[scope_key]["units"] += float(units)
-                for currency in CURRENCIES:
-                    price = pd.to_numeric(row.get(currency_price_column(currency), np.nan), errors="coerce")
-                    if pd.isna(price):
-                        price = convert_price(old_price, DEFAULT_CURRENCY, currency, self.eur_to_usd)
-                    self.sales_by_scope[scope_key]["old_revenue_by_currency"][currency] += float(units) * float(price)
-                self.sales_by_scope[scope_key]["old_revenue"] = self.sales_by_scope[scope_key]["old_revenue_by_currency"]["USD"]
+            matched_rows += 1
+            if sales_key not in self.sales_by_scope:
+                self.sales_by_scope[sales_key] = {
+                    "units": 0.0,
+                    "old_revenue": 0.0,
+                    "old_revenue_by_currency": {c: 0.0 for c in CURRENCIES},
+                }
 
-    
+            self.sales_by_scope[sales_key]["units"] += float(units)
+            for currency in CURRENCIES:
+                price = pd.to_numeric(row.get(currency_price_column(currency), np.nan), errors="coerce")
+                if pd.isna(price):
+                    price = convert_price(old_price, DEFAULT_CURRENCY, currency, self.eur_to_usd)
+                self.sales_by_scope[sales_key]["old_revenue_by_currency"][currency] += float(units) * float(price)
+            self.sales_by_scope[sales_key]["old_revenue"] = self.sales_by_scope[sales_key]["old_revenue_by_currency"]["USD"]
+
+        print(
+            f"Sales/UI direct match: {matched_rows} row(s) matched, {unmatched_rows} unmatched "
+            f"using canonical Amdocs Destination + ValidityDays + PackageSize."
+        )
+        if unmatched_examples:
+            print("Unmatched sales SKU examples:")
+            for example in unmatched_examples:
+                print("  -", example)
+
+    def _sales_price_for_impact(self, sales_key: str) -> float | None:
+        sales_key = str(sales_key).strip()
+        row_ids = self.sales_key_to_row_ids.get(sales_key, [])
+
+        for rid in row_ids:
+            p = self.row_index.get(str(rid))
+            if p is None:
+                continue
+
+            base_price = float(self.working_prices.get(str(rid), p.get("working_y", p.get("base_y", 0.0))))
+            promo = self._promo_for_point(p, self.active_currency)
+            if promo:
+                return calculate_promo_price(
+                    base_price,
+                    str(promo.get("promo_type", "")),
+                    float(promo.get("promo_value", 0) or 0),
+                )
+            return base_price
+        return None
+
     def _scope_price_for_impact(self, scope_key: str) -> float | None:
         scope_key = str(scope_key).strip()
         row_ids = self.scope_to_row_ids.get(scope_key, [])
@@ -1242,17 +1500,22 @@ class EditorState:
         return covered_countries or fallback_country
 
     def _is_region_point(self, point: dict[str, Any]) -> bool:
-        return str(point.get("pricing_source", "")).strip().lower() == "region_max"
+        # Prefer the unified destination catalogue classification. Keep the
+        # legacy pricing-source strings as a compatibility fallback.
+        destination_type = str(point.get("destination_type", "")).strip().lower()
+        if destination_type in {"region", "global"}:
+            return True
+        pricing_source = str(point.get("pricing_source", "")).strip().lower()
+        return pricing_source in {"region_max", "regions_max", "region", "global"}
 
-    def _regional_binding_floor(self, point: dict[str, Any], currency: str) -> float:
-        """Return the floor used by the former regional eligibility guardrail.
+    def _regional_floor_candidates(self, point: dict[str, Any], currency: str) -> list[dict[str, Any]]:
+        """Return member-country floor candidates for one regional anchor.
 
-        The old generator compared a regional anchor price with every locked
-        member country's CostFloor for the same Provider + Plan + Days. The
-        binding regional floor is therefore the maximum of those country floors.
-        It is deliberately based on the current country rows, not a new regional
-        wholesale-cost calculation.
+        This mirrors the regional eligibility guardrail: each locked member
+        country's current floor is evaluated for the same Provider + Plan + Days.
+        The largest floor binds the regional price.
         """
+        currency = normalize_currency(currency)
         members = set(self.pricing_unit_country_codes(point.get("pricing_unit_countries", "")))
         key = (
             str(point.get("provider", "HT")).strip(),
@@ -1260,10 +1523,10 @@ class EditorState:
             float(point.get("days") or 0.0),
         )
         candidates = self.country_floor_points_by_key.get(key, [])
-        floors: list[float] = []
+        rows: list[dict[str, Any]] = []
         for candidate in candidates:
             iso = str(candidate.get("iso", "")).strip().upper()
-            if members and iso not in members:
+            if not iso or (members and iso not in members):
                 continue
             country_price = self.round_regular_price(
                 self._working_price_for_currency(candidate, currency)
@@ -1271,18 +1534,71 @@ class EditorState:
             country_final = self._final_price_for_currency(
                 candidate, currency, country_price
             )
-            floors.append(
-                float(
-                    self.calculate_cost_floor(
-                        candidate,
-                        self._floor_country_key_for_point(candidate),
-                        currency=currency,
-                        price_override=country_final,
-                    )
+            floor = float(
+                self.calculate_cost_floor(
+                    candidate,
+                    self._floor_country_key_for_point(candidate),
+                    currency=currency,
+                    price_override=country_final,
                 )
             )
-        if floors:
-            return max(floors)
+            rows.append({
+                "iso": iso,
+                "country": str(candidate.get("country", "")).strip(),
+                "floor": floor,
+            })
+        rows.sort(key=lambda item: (-float(item["floor"]), str(item["iso"])))
+        return rows
+
+    def regional_floor_driver_info(
+        self, point: dict[str, Any], currency: str | None = None
+    ) -> dict[str, Any] | None:
+        """Describe the binding regional cost floor and the removal scenario.
+
+        The hypothetical removes the binding country from the region and reports
+        the maximum floor among the remaining member countries. It is read-only
+        diagnostic information; it does not change region membership.
+        """
+        if not self._is_region_point(point):
+            return None
+        currency = normalize_currency(currency or self.active_currency)
+        rows = self._regional_floor_candidates(point, currency)
+        if not rows:
+            return None
+
+        binding = rows[0]
+        remaining = [row for row in rows if row["iso"] != binding["iso"]]
+        next_binding = remaining[0] if remaining else None
+
+        name_map: dict[str, str] = {}
+        try:
+            name_map = self.ppg_country_name_map()
+        except Exception:
+            name_map = {}
+
+        def label(row: dict[str, Any] | None) -> str:
+            if not row:
+                return ""
+            iso = str(row.get("iso", "")).strip().upper()
+            name = str(row.get("country", "")).strip() or name_map.get(iso, "")
+            return f"{name} ({iso})" if name and name.upper() != iso else iso
+
+        return {
+            "currency": currency,
+            "driver_iso": binding["iso"],
+            "driver_label": label(binding),
+            "current_floor": float(binding["floor"]),
+            "without_driver_floor": float(next_binding["floor"]) if next_binding else None,
+            "next_driver_iso": str(next_binding["iso"]) if next_binding else "",
+            "next_driver_label": label(next_binding),
+            "member_candidates": len(rows),
+        }
+
+    def _regional_binding_floor(self, point: dict[str, Any], currency: str) -> float:
+        """Return the binding regional floor used by the eligibility guardrail."""
+        rows = self._regional_floor_candidates(point, currency)
+        if rows:
+            return float(rows[0]["floor"])
 
         # Defensive fallback for malformed legacy data.
         return float(
@@ -1303,13 +1619,24 @@ class EditorState:
         floors: dict[str, float] = {}
         final_prices: dict[str, float] = {}
         below: dict[str, bool] = {}
+        without_driver_floors: dict[str, float | None] = {}
+        floor_driver_labels: dict[str, str] = {}
+        next_floor_driver_labels: dict[str, str] = {}
         is_region = self._is_region_point(point)
 
         for currency in CURRENCIES:
             working_price = self.round_regular_price(self._working_price_for_currency(point, currency))
             final_price = self._final_price_for_currency(point, currency, working_price)
             if is_region:
-                floor = self._regional_binding_floor(point, currency)
+                floor_info = self.regional_floor_driver_info(point, currency)
+                if floor_info:
+                    floor = float(floor_info["current_floor"])
+                    without_driver_floors[currency] = floor_info.get("without_driver_floor")
+                    floor_driver_labels[currency] = str(floor_info.get("driver_label", ""))
+                    next_floor_driver_labels[currency] = str(floor_info.get("next_driver_label", ""))
+                else:
+                    floor = self._regional_binding_floor(point, currency)
+                    without_driver_floors[currency] = None
             else:
                 floor = self.calculate_cost_floor(
                     point,
@@ -1325,8 +1652,14 @@ class EditorState:
         point["cost_floor_by_currency"] = floors
         point["final_price_by_currency"] = final_prices
         point["below_cost_floor_by_currency"] = below
+        point["cost_floor_without_driver_by_currency"] = without_driver_floors
+        point["floor_driver_label_by_currency"] = floor_driver_labels
+        point["next_floor_driver_label_by_currency"] = next_floor_driver_labels
         point["active_currency"] = active_currency
         point["cost_floor"] = floors.get(active_currency)
+        point["cost_floor_without_driver"] = without_driver_floors.get(active_currency)
+        point["floor_driver_label"] = floor_driver_labels.get(active_currency, "")
+        point["next_floor_driver_label"] = next_floor_driver_labels.get(active_currency, "")
         point["is_below_cost_floor"] = bool(below.get(active_currency, False))
 
 
@@ -1349,135 +1682,104 @@ class EditorState:
             return []
 
         keys = set()
-
         for p in self.row_index.values():
             if str(p.get("pricing_unit_id", "")).strip() != unit_id:
                 continue
-
             scope_key = str(p.get("scope_key", "")).strip()
             if scope_key:
                 keys.add(scope_key)
-
         return sorted(keys)
 
-
-    def revenue_impact_for_scope(self, scope_key: str) -> float:
-        sales = self.sales_by_scope.get(scope_key)
-        if not sales:
-            return 0.0
-
-        parts = str(scope_key).split("|")
-        if len(parts) < 3:
-            return 0.0
-
-        unit_id, plan, _sales_days = parts[0], parts[1], parts[2]
-
-        matching_points = [
-            p for p in self.row_index.values()
-            if str(p.get("pricing_unit_id", "")).strip() == unit_id
-            and str(p.get("plan", "")).strip() == plan
-        ]
-
-        if not matching_points:
-            return 0.0
-
-        old_avg_price = sum(float(p.get("base_y", 0.0)) for p in matching_points) / len(matching_points)
-
-        new_prices = []
-        for p in matching_points:
-            base_price = float(p.get("working_y", p.get("base_y", 0.0)))
-            promo = self._promo_for_point(p, self.active_currency)
-
-            if promo:
-                base_price = calculate_promo_price(
-                    base_price,
-                    str(promo.get("promo_type", "")),
-                    float(promo.get("promo_value", 0) or 0),
-                )
-
-            new_prices.append(base_price)
-
-        new_avg_price = sum(new_prices) / len(new_prices)
-
-        units = float(sales["units"])
-
-        return (new_avg_price - old_avg_price) * units
-
-    def revenue_impact_selected_pricing_unit(self) -> float:
-        unit_id = self.selected_pricing_unit_id()
-        if not unit_id:
-            return 0.0
-
-        total = 0.0
-
-        for scope_key in self.sales_by_scope.keys():
-            parts = str(scope_key).split("|")
-            if len(parts) < 2:
+    def _sales_old_and_new_prices_for_impact(self, sales_key: str) -> tuple[float, float] | None:
+        """Return old/new price for the exact Destination + Days + Package sales SKU."""
+        row_ids = self.sales_key_to_row_ids.get(str(sales_key).strip(), [])
+        for rid in row_ids:
+            point = self.row_index.get(str(rid))
+            if point is None:
                 continue
 
-            if parts[0] == unit_id:
-                total += self.revenue_impact_for_scope(scope_key)
+            old_price = float(
+                point.get("base_prices", {}).get(
+                    self.active_currency,
+                    point.get("base_y", 0.0),
+                )
+                or 0.0
+            )
+            new_price = float(
+                self.working_prices_by_currency.get(self.active_currency, {}).get(
+                    str(rid),
+                    point.get("working_y", point.get("base_y", 0.0)),
+                )
+                or 0.0
+            )
 
-        return total
+            promo = self._promo_for_point(point, self.active_currency)
+            if promo:
+                promo_type = str(promo.get("promo_type", ""))
+                promo_value = float(promo.get("promo_value", 0) or 0)
+                old_price = calculate_promo_price(old_price, promo_type, promo_value)
+                new_price = calculate_promo_price(new_price, promo_type, promo_value)
 
+            return float(old_price), float(new_price)
+        return None
 
-    def revenue_impact_total(self) -> float:
-        """
-        Total impact:
-        sum of all SKU impacts across all pricing units.
-        """
-        return sum(
-            self.revenue_impact_for_scope(scope_key)
-            for scope_key in self.sales_by_scope.keys()
-        )
-
-
-    def revenue_last_month_for_scope(self, scope_key: str) -> float:
-        sales = self.sales_by_scope.get(scope_key)
+    def revenue_impact_for_scope(self, sales_key: str) -> float:
+        """30-day top-line effect for one direct sales SKU."""
+        sales = self.sales_by_scope.get(sales_key)
         if not sales:
             return 0.0
 
+        prices = self._sales_old_and_new_prices_for_impact(sales_key)
+        if prices is None:
+            return 0.0
+
+        old_price, new_price = prices
+        units = float(sales.get("units", 0.0) or 0.0)
+        return (new_price - old_price) * units
+
+    def _selected_destination_sales_keys(self) -> list[str]:
+        if not self.selected_country:
+            return []
+        points = self.points_by_country.get(str(self.selected_country), [])
+        destination = ""
+        for point in points:
+            destination = str(point.get("sales_destination", "") or "").strip().casefold()
+            if destination:
+                break
+        if not destination:
+            destination = str(self.selected_country).strip().casefold()
+        return [
+            key for key in self.sales_by_scope.keys()
+            if str(key).split("|", 1)[0] == destination
+        ]
+
+    def revenue_impact_selected_pricing_unit(self) -> float:
+        return sum(self.revenue_impact_for_scope(key) for key in self._selected_destination_sales_keys())
+
+    def revenue_impact_total(self) -> float:
+        return sum(self.revenue_impact_for_scope(key) for key in self.sales_by_scope.keys())
+
+    def revenue_last_month_for_scope(self, sales_key: str) -> float:
+        sales = self.sales_by_scope.get(sales_key)
+        if not sales:
+            return 0.0
         by_currency = sales.get("old_revenue_by_currency", {})
         currency = self.normalize_current_currency()
         if currency in by_currency:
             return float(by_currency.get(currency, 0.0))
         return float(sales.get("old_revenue", 0.0))
 
-
     def revenue_last_month_selected_pricing_unit(self) -> float:
-        unit_id = self.selected_pricing_unit_id()
-        if not unit_id:
-            return 0.0
-
-        total = 0.0
-
-        for scope_key, sales in self.sales_by_scope.items():
-            parts = str(scope_key).split("|")
-            if len(parts) < 2:
-                continue
-
-            if parts[0] == unit_id:
-                total += self.revenue_last_month_for_scope(scope_key)
-
-        return total
+        return sum(self.revenue_last_month_for_scope(key) for key in self._selected_destination_sales_keys())
 
     def revenue_last_month_total(self) -> float:
-        return sum(
-            self.revenue_last_month_for_scope(scope_key)
-            for scope_key in self.sales_by_scope.keys()
-        )
-
+        return sum(self.revenue_last_month_for_scope(key) for key in self.sales_by_scope.keys())
 
     def revenue_projected_selected_pricing_unit(self) -> float:
-        return (
-            self.revenue_last_month_selected_pricing_unit()
-            + self.revenue_impact_selected_pricing_unit()
-        )
-
+        return self.revenue_last_month_selected_pricing_unit() + self.revenue_impact_selected_pricing_unit()
 
     def revenue_projected_total(self) -> float:
         return self.revenue_last_month_total() + self.revenue_impact_total()
-
 
     def preload_last_export(self, df: pd.DataFrame) -> None:
         if df.empty:
@@ -1618,8 +1920,9 @@ class EditorState:
         points = self.points_by_country.get(str(self.selected_country), [])
 
         for p in points:
-            sales = self.sales_by_scope.get(str(p.get("scope_key", "")), {})
-            p["last_month_revenue"] = self.revenue_last_month_for_scope(str(p.get("scope_key", "")))
+            sales_key = str(p.get("sales_key", ""))
+            sales = self.sales_by_scope.get(sales_key, {})
+            p["last_month_revenue"] = self.revenue_last_month_for_scope(sales_key)
 
             if "cost_floor_by_currency" not in p:
                 self._refresh_point_floor_status(p)
@@ -1648,24 +1951,15 @@ class EditorState:
 
     def country_info(self) -> str:
         if not self.selected_country:
-            return "No country loaded"
-        base = self.country_info_map.get(str(self.selected_country), "No country loaded")
-        mode = "Edit active currency only" if self.is_dual_currency_mode() else "Edit USD/EUR together"
+            return "No destination loaded"
+        base = self.country_info_map.get(str(self.selected_country), "")
         points = self.points_by_country.get(str(self.selected_country), [])
         new_count = sum(1 for p in points if p.get("is_new_entry"))
-        if not points or new_count == 0:
-            entry_status = "Existing saved/exported prices"
-        elif new_count == len(points):
-            entry_status = "NEW - no previous saved/exported prices"
+        if new_count:
+            suffix = f"\nNew points: {new_count}/{len(points)}"
         else:
-            entry_status = f"PARTLY NEW - {new_count}/{len(points)} price points were not previously saved/exported"
-        return (
-            f"{base}\nEntry status: {entry_status}\n"
-            f"Currency: {self.normalize_current_currency()} | Mode: {mode} | "
-            f"Pricing EUR/USD: {self.eur_to_usd:.4f} | "
-            f"Official cost EUR/USD: {self.cost_eur_to_usd:.4f} "
-            f"({self.cost_eur_to_usd_source} {self.cost_eur_to_usd_date}, {self.cost_eur_to_usd_status})"
-        )
+            suffix = ""
+        return f"{base}{suffix}".strip()
 
     def selected_point_info(self) -> dict[str, Any] | None:
         if not self.selected_row_id:

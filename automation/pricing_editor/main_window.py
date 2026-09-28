@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QScrollArea,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -37,9 +38,9 @@ try:
 except ImportError:
     from automation.partner_export_pack import build_partner_price_pack
 try:
-    from plan_labels import display_plan_label
+    from plan_labels import display_plan_label, partner_display_plan_label
 except ImportError:
-    from automation.plan_labels import display_plan_label
+    from automation.plan_labels import display_plan_label, partner_display_plan_label
 try:
     from official_fx import get_official_eur_usd
 except ImportError:
@@ -74,7 +75,7 @@ except ImportError:
 BASE_DIR = FILES.base_dir
 PPG_PATH = FILES.ppg_csv
 PROMOS_PATH = FILES.promos_json
-SALES_VOLUME_PATH = FILES.sales_volumes_xlsx
+SALES_VOLUME_PATH = FILES.sales_master_csv
 RECOMMENDATIONS_PATH = FILES.work_dir / "pricing_recommendations" / "recommendations_latest.csv"
 MARKET_INSIGHTS_PATH = FILES.work_dir / "pricing_recommendations" / "market_insights_latest.html"
 MAX_SAVED_EXPORT_DROPDOWN_DATES = None
@@ -142,7 +143,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.splitter)
 
         self.side_panel = QScrollArea()
-        self.side_panel.setMinimumWidth(380)
+        self.side_panel.setMinimumWidth(350)
         self.side_panel.setWidgetResizable(True)
 
         self.side_panel_content = QWidget()
@@ -163,16 +164,16 @@ class MainWindow(QMainWindow):
         self.load_sales_btn.setFixedHeight(34)
         self.load_sales_btn.clicked.connect(self.load_sales_volumes)
 
-        self.impact_label = QLabel("Pricing unit impact: —")
-        self.total_impact_label = QLabel("Total impact: —")
+        self.impact_label = QLabel("—")
+        self.total_impact_label = QLabel("—")
 
         self.impact_label.setStyleSheet("color: #999999;")
         self.total_impact_label.setStyleSheet("color: #999999;")
 
-        self.unit_last_month_label = QLabel("Unit last month: —")
-        self.total_last_month_label = QLabel("Total last month: —")
-        self.unit_projected_label = QLabel("Unit projected: —")
-        self.total_projected_label = QLabel("Total projected: —")
+        self.unit_last_month_label = QLabel("—")
+        self.total_last_month_label = QLabel("—")
+        self.unit_projected_label = QLabel("—")
+        self.total_projected_label = QLabel("—")
 
         for lbl in [
             self.impact_label,
@@ -262,7 +263,7 @@ class MainWindow(QMainWindow):
             btn = QToolButton()
             btn.setText(label)
             btn.setCheckable(True)
-            btn.setFixedSize(82, 40)
+            btn.setFixedSize(76, 34)
             btn.clicked.connect(lambda checked, k=key: self.set_drag_mode(k))
             self.mode_buttons[key] = btn
 
@@ -280,7 +281,7 @@ class MainWindow(QMainWindow):
 
         self.mode_buttons["inflate"].setChecked(True)
 
-        self.drag_safety_label = QLabel("Protected editing: hold SHIFT while dragging any curve tool.")
+        self.drag_safety_label = QLabel("Hold SHIFT while dragging.")
         self.drag_safety_label.setWordWrap(True)
         self.drag_safety_label.setStyleSheet(
             "font-weight: bold; color: #8a4b08; background: #fff4df; "
@@ -343,6 +344,14 @@ class MainWindow(QMainWindow):
 
         self.selection_label = QLabel("No point selected")
         self.selection_label.setWordWrap(True)
+        self.region_floor_label = QLabel("")
+        self.region_floor_label.setWordWrap(True)
+        self.region_floor_label.setTextFormat(Qt.RichText)
+        self.region_floor_label.setStyleSheet(
+            "padding: 6px; border: 1px solid #e3e3e3; border-radius: 4px; "
+            "background: #fcfcfc; color: #333333;"
+        )
+        self.region_floor_label.setVisible(False)
 
         self.promo_list = QListWidget()
         self.promo_list.setMinimumHeight(100)
@@ -379,80 +388,108 @@ class MainWindow(QMainWindow):
         promo_range_layout.addLayout(promo_range_grid)
         promo_range_layout.addLayout(promo_range_buttons)
 
-        # Build left panel
-        side_layout.addLayout(load_grid)
-        side_layout.addLayout(currency_grid)
-        side_layout.addWidget(self.currency_mode_banner)
-
-        side_layout.addWidget(QLabel("Country / Region"))
-        side_layout.addWidget(self.country_combo)
-
-        # Promo controls high in the panel for normal editing
-        side_layout.addWidget(QLabel("Promo range"))
-        side_layout.addWidget(self.promo_range_box)
-
-        side_layout.addWidget(QLabel("Promo options"))
-        side_layout.addWidget(self.promo_list)
-
-        side_layout.addWidget(QLabel("Drag tools"))
-        side_layout.addWidget(self.drag_safety_label)
-        side_layout.addLayout(mode_row_1)
-        side_layout.addLayout(mode_row_2)
-        side_layout.addLayout(mode_row_3)
-
-        side_layout.addWidget(QLabel("Pricing recommendations"))
-        side_layout.addWidget(self.recommendation_status_label)
-        recommendation_buttons = QHBoxLayout()
-        recommendation_buttons.addWidget(self.reload_recommendations_btn)
-        recommendation_buttons.addWidget(self.open_market_insights_btn)
-        side_layout.addLayout(recommendation_buttons)
-
-
+        # Sales impact is global context: it stays visible above both working tabs.
         impact_box = QWidget()
+        impact_box.setObjectName("SalesImpactBox")
         impact_box.setStyleSheet("""
-            QWidget {
+            QWidget#SalesImpactBox {
                 border: 1px solid #cccccc;
                 border-radius: 6px;
                 background-color: #fafafa;
             }
+            QWidget#SalesImpactBox QLabel {
+                border: none;
+                background: transparent;
+                color: #333333;
+            }
         """)
 
-        impact_layout = QVBoxLayout(impact_box)
-        impact_layout.setContentsMargins(8, 8, 8, 8)
+        impact_layout = QGridLayout(impact_box)
+        impact_layout.setContentsMargins(7, 5, 7, 5)
+        impact_layout.setHorizontalSpacing(5)
+        impact_layout.setVerticalSpacing(2)
+        impact_layout.setColumnStretch(0, 2)
+        impact_layout.setColumnStretch(1, 2)
+        impact_layout.setColumnStretch(2, 2)
+        impact_layout.setColumnStretch(3, 2)
 
-        impact_title = QLabel("Impact summary")
-        impact_title.setStyleSheet("font-weight: bold; color: #333333; border: none;")
-        impact_layout.addWidget(impact_title)
+        self.impact_title = QLabel("30-day sales impact")
+        self.impact_title.setStyleSheet("font-weight: bold; color: #333333;")
+        impact_layout.addWidget(self.impact_title, 0, 0, 1, 4)
 
-        for lbl in [
-            self.unit_last_month_label,
-            self.impact_label,
-            self.unit_projected_label,
-            self.total_last_month_label,
-            self.total_impact_label,
-            self.total_projected_label,
-        ]:
-            lbl.setStyleSheet(lbl.styleSheet() + " border: none;")
-            impact_layout.addWidget(lbl)
+        header_style = "font-size: 10px; color: #666666;"
+        for col, text in enumerate(("Scope", "Actual 30d", "Δ top line", "Simulated")):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(header_style)
+            impact_layout.addWidget(lbl, 1, col)
 
-        for widget in [
-            QLabel("Current scope"), self.country_info_label,
-            impact_box,
-            reset_zoom_btn,
-        ]:
-            side_layout.addWidget(widget)
+        selected_scope = QLabel("Selected")
+        selected_scope.setToolTip("Currently selected destination / pricing scope")
+        portfolio_scope = QLabel("Portfolio")
+        portfolio_scope.setToolTip("All destinations")
+        impact_layout.addWidget(selected_scope, 2, 0)
+        impact_layout.addWidget(self.unit_last_month_label, 2, 1)
+        impact_layout.addWidget(self.impact_label, 2, 2)
+        impact_layout.addWidget(self.unit_projected_label, 2, 3)
+        impact_layout.addWidget(portfolio_scope, 3, 0)
+        impact_layout.addWidget(self.total_last_month_label, 3, 1)
+        impact_layout.addWidget(self.total_impact_label, 3, 2)
+        impact_layout.addWidget(self.total_projected_label, 3, 3)
 
-        side_layout.addLayout(reset_grid)
+        # Two compact working modes: normal price modelling vs promos/setup.
+        self.side_tabs = QTabWidget()
 
-        for widget in [
-            export_btn,
-            export_pdf_btn,
-            # self.tool_help_label,
-            QLabel("Selected point info"), self.selection_label,
-        ]:
-            side_layout.addWidget(widget)
+        model_tab = QWidget()
+        model_layout = QVBoxLayout(model_tab)
+        model_layout.setContentsMargins(6, 6, 6, 6)
+        model_layout.setSpacing(6)
+        model_layout.addWidget(self.country_info_label)
+        model_layout.addWidget(QLabel("Curve tools"))
+        model_layout.addWidget(self.drag_safety_label)
+        model_layout.addLayout(mode_row_1)
+        model_layout.addLayout(mode_row_2)
+        model_layout.addLayout(mode_row_3)
+        model_layout.addWidget(self.recommendation_status_label)
+        recommendation_buttons = QHBoxLayout()
+        recommendation_buttons.addWidget(self.reload_recommendations_btn)
+        recommendation_buttons.addWidget(self.open_market_insights_btn)
+        model_layout.addLayout(recommendation_buttons)
+        model_layout.addWidget(self.selection_label)
+        model_layout.addWidget(self.region_floor_label)
+        model_layout.addWidget(reset_zoom_btn)
+        model_layout.addLayout(reset_grid)
+        model_layout.addStretch(1)
 
-        side_layout.addStretch(1)
+        promo_tab = QWidget()
+        promo_layout = QVBoxLayout(promo_tab)
+        promo_layout.setContentsMargins(6, 6, 6, 6)
+        promo_layout.setSpacing(6)
+        promo_layout.addWidget(QLabel("Promo range"))
+        promo_layout.addWidget(self.promo_range_box)
+        promo_layout.addWidget(QLabel("Promo options"))
+        promo_layout.addWidget(self.promo_list)
+        promo_layout.addStretch(1)
+
+        self.side_tabs.addTab(model_tab, "Model")
+        self.side_tabs.addTab(promo_tab, "Promos")
+
+        # Currency/data and export actions affect both modelling and promos,
+        # so keep them outside the tabs. This also avoids duplicating controls
+        # and leaves each tab focused on the work that is specific to it.
+        global_actions = QHBoxLayout()
+        global_actions.setSpacing(6)
+        global_actions.addWidget(export_btn)
+        global_actions.addWidget(export_pdf_btn)
+
+        side_layout.addWidget(QLabel("Destination"))
+        side_layout.addWidget(self.country_combo)
+        side_layout.addWidget(impact_box)
+        side_layout.addWidget(QLabel("Currency & data"))
+        side_layout.addLayout(currency_grid)
+        side_layout.addWidget(self.currency_mode_banner)
+        side_layout.addLayout(load_grid)
+        side_layout.addLayout(global_actions)
+        side_layout.addWidget(self.side_tabs, 1)
 
         # Canvas
         self.canvas = PriceCurveCanvas()
@@ -467,7 +504,7 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.canvas)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([380, 1100])
+        self.splitter.setSizes([350, 1130])
 
     def export_all_charts_pdf(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -1147,14 +1184,15 @@ class MainWindow(QMainWindow):
 
     def refresh_impact_labels(self):
         currency = self.state.active_currency
+        self.impact_title.setText(f"30d sales impact · {currency}")
         # No sales data → everything grey
         if not self.state.sales_by_scope:
-            self.impact_label.setText("Pricing unit impact: —")
-            self.total_impact_label.setText("Total impact: —")
-            self.unit_last_month_label.setText("Unit last month: —")
-            self.total_last_month_label.setText("Total last month: —")
-            self.unit_projected_label.setText("Unit projected: —")
-            self.total_projected_label.setText("Total projected: —")
+            self.impact_label.setText("—")
+            self.total_impact_label.setText("—")
+            self.unit_last_month_label.setText("—")
+            self.total_last_month_label.setText("—")
+            self.unit_projected_label.setText("—")
+            self.total_projected_label.setText("—")
 
             for lbl in [
                 self.impact_label,
@@ -1179,14 +1217,18 @@ class MainWindow(QMainWindow):
         total_projected = total_last + total_impact
 
         # Set text
-        self.impact_label.setText(f"Pricing unit impact: {unit_impact:,.2f} {currency}")
-        self.total_impact_label.setText(f"Total impact: {total_impact:,.2f} {currency}")
+        self.impact_label.setText(f"{unit_impact:+,.2f}")
+        self.total_impact_label.setText(f"{total_impact:+,.2f}")
 
-        self.unit_last_month_label.setText(f"Unit last month: {unit_last:,.2f} {currency}")
-        self.total_last_month_label.setText(f"Total last month: {total_last:,.2f} {currency}")
+        self.unit_last_month_label.setText(f"{unit_last:,.2f}")
+        self.total_last_month_label.setText(f"{total_last:,.2f}")
 
-        self.unit_projected_label.setText(f"Unit projected: {unit_projected:,.2f} {currency}")
-        self.total_projected_label.setText(f"Total projected: {total_projected:,.2f} {currency}")
+        self.unit_projected_label.setText(f"{unit_projected:,.2f}")
+        self.total_projected_label.setText(f"{total_projected:,.2f}")
+        impact_box_tip = f"Values shown in {currency}"
+        for lbl in [self.unit_last_month_label, self.impact_label, self.unit_projected_label,
+                    self.total_last_month_label, self.total_impact_label, self.total_projected_label]:
+            lbl.setToolTip(impact_box_tip)
 
         # Colors
         def color(v):
@@ -1630,49 +1672,61 @@ class MainWindow(QMainWindow):
         info = self.state.selected_point_info()
         if not info:
             self.selection_label.setText("No point selected")
+            self.region_floor_label.clear()
+            self.region_floor_label.setVisible(False)
             return
 
-        promo = f"\nPromo: {info['promo']}" if info.get("promo") else ""
-        below_by_currency = info.get("below_cost_floor_by_currency") or {}
-        below_currencies = [
-            currency for currency, is_below in below_by_currency.items() if bool(is_below)
-        ]
-        allow_below_cost = bool(info.get("allow_below_cost", False))
-        if below_currencies:
-            if allow_below_cost:
-                export_status = f"eligible by override (below floor: {','.join(below_currencies)})"
-            else:
-                export_status = f"excluded below floor ({','.join(below_currencies)})"
-        else:
-            export_status = "eligible"
-        entry_status = "NEW - no previous saved/exported price" if info.get("is_new_entry") else "Existing"
+        plan = partner_display_plan_label(info["plan"])
+        days = float(info.get("days") or 0)
+        days_text = str(int(days)) if days.is_integer() else str(days)
+        gb = info.get("gb")
+        gb_text = "—" if gb is None else f"{float(gb):g} GB"
+        currency = self.state.active_currency
+        working = float(info.get("y", 0.0))
+        loaded = float(info.get("base_y", 0.0))
+        promo = str(info.get("promo", "") or "").strip()
 
-        recommendation_text = ""
-        rec = self.state.recommendation_for_point(
-            info, self.state.active_currency, actionable_only=True
-        )
+        lines = [
+            f"{plan} · {days_text}d · {gb_text}",
+            f"Price {working:.2f} {currency} · loaded {loaded:.2f}",
+        ]
+        if promo:
+            lines[-1] += f" · promo {promo}"
+
+        rec = self.state.recommendation_for_point(info, currency, actionable_only=True)
         if rec is not None:
             if rec.get("applied"):
-                recommendation_text = "\nRecommendation: applied in this session"
+                lines.append("Recommendation applied")
             elif rec.get("stale"):
-                recommendation_text = "\nRecommendation: STALE - rerun pricing_recommendations.py"
+                lines.append("Recommendation stale — refresh")
             else:
-                recommendation_text = self._recommendation_detail_text(rec)
+                direction = str(rec.get("Direction", "") or "").upper()
+                arrow = "▲" if direction == "UP" else "▼" if direction == "DOWN" else "•"
+                suggested = self._rec_value(rec, "SuggestedListPrice")
+                if suggested is None:
+                    suggested = self._rec_value(rec, "SuggestedPromoFinalPrice")
+                if suggested is None:
+                    suggested = self._rec_value(rec, "SuggestedNetPrice")
+                confidence = str(rec.get("Confidence", "") or "").upper()
+                target_text = f" {suggested:.2f} {currency}" if suggested is not None else ""
+                conf_text = f" · {confidence}" if confidence else ""
+                lines.append(f"Rec {arrow}{target_text}{conf_text}")
 
-        self.selection_label.setText(
-            f"{display_plan_label(info['plan'])} | {info['days']} days | {info['gb']} GB\n"
-            f"Entry: {entry_status}\n"
-            f"Currency: {self.state.active_currency}\n"
-            f"Working price: {info['y']:.2f}\n"
-            f"Loaded price: {info['base_y']:.2f}\n"
-            f"ISO: {info.get('iso') or '-'}\n"
-            f"Pricing unit: {info['pricing_unit_id'] or '-'}\n"
-            f"Source: {info['pricing_source'] or '-'} | Region: {info['pricing_region'] or '-'}\n"
-            f"Unit countries: {info['pricing_unit_countries'] or '-'}\n"
-            f"Countries affected in editor: {info['editor_scope_countries'] or '-'}\n"
-            f"Partner export: {export_status}{promo}"
-            f"{recommendation_text}"
-        )
+        self.selection_label.setText("\n".join(lines))
+
+        floor_info = self.state.regional_floor_driver_info(info, currency)
+        if floor_info:
+            driver = str(floor_info.get("driver_label", ""))
+            current_floor = float(floor_info.get("current_floor", 0.0))
+            without_floor = floor_info.get("without_driver_floor")
+            floor_line = f"Floor {current_floor:.2f} {currency} · driver {driver}"
+            if without_floor is not None:
+                floor_line += f" · without {float(without_floor):.2f}"
+            self.region_floor_label.setText(floor_line)
+            self.region_floor_label.setVisible(True)
+        else:
+            self.region_floor_label.clear()
+            self.region_floor_label.setVisible(False)
 
     def refresh_promo_list(self):
         self.promo_list.clear()
@@ -1993,16 +2047,22 @@ class MainWindow(QMainWindow):
 
         if SALES_VOLUME_PATH.exists():
             progress("Loading sales volumes...")
-            sales_df = pd.read_excel(SALES_VOLUME_PATH)
+            if SALES_VOLUME_PATH.suffix.lower() == ".csv":
+                sales_df = pd.read_csv(SALES_VOLUME_PATH, low_memory=False)
+            else:
+                sales_df = pd.read_excel(SALES_VOLUME_PATH)
             sales_df.columns = sales_df.columns.astype(str).str.strip()
             if not sales_df.empty:
                 self.state.preload_sales_volumes(sales_df)
+        else:
+            print("Sales master not found:", SALES_VOLUME_PATH)
 
-        progress("Synchronizing pricing recommendations...")
-        self.refresh_pricing_intelligence(force=False, refresh=False)
-        # refresh_pricing_intelligence already loads the recommendation CSV when possible.
-        if self.state.recommendations_loaded_rows <= 0:
-            self.load_recommendations(refresh=False)
+        # Recommendations and Market Insights are precomputed by the weekly-pack
+        # importer.  Startup must stay lightweight: only load the existing CSV.
+        # If prices are edited later, explicit Save/Quick Save and the Refresh
+        # recommendations button still force a full recalculation.
+        progress("Loading pricing recommendations...")
+        self.load_recommendations(refresh=False)
 
         self.refresh_saved_state_combo()
 

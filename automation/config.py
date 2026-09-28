@@ -80,5 +80,5 @@ PROMO_TARGET_MARGIN_PCT = 0.0
 BASE_DIR = Path(__file__).resolve().parent
 if BASE_DIR.name == "automation":
     BASE_DIR = BASE_DIR.parent
-INPUT_REGIONS = BASE_DIR / "inputs" / "regions.yaml"
+INPUT_REGIONS = BASE_DIR / "inputs" / "destinations.yaml"
 OUTPUT_NAME = "region_prices_current.csv"

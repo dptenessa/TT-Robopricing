@@ -1,0 +1,5275 @@
+schema_version: 2
+metadata:
+  purpose: Single commercial destination catalogue for T-Travel
+  country_count: 155
+  region_count: 49
+  note: Draft migration catalogue. Not consumed by production code yet. Region-to-region hierarchy is preserved in parent_regions.
+    Country IDs are the future commercial pricing keys; coverage controls where a country product works; region members control
+    region membership independently.
+partner_classes:
+  COUNTRY:
+    limited: '190447115'
+    unlimited: '190447245'
+  MEDIUM_REGION:
+    limited: '190640635'
+    unlimited: '190640665'
+  LARGE_REGION:
+    limited: '190447125'
+    unlimited: '190447255'
+  GLOBAL:
+    limited: '190447135'
+    unlimited: '190447265'
+destinations:
+  AD:
+    type: country
+    coverage:
+    - AD
+    partner_class: COUNTRY
+    amdocs_code: "Andorra"
+    translations:
+      en: Andorra
+      pl: "Andora"
+      cs: "Andorra"
+      hu: "Andorra"
+      gr: "Ανδόρα"
+      sk: "Andorra"
+  AE:
+    type: country
+    coverage:
+    - AE
+    partner_class: COUNTRY
+    amdocs_code: "United Arab Emirates"
+    translations:
+      en: United Arab Emirates
+      hr: Ujedinjeni Arapski Emirati
+      de: Vereinigte Arabische Emirate
+      fr: Émirats Arabes Unis
+      ja: アラブ首長国連邦
+      it: Emirati Arabi Uniti
+      es: Emiratos Árabes Unidos
+      pt: Emirados Árabes Unidos
+      pl: "Zjednoczone Emiraty Arabskie"
+      cs: "Spojené arabské emiráty"
+      hu: "Egyesült Arab Emírségek"
+      gr: "Ηνωμένα Αραβικά Εμιράτα"
+      sk: "Spojené arabské emiráty"
+  AF:
+    type: country
+    coverage:
+    - AF
+    partner_class: COUNTRY
+    amdocs_code: "Afghanistan"
+    translations:
+      en: Afghanistan
+      hr: Afganistan
+      de: Afghanistan
+      fr: Afghanistan
+      ja: アフガニスタン
+      it: Afghanistan
+      es: Afganistán
+      pt: Afeganistão
+      pl: "Afganistan"
+      cs: "Afghánistán"
+      hu: "Afganisztán"
+      gr: "Αφγανιστάν"
+      sk: "Afganistan"
+  AG:
+    type: country
+    coverage:
+    - AG
+    partner_class: COUNTRY
+    amdocs_code: "Antigua and Barbuda"
+    translations:
+      en: Antigua and Barbuda
+      hr: Antigva i Barbuda
+      de: Antigua und Barbuda
+      fr: Antigua-et-Barbuda
+      ja: アンティグア・バーブーダ
+      it: Antigua e Barbuda
+      es: Antigua y Barbuda
+      pt: Antígua e Barbuda
+      pl: "Antigua i Barbuda"
+      cs: "Antigua a Barbuda"
+      hu: "Antigua és Barbuda"
+      gr: "Αντίγκουα και Μπαρμπούντα"
+      sk: "Antigua a Barbuda"
+  AI:
+    type: country
+    coverage:
+    - AI
+    partner_class: COUNTRY
+    amdocs_code: "Anguilla"
+    translations:
+      en: Anguilla
+      hr: Angvila
+      de: Anguilla
+      fr: Anguilla
+      ja: アンギラ
+      it: Anguilla
+      es: Anguila
+      pt: Anguila
+      pl: "Anguilla"
+      cs: "Anguilla"
+      hu: "Anguilla"
+      gr: "Ανγκουίλα"
+      sk: "Anguilla"
+  AL:
+    type: country
+    coverage:
+    - AL
+    partner_class: COUNTRY
+    amdocs_code: "Albania"
+    translations:
+      en: Albania
+      hr: Albanija
+      de: Albanien
+      fr: Albanie
+      ja: アルバニア
+      it: Albania
+      es: Albania
+      pt: Albânia
+      pl: "Albania"
+      cs: "Albánie"
+      hu: "Albánia"
+      gr: "Αλβανία"
+      sk: "Albánsko"
+  AM:
+    type: country
+    coverage:
+    - AM
+    partner_class: COUNTRY
+    amdocs_code: "Armenia"
+    translations:
+      en: Armenia
+      hr: Armenija
+      de: Armenien
+      fr: Arménie
+      ja: アルメニア
+      it: Armenia
+      es: Armenia
+      pt: Arménia
+      pl: "Armenia"
+      cs: "Arménie"
+      hu: "Örményország"
+      gr: "Αρμενία"
+      sk: "Arménsko"
+  AO:
+    type: country
+    coverage:
+    - AO
+    partner_class: COUNTRY
+    amdocs_code: "Angola"
+    translations:
+      en: Angola
+      hr: Angola
+      de: Angola
+      fr: Angola
+      ja: アンゴラ
+      it: Angola
+      es: Angola
+      pt: Angola
+      pl: "Angola"
+      cs: "Angola"
+      hu: "Angola"
+      gr: "Αγκόλα"
+      sk: "Angola"
+  AR:
+    type: country
+    coverage:
+    - AR
+    partner_class: COUNTRY
+    amdocs_code: "Argentina"
+    translations:
+      en: Argentina
+      hr: Argentina
+      de: Argentinien
+      fr: Argentine
+      ja: アルゼンチン
+      it: Argentina
+      es: Argentina
+      pt: Argentina
+      pl: "Argentyna"
+      cs: "Argentina"
+      hu: "Argentína"
+      gr: "Αργεντινή"
+      sk: "Argentína"
+  AT:
+    type: country
+    coverage:
+    - AT
+    - HR
+    - SI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Austria"
+    translations:
+      en: Austria
+      hr: Austrija
+      de: Österreich
+      fr: Autriche
+      ja: オーストリア
+      it: Austria
+      es: Austria
+      pt: Áustria
+      pl: "Austria"
+      cs: "Rakousko"
+      hu: "Ausztria"
+      gr: "Αυστρία"
+      sk: "Rakúsko"
+  AU:
+    type: country
+    coverage:
+    - AU
+    partner_class: COUNTRY
+    amdocs_code: "Australia"
+    translations:
+      en: Australia
+      hr: Australija
+      de: Australien
+      fr: Australie
+      ja: オーストラリア
+      it: Australia
+      es: Australia
+      pt: Austrália
+      pl: "Australia"
+      cs: "Austrálie"
+      hu: "Ausztrália"
+      gr: "Αυστραλία"
+      sk: "Austrália"
+  AW:
+    type: country
+    coverage:
+    - AW
+    partner_class: COUNTRY
+    amdocs_code: "Aruba"
+    translations:
+      en: "Aruba"
+      hr: "Aruba"
+      de: "Aruba"
+      fr: "Aruba"
+      ja: "アルバ"
+      it: "Aruba"
+      es: "Aruba"
+      pt: "Aruba"
+      pl: "Aruba"
+      cs: "Aruba"
+      hu: "Aruba"
+      gr: "Αρούμπα"
+      sk: "Aruba"
+  AZ:
+    type: country
+    coverage:
+    - AZ
+    partner_class: COUNTRY
+    amdocs_code: "Azerbaijan"
+    translations:
+      en: Azerbaijan
+      hr: Azerbajdžan
+      de: Aserbaidschan
+      fr: Azerbaïdjan
+      ja: アゼルバイジャン
+      it: Azerbaigian
+      es: Azerbaiyán
+      pt: Azerbaijão
+      pl: "Azerbejdżan"
+      cs: "Ázerbájdžán"
+      hu: "Azerbajdzsán"
+      gr: "Αζερμπαϊτζάν"
+      sk: "Azerbajdžan"
+  BA:
+    type: country
+    coverage:
+    - BA
+    partner_class: COUNTRY
+    amdocs_code: "Bosnia and Herzegovina"
+    translations:
+      en: Bosnia and Herzegovina
+      hr: Bosna i Hercegovina
+      de: Bosnien und Herzegowina
+      fr: Bosnie-Herzégovine
+      ja: ボスニア・ヘルツェゴビナ
+      it: Bosnia ed Erzegovina
+      es: Bosnia y Herzegovina
+      pt: Bósnia e Herzegovina
+      pl: "Bośnia i Hercegowina"
+      cs: "Bosna a Hercegovina"
+      hu: "Bosznia-Hercegovina"
+      gr: "Βοσνία - Ερζεγοβίνη"
+      sk: "Bosna a Hercegovina"
+  BB:
+    type: country
+    coverage:
+    - BB
+    partner_class: COUNTRY
+    amdocs_code: "Barbados"
+    translations:
+      en: Barbados
+      hr: Barbados
+      de: Barbados
+      fr: Barbade
+      ja: バルバドス
+      it: Barbados
+      es: Barbados
+      pt: Barbados
+      pl: "Barbados"
+      cs: "Barbados"
+      hu: "Barbados"
+      gr: "Μπαρμπέιντος"
+      sk: "Barbados"
+  BD:
+    type: country
+    coverage:
+    - BD
+    partner_class: COUNTRY
+    amdocs_code: "Bangladesh"
+    translations:
+      en: "Bangladesh"
+      hr: "Bangladeš"
+      de: "Bangladesch"
+      fr: "Bangladesh"
+      ja: "バングラデシュ"
+      it: "Bangladesh"
+      es: "Bangladés"
+      pt: "Bangladesh"
+      pl: "Bangladesz"
+      cs: "Bangladéš"
+      hu: "Banglades"
+      gr: "Μπανγκλαντές"
+      sk: "Bangladéš"
+  BE:
+    type: country
+    coverage:
+    - BE
+    - NL
+    - LU
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Belgium"
+    translations:
+      en: Belgium
+      hr: Belgija
+      de: Belgien
+      fr: Belgique
+      ja: ベルギー
+      it: Belgio
+      es: Bélgica
+      pt: Bélgica
+      pl: "Belgia"
+      cs: "Belgie"
+      hu: "Belgium"
+      gr: "Βέλγιο"
+      sk: "Belgicko"
+  BF:
+    type: country
+    coverage:
+    - BF
+    partner_class: COUNTRY
+    amdocs_code: "Burkina Faso"
+    translations:
+      en: "Burkina Faso"
+      hr: "Burkina Faso"
+      de: "Burkina Faso"
+      fr: "Burkina Faso"
+      ja: "ブルキナファソ"
+      it: "Burkina Faso"
+      es: "Burkina Faso"
+      pt: "Burquina Faso"
+      pl: "Burkina Faso"
+      cs: "Burkina Faso"
+      hu: "Burkina Faso"
+      gr: "Μπουρκίνα Φάσο"
+      sk: "Burkina Faso"
+  BG:
+    type: country
+    coverage:
+    - RO
+    - BG
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Bulgaria"
+    translations:
+      en: Bulgaria
+      hr: Bugarska
+      de: Bulgarien
+      fr: Bulgarie
+      ja: ブルガリア
+      it: Bulgaria
+      es: Bulgaria
+      pt: Bulgária
+      pl: "Bułgaria"
+      cs: "Bulharsko"
+      hu: "Bulgária"
+      gr: "Βουλγαρία"
+      sk: "Bulharsko"
+  BH:
+    type: country
+    coverage:
+    - BH
+    partner_class: COUNTRY
+    amdocs_code: "Bahrain"
+    translations:
+      en: Bahrain
+      hr: Bahrein
+      de: Bahrain
+      fr: Bahreïn
+      ja: バーレーン
+      it: Bahrain
+      es: Bahrein
+      pt: Barém
+      pl: "Bahrajn"
+      cs: "Bahrajn"
+      hu: "Bahrein"
+      gr: "Μπαχρέιν"
+      sk: "Bahrajn"
+  BJ:
+    type: country
+    coverage:
+    - BJ
+    partner_class: COUNTRY
+    amdocs_code: "Benin"
+    translations:
+      en: "Benin"
+      hr: "Benin"
+      de: "Benin"
+      fr: "Bénin"
+      ja: "ベナン"
+      it: "Benin"
+      es: "Benín"
+      pt: "Benim"
+      pl: "Benin"
+      cs: "Benin"
+      hu: "Benin"
+      gr: "Μπενίν"
+      sk: "Benin"
+  BM:
+    type: country
+    coverage:
+    - BM
+    partner_class: COUNTRY
+    amdocs_code: "Bermuda"
+    translations:
+      en: Bermuda
+      hr: Bermudi
+      de: Bermuda
+      fr: Bermudes
+      ja: バミューダ
+      it: Bermuda
+      es: Bermudas
+      pt: Bermudas
+      pl: "Bermudy"
+      cs: "Bermudy"
+      hu: "Bermuda"
+      gr: "Βερμούδες"
+      sk: "Bermudy"
+  BN:
+    type: country
+    coverage:
+    - BN
+    partner_class: COUNTRY
+    amdocs_code: "Brunei Darussalam"
+    translations:
+      en: "Brunei Darussalam"
+      hr: "Brunej"
+      de: "Brunei Darussalam"
+      fr: "Brunei Darussalam"
+      ja: "ブルネイ・ダルサラーム"
+      it: "Brunei"
+      es: "Brunéi Darussalam"
+      pt: "Brunei Darussalam"
+      pl: "Brunei"
+      cs: "Brunej"
+      hu: "Brunei"
+      gr: "Μπρουνέι"
+      sk: "Brunej"
+  BO:
+    type: country
+    coverage:
+    - BO
+    partner_class: COUNTRY
+    amdocs_code: "Bolivia"
+    translations:
+      en: "Bolivia"
+      hr: "Bolivija"
+      de: "Bolivien"
+      fr: "Bolivie"
+      ja: "ボリビア"
+      it: "Bolivia"
+      es: "Bolivia"
+      pt: "Bolívia"
+      pl: "Boliwia"
+      cs: "Bolívie"
+      hu: "Bolívia"
+      gr: "Βολιβία"
+      sk: "Bolívia"
+  BQ:
+    type: country
+    coverage:
+    - BQ
+    partner_class: COUNTRY
+    amdocs_code: "Bonaire, Sint Eustatius and Saba"
+    translations:
+      en: Bonaire, Sint Eustatius and Saba
+      hr: Karipski otoci Nizozemske
+      de: Bonaire
+      fr: Bonaire, Saint-Eustache et Saba
+      ja: ボネール、シント・ユースタティウスおよびサバ
+      it: Isole BES
+      es: Bonaire, San Eustaquio y Saba
+      pt: Bonaire, Santo Eustáquio e Saba
+      pl: "Niderlandy Karaibskie"
+      cs: "Karibské Nizozemsko"
+      hu: "Holland Karib-térség"
+      gr: "Ολλανδία Καραϊβικής"
+      sk: "Karibské Holandsko"
+  BR:
+    type: country
+    coverage:
+    - BR
+    partner_class: COUNTRY
+    amdocs_code: "Brazil"
+    translations:
+      en: Brazil
+      hr: Brazil
+      de: Brasilien
+      fr: Brésil
+      ja: ブラジル
+      it: Brasile
+      es: Brasil
+      pt: Brasil
+      pl: "Brazylia"
+      cs: "Brazílie"
+      hu: "Brazília"
+      gr: "Βραζιλία"
+      sk: "Brazília"
+  BS:
+    type: country
+    coverage:
+    - BS
+    partner_class: COUNTRY
+    amdocs_code: "Bahamas"
+    translations:
+      en: Bahamas
+      hr: Bahami
+      de: Bahamas
+      fr: Bahamas
+      ja: バハマ
+      it: Bahamas
+      es: Bahamas
+      pt: Baamas
+      pl: "Bahamy"
+      cs: "Bahamy"
+      hu: "Bahama-szigetek"
+      gr: "Μπαχάμες"
+      sk: "Bahamy"
+  BW:
+    type: country
+    coverage:
+    - BW
+    partner_class: COUNTRY
+    amdocs_code: "Botswana"
+    translations:
+      en: Botswana
+      hr: Bocvana
+      de: Botswana
+      fr: Botswana
+      ja: ボツワナ
+      it: Botswana
+      es: Botswana
+      pt: Botsuana
+      pl: "Botswana"
+      cs: "Botswana"
+      hu: "Botswana"
+      gr: "Μποτσουάνα"
+      sk: "Botswana"
+  BY:
+    type: country
+    coverage:
+    - BY
+    partner_class: COUNTRY
+    amdocs_code: "Belarus"
+    translations:
+      en: Belarus
+      hr: Bjelorusija
+      de: Belarus
+      fr: Biélorussie
+      ja: ベラルーシ
+      it: Bielorussia
+      es: Bielorrusia
+      pt: Bielorrússia
+      pl: "Białoruś"
+      cs: "Bělorusko"
+      hu: "Belarusz"
+      gr: "Λευκορωσία"
+      sk: "Bielorusko"
+  BZ:
+    type: country
+    coverage:
+    - BZ
+    partner_class: COUNTRY
+    amdocs_code: "Belize"
+    translations:
+      en: "Belize"
+      hr: "Belize"
+      de: "Belize"
+      fr: "Belize"
+      ja: "ベリーズ"
+      it: "Belize"
+      es: "Belice"
+      pt: "Belize"
+      pl: "Belize"
+      cs: "Belize"
+      hu: "Belize"
+      gr: "Μπελίζ"
+      sk: "Belize"
+  CA:
+    type: country
+    coverage:
+    - CA
+    partner_class: COUNTRY
+    amdocs_code: "Canada"
+    translations:
+      en: Canada
+      hr: Kanada
+      de: Kanada
+      fr: Canada
+      ja: カナダ
+      it: Canada
+      es: Canadá
+      pt: Canadá
+      pl: "Kanada"
+      cs: "Kanada"
+      hu: "Kanada"
+      gr: "Καναδάς"
+      sk: "Kanada"
+  CD:
+    type: country
+    coverage:
+    - CD
+    partner_class: COUNTRY
+    amdocs_code: "Democratic Republic of the Congo"
+    translations:
+      en: Democratic Republic of the Congo
+      hr: Kongo - Kinshasa
+      de: Kongo
+      fr: République démocratique du Congo
+      ja: コンゴ民主共和国
+      it: Repubblica Democratica del Congo
+      es: Congo (República Democrática del)
+      pt: República Democrática do Congo
+      pl: "Demokratyczna Republika Konga"
+      cs: "Kongo – Kinshasa"
+      hu: "Kongó – Kinshasa"
+      gr: "Κονγκό - Κινσάσα"
+      sk: "Konžská demokratická republika"
+  CH:
+    type: country
+    coverage:
+    - FR
+    - CH
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Switzerland"
+    translations:
+      en: Switzerland
+      hr: Švicarska
+      de: Schweiz
+      fr: Suisse
+      ja: スイス
+      it: Svizzera
+      es: Suiza
+      pt: Suíça
+      pl: "Szwajcaria"
+      cs: "Švýcarsko"
+      hu: "Svájc"
+      gr: "Ελβετία"
+      sk: "Švajčiarsko"
+  CI:
+    type: country
+    coverage:
+    - CI
+    partner_class: COUNTRY
+    amdocs_code: "Cote d'Ivoire"
+    translations:
+      en: "Côte d'Ivoire"
+      hr: "Obala Bjelokosti"
+      de: "Elfenbeinküste"
+      fr: "Côte d’Ivoire"
+      ja: "コートジボワール"
+      it: "Costa d'Avorio"
+      es: "Costa de Marfil"
+      pt: "Costa do Marfim"
+      pl: "Wybrzeże Kości Słoniowej"
+      cs: "Pobřeží slonoviny"
+      hu: "Elefántcsontpart"
+      gr: "Ακτή Ελεφαντοστού"
+      sk: "Pobrežie Slonoviny"
+  CK:
+    type: country
+    coverage:
+    - CK
+    partner_class: COUNTRY
+    amdocs_code: "Cook Islands"
+    translations:
+      en: "Cook Islands"
+      hr: "Cookovi Otoci"
+      de: "Cookinseln"
+      fr: "Îles Cook"
+      ja: "クック諸島"
+      it: "Isole Cook"
+      es: "Islas Cook"
+      pt: "Ilhas Cook"
+      pl: "Wyspy Cooka"
+      cs: "Cookovy ostrovy"
+      hu: "Cook-szigetek"
+      gr: "Νήσοι Κουκ"
+      sk: "Cookove ostrovy"
+  CL:
+    type: country
+    coverage:
+    - CL
+    partner_class: COUNTRY
+    amdocs_code: "Chile"
+    translations:
+      en: Chile
+      hr: Čile
+      de: Chile
+      fr: Chili
+      ja: チリ
+      it: Cile
+      es: Chile
+      pt: Chile
+      pl: "Chile"
+      cs: "Chile"
+      hu: "Chile"
+      gr: "Χιλή"
+      sk: "Čile"
+  CM:
+    type: country
+    coverage:
+    - CM
+    partner_class: COUNTRY
+    amdocs_code: "Cameroon"
+    translations:
+      en: "Cameroon"
+      hr: "Kamerun"
+      de: "Kamerun"
+      fr: "Cameroun"
+      ja: "カメルーン"
+      it: "Camerun"
+      es: "Camerún"
+      pt: "Camarões"
+      pl: "Kamerun"
+      cs: "Kamerun"
+      hu: "Kamerun"
+      gr: "Καμερούν"
+      sk: "Kamerun"
+  CN:
+    type: country
+    coverage:
+    - CN
+    partner_class: COUNTRY
+    amdocs_code: "People's Republic of China"
+    translations:
+      en: People's Republic of China
+      hr: Kina
+      de: China
+      fr: Chine
+      ja: 中華人民共和国
+      it: Cina
+      es: China
+      pt: China
+      pl: "Chiny"
+      cs: "Čína"
+      hu: "Kína"
+      gr: "Κίνα"
+      sk: "Čína"
+  CO:
+    type: country
+    coverage:
+    - CO
+    partner_class: COUNTRY
+    amdocs_code: "Colombia"
+    translations:
+      en: Colombia
+      hr: Kolumbija
+      de: Kolumbien
+      fr: Colombie
+      ja: コロンビア
+      it: Colombia
+      es: Colombia
+      pt: Colômbia
+      pl: "Kolumbia"
+      cs: "Kolumbie"
+      hu: "Kolumbia"
+      gr: "Κολομβία"
+      sk: "Kolumbia"
+  CR:
+    type: country
+    coverage:
+    - CR
+    partner_class: COUNTRY
+    amdocs_code: "Costa Rica"
+    translations:
+      en: Costa Rica
+      hr: Kostarika
+      de: Costa Rica
+      fr: Costa Rica
+      ja: コスタリカ
+      it: Costa Rica
+      es: Costa Rica
+      pt: Costa Rica
+      pl: "Kostaryka"
+      cs: "Kostarika"
+      hu: "Costa Rica"
+      gr: "Κόστα Ρίκα"
+      sk: "Kostarika"
+  CU:
+    type: country
+    coverage:
+    - CU
+    partner_class: COUNTRY
+    amdocs_code: "Cuba"
+    translations:
+      en: Cuba
+      hr: Kuba
+      de: Kuba
+      fr: Cuba
+      ja: キューバ
+      it: Cuba
+      es: Cuba
+      pt: Cuba
+      pl: "Kuba"
+      cs: "Kuba"
+      hu: "Kuba"
+      gr: "Κούβα"
+      sk: "Kuba"
+  CV:
+    type: country
+    coverage:
+    - CV
+    partner_class: COUNTRY
+    amdocs_code: "Cape Verde"
+    translations:
+      en: Cape Verde
+      hr: Zelenortska Republika
+      de: Kap Verde
+      fr: Cap-Vert
+      ja: カーボベルデ
+      it: Capo Verde
+      es: Cabo Verde
+      pt: Cabo Verde
+      pl: "Republika Zielonego Przylądka"
+      cs: "Kapverdy"
+      hu: "Zöld-foki Köztársaság"
+      gr: "Πράσινο Ακρωτήριο"
+      sk: "Kapverdy"
+  CY:
+    type: country
+    coverage:
+    - GR
+    - CY
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Cyprus"
+    translations:
+      en: Cyprus
+      hr: Cipar
+      de: Zypern
+      fr: Chypre
+      ja: キプロス
+      it: Cipro
+      es: Chipre
+      pt: Chipre
+      pl: "Cypr"
+      cs: "Kypr"
+      hu: "Ciprus"
+      gr: "Κύπρος"
+      sk: "Cyprus"
+  CZ:
+    type: country
+    coverage:
+    - PL
+    - CZ
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Czech Republic"
+    translations:
+      en: Czech Republic
+      hr: Češka
+      de: Tschechische Republik
+      fr: République Tchèque
+      ja: チェコ
+      it: Repubblica Ceca
+      es: República Checa
+      pt: República Checa
+      pl: "Czechy"
+      cs: "Česko"
+      hu: "Csehország"
+      gr: "Τσεχία"
+      sk: "Česko"
+  DE:
+    type: country
+    coverage:
+    - DE
+    - LI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Germany"
+    translations:
+      en: Germany
+      hr: Njemačka
+      de: Deutschland
+      fr: Allemagne
+      ja: ドイツ
+      it: Germania
+      es: Alemania
+      pt: Alemanha
+      pl: "Niemcy"
+      cs: "Německo"
+      hu: "Németország"
+      gr: "Γερμανία"
+      sk: "Nemecko"
+  DK:
+    type: country
+    coverage:
+    - DK
+    - 'NO'
+    - SE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Denmark"
+    translations:
+      en: Denmark
+      hr: Danska
+      de: Dänemark
+      fr: Danemark
+      ja: デンマーク
+      it: Danimarca
+      es: Dinamarca
+      pt: Dinamarca
+      pl: "Dania"
+      cs: "Dánsko"
+      hu: "Dánia"
+      gr: "Δανία"
+      sk: "Dánsko"
+  DM:
+    type: country
+    coverage:
+    - DM
+    partner_class: COUNTRY
+    amdocs_code: "Dominica"
+    translations:
+      en: "Dominica"
+      hr: "Dominika"
+      de: "Dominica"
+      fr: "Dominique"
+      ja: "ドミニカ国"
+      it: "Dominica"
+      es: "Dominica"
+      pt: "Dominica"
+      pl: "Dominika"
+      cs: "Dominika"
+      hu: "Dominika"
+      gr: "Ντομίνικα"
+      sk: "Dominika"
+  DO:
+    type: country
+    coverage:
+    - DO
+    partner_class: COUNTRY
+    amdocs_code: "Dominican Republic"
+    translations:
+      en: "Dominican Republic"
+      hr: "Dominikanska Republika"
+      de: "Dominikanische Republik"
+      fr: "République dominicaine"
+      ja: "ドミニカ共和国"
+      it: "Repubblica Dominicana"
+      es: "República Dominicana"
+      pt: "República Dominicana"
+      pl: "Dominikana"
+      cs: "Dominikánská republika"
+      hu: "Dominikai Köztársaság"
+      gr: "Δομινικανή Δημοκρατία"
+      sk: "Dominikánska republika"
+  DZ:
+    type: country
+    coverage:
+    - DZ
+    partner_class: COUNTRY
+    amdocs_code: "Algeria"
+    translations:
+      en: Algeria
+      hr: Alžir
+      de: Algerien
+      fr: Algérie
+      ja: アルジェリア
+      it: Algeria
+      es: Argelia
+      pt: Argélia
+      pl: "Algieria"
+      cs: "Alžírsko"
+      hu: "Algéria"
+      gr: "Αλγερία"
+      sk: "Alžírsko"
+  EC:
+    type: country
+    coverage:
+    - EC
+    partner_class: COUNTRY
+    amdocs_code: "Ecuador"
+    translations:
+      en: Ecuador
+      hr: Ekvador
+      de: Ecuador
+      fr: Équateur
+      ja: エクアドル
+      it: Ecuador
+      es: Ecuador
+      pt: Equador
+      pl: "Ekwador"
+      cs: "Ekvádor"
+      hu: "Ecuador"
+      gr: "Ισημερινός"
+      sk: "Ekvádor"
+  EE:
+    type: country
+    coverage:
+    - FI
+    - EE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Estonia"
+    translations:
+      en: Estonia
+      hr: Estonija
+      de: Estland
+      fr: Estonie
+      ja: エストニア
+      it: Estonia
+      es: Estonia
+      pt: Estónia
+      pl: "Estonia"
+      cs: "Estonsko"
+      hu: "Észtország"
+      gr: "Εσθονία"
+      sk: "Estónsko"
+  EG:
+    type: country
+    coverage:
+    - EG
+    partner_class: COUNTRY
+    amdocs_code: "Egypt"
+    translations:
+      en: Egypt
+      hr: Egipat
+      de: Ägypten
+      fr: Égypte
+      ja: エジプト
+      it: Egitto
+      es: Egipto
+      pt: Egito
+      pl: "Egipt"
+      cs: "Egypt"
+      hu: "Egyiptom"
+      gr: "Αίγυπτος"
+      sk: "Egypt"
+  ES:
+    type: country
+    coverage:
+    - ES
+    - PT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Spain"
+    translations:
+      en: Spain
+      hr: Španjolska
+      de: Spanien
+      fr: Espagne
+      ja: スペイン
+      it: Spagna
+      es: España
+      pt: Espanha
+      pl: "Hiszpania"
+      cs: "Španělsko"
+      hu: "Spanyolország"
+      gr: "Ισπανία"
+      sk: "Španielsko"
+  ET:
+    type: country
+    coverage:
+    - ET
+    partner_class: COUNTRY
+    amdocs_code: "Ethiopia"
+    translations:
+      en: Ethiopia
+      hr: Etiopija
+      de: Äthiopien
+      fr: Éthiopie
+      ja: エチオピア
+      it: Etiopia
+      es: Etiopía
+      pt: Etiópia
+      pl: "Etiopia"
+      cs: "Etiopie"
+      hu: "Etiópia"
+      gr: "Αιθιοπία"
+      sk: "Etiópia"
+  FI:
+    type: country
+    coverage:
+    - FI
+    - EE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Finland"
+    translations:
+      en: Finland
+      hr: Finska
+      de: Finnland
+      fr: Finlande
+      ja: フィンランド
+      it: Finlandia
+      es: Finlandia
+      pt: Finlândia
+      pl: "Finlandia"
+      cs: "Finsko"
+      hu: "Finnország"
+      gr: "Φινλανδία"
+      sk: "Fínsko"
+  FJ:
+    type: country
+    coverage:
+    - FJ
+    partner_class: COUNTRY
+    amdocs_code: "Fiji"
+    translations:
+      en: Fiji
+      hr: Fidži
+      de: Fidschi
+      fr: Fidji
+      ja: フィジー
+      it: Figi
+      es: Fiji
+      pt: Fiji
+      pl: "Fidżi"
+      cs: "Fidži"
+      hu: "Fidzsi"
+      gr: "Φίτζι"
+      sk: "Fidži"
+  FO:
+    type: country
+    coverage:
+    - FO
+    partner_class: COUNTRY
+    amdocs_code: "Faroe Islands"
+    translations:
+      en: Faroe Islands
+      hr: Farski otoci
+      de: Färöer
+      fr: Îles Féroé
+      ja: フェロー諸島
+      it: Isole Fær Øer
+      es: Islas Feroe
+      pt: Ilhas Faroé
+      pl: "Wyspy Owcze"
+      cs: "Faerské ostrovy"
+      hu: "Feröer szigetek"
+      gr: "Νήσοι Φερόες"
+      sk: "Faerské ostrovy"
+  FR:
+    type: country
+    coverage:
+    - FR
+    - CH
+    partner_class: MEDIUM_REGION
+    amdocs_code: "France"
+    translations:
+      en: France
+      hr: Francuska
+      de: Frankreich
+      fr: France
+      ja: フランス
+      it: Francia
+      es: Francia
+      pt: França
+      pl: "Francja"
+      cs: "Francie"
+      hu: "Franciaország"
+      gr: "Γαλλία"
+      sk: "Francúzsko"
+  GA:
+    type: country
+    coverage:
+    - GA
+    partner_class: COUNTRY
+    amdocs_code: "Gabon"
+    translations:
+      en: "Gabon"
+      hr: "Gabon"
+      de: "Gabun"
+      fr: "Gabon"
+      ja: "ガボン"
+      it: "Gabon"
+      es: "Gabón"
+      pt: "Gabão"
+      pl: "Gabon"
+      cs: "Gabon"
+      hu: "Gabon"
+      gr: "Γκαμπόν"
+      sk: "Gabon"
+  GB:
+    type: country
+    coverage:
+    - GB
+    - IE
+    - IS
+    partner_class: MEDIUM_REGION
+    amdocs_code: "United Kingdom"
+    translations:
+      en: United Kingdom
+      hr: Ujedinjeno Kraljevstvo
+      de: Vereinigtes Königreich
+      fr: Royaume-Uni
+      ja: イギリス
+      it: Regno Unito
+      es: Reino Unido
+      pt: Reino Unido
+      pl: "Wielka Brytania"
+      cs: "Spojené království"
+      hu: "Egyesült Királyság"
+      gr: "Ηνωμένο Βασίλειο"
+      sk: "Spojené kráľovstvo"
+  GD:
+    type: country
+    coverage:
+    - GD
+    partner_class: COUNTRY
+    amdocs_code: "Grenada"
+    translations:
+      en: "Grenada"
+      hr: "Grenada"
+      de: "Grenada"
+      fr: "Grenade"
+      ja: "グレナダ"
+      it: "Grenada"
+      es: "Granada"
+      pt: "Granada"
+      pl: "Grenada"
+      cs: "Grenada"
+      hu: "Grenada"
+      gr: "Γρενάδα"
+      sk: "Grenada"
+  GE:
+    type: country
+    coverage:
+    - GE
+    partner_class: COUNTRY
+    amdocs_code: "Georgia"
+    translations:
+      en: Georgia
+      hr: Gruzija
+      de: Georgien
+      fr: Géorgie
+      ja: ジョージア
+      it: Georgia
+      es: Georgia
+      pt: Geórgia
+      pl: "Gruzja"
+      cs: "Gruzie"
+      hu: "Grúzia"
+      gr: "Γεωργία"
+      sk: "Gruzínsko"
+  GG:
+    type: country
+    coverage:
+    - GG
+    partner_class: COUNTRY
+    amdocs_code: "Guernsey"
+    translations:
+      en: Guernsey
+      hr: Guernsey
+      de: Guernsey
+      fr: Guernesey
+      ja: ガーンジー
+      it: Guernsey
+      es: Guernsey
+      pt: Guernsey
+      pl: "Guernsey"
+      cs: "Guernsey"
+      hu: "Guernsey"
+      gr: "Γκέρνζι"
+      sk: "Guernsey"
+  GH:
+    type: country
+    coverage:
+    - GH
+    partner_class: COUNTRY
+    amdocs_code: "Ghana"
+    translations:
+      en: Ghana
+      hr: Gana
+      de: Ghana
+      fr: Ghana
+      ja: ガーナ
+      it: Ghana
+      es: Ghana
+      pt: Gana
+      pl: "Ghana"
+      cs: "Ghana"
+      hu: "Ghána"
+      gr: "Γκάνα"
+      sk: "Ghana"
+  GI:
+    type: country
+    coverage:
+    - GI
+    partner_class: COUNTRY
+    amdocs_code: "Gibraltar"
+    translations:
+      en: "Gibraltar"
+      hr: "Gibraltar"
+      de: "Gibraltar"
+      fr: "Gibraltar"
+      ja: "ジブラルタル"
+      it: "Gibilterra"
+      es: "Gibraltar"
+      pt: "Gibraltar"
+      pl: "Gibraltar"
+      cs: "Gibraltar"
+      hu: "Gibraltár"
+      gr: "Γιβραλτάρ"
+      sk: "Gibraltár"
+  GL:
+    type: country
+    coverage:
+    - GL
+    partner_class: COUNTRY
+    amdocs_code: "Greenland"
+    translations:
+      en: Greenland
+      hr: Grenland
+      de: Grönland
+      fr: Groenland
+      ja: グリーンランド
+      it: Groenlandia
+      es: Groenlandia
+      pt: Gronelândia
+      pl: "Grenlandia"
+      cs: "Grónsko"
+      hu: "Grönland"
+      gr: "Γροιλανδία"
+      sk: "Grónsko"
+  GM:
+    type: country
+    coverage:
+    - GM
+    partner_class: COUNTRY
+    amdocs_code: "Republic of The Gambia"
+    translations:
+      en: Republic of The Gambia
+      hr: Gambija
+      de: Gambia
+      fr: Gambie
+      ja: ガンビア
+      it: Gambia
+      es: Gambia
+      pt: Gâmbia
+      pl: "Gambia"
+      cs: "Gambie"
+      hu: "Gambia"
+      gr: "Γκάμπια"
+      sk: "Gambia"
+  GN:
+    type: country
+    coverage:
+    - GN
+    partner_class: COUNTRY
+    amdocs_code: "Guinea"
+    translations:
+      en: "Guinea"
+      hr: "Gvineja"
+      de: "Guinea"
+      fr: "Guinée"
+      ja: "ギニア"
+      it: "Guinea"
+      es: "Guinea"
+      pt: "Guiné"
+      pl: "Gwinea"
+      cs: "Guinea"
+      hu: "Guinea"
+      gr: "Γουινέα"
+      sk: "Guinea"
+  GP:
+    type: country
+    coverage:
+    - GP
+    partner_class: COUNTRY
+    amdocs_code: "Guadeloupe"
+    translations:
+      en: Guadeloupe
+      hr: Guadalupe
+      de: Guadeloupe
+      fr: Guadeloupe
+      ja: グアドループ
+      it: Guadalupa
+      es: Guadalupe
+      pt: Guadalupe
+      pl: "Gwadelupa"
+      cs: "Guadeloupe"
+      hu: "Guadeloupe"
+      gr: "Γουαδελούπη"
+      sk: "Guadeloupe"
+  GR:
+    type: country
+    coverage:
+    - GR
+    - CY
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Greece"
+    translations:
+      en: Greece
+      hr: Grčka
+      de: Griechenland
+      fr: Grèce
+      ja: ギリシャ
+      it: Grecia
+      es: Grecia
+      pt: Grécia
+      pl: "Grecja"
+      cs: "Řecko"
+      hu: "Görögország"
+      gr: "Ελλάδα"
+      sk: "Grécko"
+  GT:
+    type: country
+    coverage:
+    - GT
+    partner_class: COUNTRY
+    amdocs_code: "Guatemala"
+    translations:
+      en: Guatemala
+      hr: Gvatemala
+      de: Guatemala
+      fr: Guatemala
+      ja: グアテマラ
+      it: Guatemala
+      es: Guatemala
+      pt: Guatemala
+      pl: "Gwatemala"
+      cs: "Guatemala"
+      hu: "Guatemala"
+      gr: "Γουατεμάλα"
+      sk: "Guatemala"
+  GY:
+    type: country
+    coverage:
+    - GY
+    partner_class: COUNTRY
+    amdocs_code: "Guyana"
+    translations:
+      en: "Guyana"
+      hr: "Gvajana"
+      de: "Guyana"
+      fr: "Guyana"
+      ja: "ガイアナ"
+      it: "Guyana"
+      es: "Guyana"
+      pt: "Guiana"
+      pl: "Gujana"
+      cs: "Guyana"
+      hu: "Guyana"
+      gr: "Γουιάνα"
+      sk: "Guyana"
+  HK:
+    type: country
+    coverage:
+    - HK
+    partner_class: COUNTRY
+    amdocs_code: "Hong Kong"
+    translations:
+      en: Hong Kong
+      hr: PUP Hong Kong Kina
+      de: Hongkong
+      fr: Hong Kong
+      ja: 香港
+      it: Hong Kong
+      es: Hong Kong
+      pt: Hong Kong
+      pl: "SRA Hongkong (Chiny)"
+      cs: "Hongkong – ZAO Číny"
+      hu: "Hongkong KKT"
+      gr: "Χονγκ Κονγκ ΕΔΠ Κίνας"
+      sk: "Hongkong – OAO Číny"
+  HR:
+    type: country
+    coverage:
+    - AT
+    - HR
+    - SI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Croatia"
+    translations:
+      en: Croatia
+      hr: Hrvatska
+      de: Kroatien
+      fr: Croatie
+      ja: クロアチア
+      it: Croazia
+      es: Croacia
+      pt: Croácia
+      pl: "Chorwacja"
+      cs: "Chorvatsko"
+      hu: "Horvátország"
+      gr: "Κροατία"
+      sk: "Chorvátsko"
+  HT:
+    type: country
+    coverage:
+    - HT
+    partner_class: COUNTRY
+    amdocs_code: "Haiti"
+    translations:
+      en: "Haiti"
+      hr: "Haiti"
+      de: "Haiti"
+      fr: "Haïti"
+      ja: "ハイチ"
+      it: "Haiti"
+      es: "Haití"
+      pt: "Haiti"
+      pl: "Haiti"
+      cs: "Haiti"
+      hu: "Haiti"
+      gr: "Αϊτή"
+      sk: "Haiti"
+  HU:
+    type: country
+    coverage:
+    - SK
+    - HU
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Hungary"
+    translations:
+      en: Hungary
+      hr: Mađarska
+      de: Ungarn
+      fr: Hongrie
+      ja: ハンガリー
+      it: Ungheria
+      es: Hungría
+      pt: Hungria
+      pl: "Węgry"
+      cs: "Maďarsko"
+      hu: "Magyarország"
+      gr: "Ουγγαρία"
+      sk: "Maďarsko"
+  ID:
+    type: country
+    coverage:
+    - ID
+    partner_class: COUNTRY
+    amdocs_code: "Indonesia"
+    translations:
+      en: Indonesia
+      hr: Indonezija
+      de: Indonesien
+      fr: Indonésie
+      ja: インドネシア
+      it: Indonesia
+      es: Indonesia
+      pt: Indonésia
+      pl: "Indonezja"
+      cs: "Indonésie"
+      hu: "Indonézia"
+      gr: "Ινδονησία"
+      sk: "Indonézia"
+  IE:
+    type: country
+    coverage:
+    - GB
+    - IE
+    - IS
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Ireland"
+    translations:
+      en: Ireland
+      hr: Irska
+      de: Irland
+      fr: Irlande
+      ja: アイルランド
+      it: Irlanda
+      es: Irlanda
+      pt: Irlanda
+      pl: "Irlandia"
+      cs: "Irsko"
+      hu: "Írország"
+      gr: "Ιρλανδία"
+      sk: "Írsko"
+  IL:
+    type: country
+    coverage:
+    - IL
+    partner_class: COUNTRY
+    amdocs_code: "Israel"
+    translations:
+      en: Israel
+      hr: Izrael
+      de: Israel
+      fr: Israël
+      ja: イスラエル
+      it: Israele
+      es: Israel
+      pt: Israel
+      pl: "Izrael"
+      cs: "Izrael"
+      hu: "Izrael"
+      gr: "Ισραήλ"
+      sk: "Izrael"
+  IN:
+    type: country
+    coverage:
+    - IN
+    partner_class: COUNTRY
+    amdocs_code: "India"
+    translations:
+      en: India
+      hr: Indija
+      de: Indien
+      fr: Inde
+      ja: インド
+      it: India
+      es: India
+      pt: Índia
+      pl: "Indie"
+      cs: "Indie"
+      hu: "India"
+      gr: "Ινδία"
+      sk: "India"
+  IQ:
+    type: country
+    coverage:
+    - IQ
+    partner_class: COUNTRY
+    amdocs_code: "Iraq"
+    translations:
+      en: Iraq
+      hr: Irak
+      de: Irak
+      fr: Irak
+      ja: イラク
+      it: Iraq
+      es: Iraq
+      pt: Iraque
+      pl: "Irak"
+      cs: "Irák"
+      hu: "Irak"
+      gr: "Ιράκ"
+      sk: "Irak"
+  IR:
+    type: country
+    coverage:
+    - IR
+    partner_class: COUNTRY
+    amdocs_code: "Islamic Republic of Iran"
+    translations:
+      en: Islamic Republic of Iran
+      hr: Iran
+      de: Iran
+      fr: Iran
+      ja: イラン・イスラム共和国
+      it: Iran
+      es: Irán
+      pt: Irão
+      pl: "Iran"
+      cs: "Írán"
+      hu: "Irán"
+      gr: "Ιράν"
+      sk: "Irán"
+  IS:
+    type: country
+    coverage:
+    - GB
+    - IE
+    - IS
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Iceland"
+    translations:
+      en: Iceland
+      hr: Island
+      de: Island
+      fr: Islande
+      ja: アイスランド
+      it: Islanda
+      es: Islandia
+      pt: Islândia
+      pl: "Islandia"
+      cs: "Island"
+      hu: "Izland"
+      gr: "Ισλανδία"
+      sk: "Island"
+  IT:
+    type: country
+    coverage:
+    - IT
+    - MT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Italy"
+    translations:
+      en: Italy
+      hr: Italija
+      de: Italien
+      fr: Italie
+      ja: イタリア
+      it: Italia
+      es: Italia
+      pt: Itália
+      pl: "Włochy"
+      cs: "Itálie"
+      hu: "Olaszország"
+      gr: "Ιταλία"
+      sk: "Taliansko"
+  JE:
+    type: country
+    coverage:
+    - JE
+    partner_class: COUNTRY
+    amdocs_code: "Jersey"
+    translations:
+      en: Jersey
+      hr: Jersey
+      de: Jersey
+      fr: Jersey
+      ja: ジャージー
+      it: Jersey
+      es: Jersey
+      pt: Jersey
+      pl: "Jersey"
+      cs: "Jersey"
+      hu: "Jersey"
+      gr: "Τζέρζι"
+      sk: "Jersey"
+  JM:
+    type: country
+    coverage:
+    - JM
+    partner_class: COUNTRY
+    amdocs_code: "Jamaica"
+    translations:
+      en: Jamaica
+      hr: Jamajka
+      de: Jamaika
+      fr: Jamaïque
+      ja: ジャマイカ
+      it: Giamaica
+      es: Jamaica
+      pt: Jamaica
+      pl: "Jamajka"
+      cs: "Jamajka"
+      hu: "Jamaica"
+      gr: "Τζαμάικα"
+      sk: "Jamajka"
+  JO:
+    type: country
+    coverage:
+    - JO
+    partner_class: COUNTRY
+    amdocs_code: "Jordan"
+    translations:
+      en: Jordan
+      hr: Jordan
+      de: Jordanien
+      fr: Jordanie
+      ja: ヨルダン
+      it: Giordania
+      es: Jordania
+      pt: Jordânia
+      pl: "Jordania"
+      cs: "Jordánsko"
+      hu: "Jordánia"
+      gr: "Ιορδανία"
+      sk: "Jordánsko"
+  JP:
+    type: country
+    coverage:
+    - JP
+    partner_class: COUNTRY
+    amdocs_code: "Japan"
+    translations:
+      en: Japan
+      hr: Japan
+      de: Japan
+      fr: Japon
+      ja: 日本
+      it: Giappone
+      es: Japón
+      pt: Japão
+      pl: "Japonia"
+      cs: "Japonsko"
+      hu: "Japán"
+      gr: "Ιαπωνία"
+      sk: "Japonsko"
+  KE:
+    type: country
+    coverage:
+    - KE
+    partner_class: COUNTRY
+    amdocs_code: "Kenya"
+    translations:
+      en: Kenya
+      hr: Kenija
+      de: Kenia
+      fr: Kenya
+      ja: ケニア
+      it: Kenya
+      es: Kenia
+      pt: Quénia
+      pl: "Kenia"
+      cs: "Keňa"
+      hu: "Kenya"
+      gr: "Κένυα"
+      sk: "Keňa"
+  KG:
+    type: country
+    coverage:
+    - KG
+    partner_class: COUNTRY
+    amdocs_code: "Kyrgyzstan"
+    translations:
+      en: Kyrgyzstan
+      hr: Kirgistan
+      de: Kirgisistan
+      fr: Kirghizistan
+      ja: キルギス
+      it: Kirghizistan
+      es: Kirguistán
+      pt: Quirguistão
+      pl: "Kirgistan"
+      cs: "Kyrgyzstán"
+      hu: "Kirgizisztán"
+      gr: "Κιργιστάν"
+      sk: "Kirgizsko"
+  KH:
+    type: country
+    coverage:
+    - KH
+    partner_class: COUNTRY
+    amdocs_code: "Cambodia"
+    translations:
+      en: Cambodia
+      hr: Kambodža
+      de: Kambodscha
+      fr: Cambodge
+      ja: カンボジア
+      it: Cambogia
+      es: Camboya
+      pt: Camboja
+      pl: "Kambodża"
+      cs: "Kambodža"
+      hu: "Kambodzsa"
+      gr: "Καμπότζη"
+      sk: "Kambodža"
+  KN:
+    type: country
+    coverage:
+    - KN
+    partner_class: COUNTRY
+    amdocs_code: "Saint Kitts and Nevis"
+    translations:
+      en: Saint Kitts and Nevis
+      hr: Sveti Kristofor i Nevis
+      de: St. Kitts und Nevis
+      fr: Saint-Christophe-et-Niévès
+      ja: セントクリストファー・ネイビス
+      it: Saint Kitts e Nevis
+      es: Saint Kitts y Nevis
+      pt: São Cristóvão e Neves
+      pl: "Saint Kitts i Nevis"
+      cs: "Svatý Kryštof a Nevis"
+      hu: "Saint Kitts és Nevis"
+      gr: "Σεν Κιτς και Νέβις"
+      sk: "Svätý Krištof a Nevis"
+  KR:
+    type: country
+    coverage:
+    - KR
+    partner_class: COUNTRY
+    amdocs_code: "South Korea"
+    translations:
+      en: South Korea
+      hr: Južna Koreja
+      de: Südkorea
+      fr: Corée du Sud
+      ja: 大韓民国
+      it: Corea del Sud
+      es: República de Corea
+      pt: Coreia do Sul
+      pl: "Korea Południowa"
+      cs: "Jižní Korea"
+      hu: "Dél-Korea"
+      gr: "Νότια Κορέα"
+      sk: "Južná Kórea"
+  KW:
+    type: country
+    coverage:
+    - KW
+    partner_class: COUNTRY
+    amdocs_code: "Kuwait"
+    translations:
+      en: Kuwait
+      hr: Kuvajt
+      de: Kuwait
+      fr: Koweït
+      ja: クウェート
+      it: Kuwait
+      es: Kuwait
+      pt: Kuwait
+      pl: "Kuwejt"
+      cs: "Kuvajt"
+      hu: "Kuvait"
+      gr: "Κουβέιτ"
+      sk: "Kuvajt"
+  KY:
+    type: country
+    coverage:
+    - KY
+    partner_class: COUNTRY
+    amdocs_code: "Cayman Islands"
+    translations:
+      en: Cayman Islands
+      hr: Kajmanski otoci
+      de: Kaimaninseln
+      fr: Îles Caïmans
+      ja: ケイマン諸島
+      it: Isole Cayman
+      es: Islas Caimán
+      pt: Ilhas Caimão
+      pl: "Kajmany"
+      cs: "Kajmanské ostrovy"
+      hu: "Kajmán-szigetek"
+      gr: "Νήσοι Κέιμαν"
+      sk: "Kajmanie ostrovy"
+  KZ:
+    type: country
+    coverage:
+    - KZ
+    partner_class: COUNTRY
+    amdocs_code: "Kazakhstan"
+    translations:
+      en: Kazakhstan
+      hr: Kazahstan
+      de: Kasachstan
+      fr: Kazakhstan
+      ja: カザフスタン
+      it: Kazakistan
+      es: Kazajistán
+      pt: Cazaquistão
+      pl: "Kazachstan"
+      cs: "Kazachstán"
+      hu: "Kazahsztán"
+      gr: "Καζακστάν"
+      sk: "Kazachstan"
+  LA:
+    type: country
+    coverage:
+    - LA
+    partner_class: COUNTRY
+    amdocs_code: "Lao People's Democratic Republic"
+    translations:
+      en: Lao People's Democratic Republic
+      hr: Laos
+      de: Laos
+      fr: Laos
+      ja: ラオス人民民主共和国
+      it: Laos
+      es: República Democrática Popular de Lao
+      pt: Laos
+      pl: "Laos"
+      cs: "Laos"
+      hu: "Laosz"
+      gr: "Λάος"
+      sk: "Laos"
+  LB:
+    type: country
+    coverage:
+    - LB
+    partner_class: COUNTRY
+    amdocs_code: "Lebanon"
+    translations:
+      en: Lebanon
+      pl: "Liban"
+      cs: "Libanon"
+      hu: "Libanon"
+      gr: "Λίβανος"
+      sk: "Libanon"
+  LC:
+    type: country
+    coverage:
+    - LC
+    partner_class: COUNTRY
+    amdocs_code: "Saint Lucia"
+    translations:
+      en: Saint Lucia
+      hr: Sveta Lucija
+      de: St. Lucia
+      fr: Sainte-Lucie
+      ja: セントルシア
+      it: Santa Lucia
+      es: Santa Lucía
+      pt: Santa Lúcia
+      pl: "Saint Lucia"
+      cs: "Svatá Lucie"
+      hu: "Saint Lucia"
+      gr: "Αγία Λουκία"
+      sk: "Svätá Lucia"
+  LI:
+    type: country
+    coverage:
+    - DE
+    - LI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Liechtenstein"
+    translations:
+      en: Liechtenstein
+      hr: Lihtenštajn
+      de: Liechtenstein
+      fr: Liechtenstein
+      ja: リヒテンシュタイン
+      it: Liechtenstein
+      es: Liechtenstein
+      pt: Liechtenstein
+      pl: "Liechtenstein"
+      cs: "Lichtenštejnsko"
+      hu: "Liechtenstein"
+      gr: "Λιχτενστάιν"
+      sk: "Lichtenštajnsko"
+  LK:
+    type: country
+    coverage:
+    - LK
+    partner_class: COUNTRY
+    amdocs_code: "Sri Lanka"
+    translations:
+      en: Sri Lanka
+      hr: Šri Lanka
+      de: Sri Lanka
+      fr: Sri Lanka
+      ja: スリランカ
+      it: Sri Lanka
+      es: Sri Lanka
+      pt: Sri Lanca
+      pl: "Sri Lanka"
+      cs: "Srí Lanka"
+      hu: "Srí Lanka"
+      gr: "Σρι Λάνκα"
+      sk: "Srí Lanka"
+  LR:
+    type: country
+    coverage:
+    - LR
+    partner_class: COUNTRY
+    amdocs_code: "Liberia"
+    translations:
+      en: Liberia
+      hr: Liberija
+      de: Liberia
+      fr: Libéria
+      ja: リベリア
+      it: Liberia
+      es: Liberia
+      pt: Libéria
+      pl: "Liberia"
+      cs: "Libérie"
+      hu: "Libéria"
+      gr: "Λιβερία"
+      sk: "Libéria"
+  LS:
+    type: country
+    coverage:
+    - LS
+    partner_class: COUNTRY
+    amdocs_code: "Lesotho"
+    translations:
+      en: Lesotho
+      pl: "Lesotho"
+      cs: "Lesotho"
+      hu: "Lesotho"
+      gr: "Λεσότο"
+      sk: "Lesotho"
+  LT:
+    type: country
+    coverage:
+    - LV
+    - LT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Lithuania"
+    translations:
+      en: Lithuania
+      hr: Litva
+      de: Litauen
+      fr: Lituanie
+      ja: リトアニア
+      it: Lituania
+      es: Lituania
+      pt: Lituânia
+      pl: "Litwa"
+      cs: "Litva"
+      hu: "Litvánia"
+      gr: "Λιθουανία"
+      sk: "Litva"
+  LU:
+    type: country
+    coverage:
+    - BE
+    - NL
+    - LU
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Luxembourg"
+    translations:
+      en: Luxembourg
+      hr: Luksemburg
+      de: Luxemburg
+      fr: Luxembourg
+      ja: ルクセンブルク
+      it: Lussemburgo
+      es: Luxemburgo
+      pt: Luxemburgo
+      pl: "Luksemburg"
+      cs: "Lucembursko"
+      hu: "Luxemburg"
+      gr: "Λουξεμβούργο"
+      sk: "Luxembursko"
+  LV:
+    type: country
+    coverage:
+    - LV
+    - LT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Latvia"
+    translations:
+      en: Latvia
+      hr: Latvija
+      de: Lettland
+      fr: Lettonie
+      ja: ラトビア
+      it: Lettonia
+      es: Letonia
+      pt: Letónia
+      pl: "Łotwa"
+      cs: "Lotyšsko"
+      hu: "Lettország"
+      gr: "Λετονία"
+      sk: "Lotyšsko"
+  LY:
+    type: country
+    coverage:
+    - LY
+    partner_class: COUNTRY
+    amdocs_code: "Libya"
+    translations:
+      en: Libya
+      pl: "Libia"
+      cs: "Libye"
+      hu: "Líbia"
+      gr: "Λιβύη"
+      sk: "Líbya"
+  MA:
+    type: country
+    coverage:
+    - MA
+    partner_class: COUNTRY
+    amdocs_code: "Morocco"
+    translations:
+      en: Morocco
+      hr: Maroko
+      de: Marokko
+      fr: Maroc
+      ja: モロッコ
+      it: Marocco
+      es: Marruecos
+      pt: Marrocos
+      pl: "Maroko"
+      cs: "Maroko"
+      hu: "Marokkó"
+      gr: "Μαρόκο"
+      sk: "Maroko"
+  MC:
+    type: country
+    coverage:
+    - MC
+    partner_class: COUNTRY
+    amdocs_code: "Monaco"
+    translations:
+      en: Monaco
+      hr: Monako
+      de: Monaco
+      fr: Monaco
+      ja: モナコ
+      it: Monaco
+      es: Mónaco
+      pt: Mónaco
+      pl: "Monako"
+      cs: "Monako"
+      hu: "Monaco"
+      gr: "Μονακό"
+      sk: "Monako"
+  MD:
+    type: country
+    coverage:
+    - MD
+    partner_class: COUNTRY
+    amdocs_code: "Moldova, Republic of"
+    translations:
+      en: Moldova, Republic of
+      hr: Moldavija
+      de: Moldawien
+      fr: Moldavie
+      ja: モルドバ共和国
+      it: Moldavia
+      es: Moldavia
+      pt: Moldávia
+      pl: "Mołdawia"
+      cs: "Moldavsko"
+      hu: "Moldova"
+      gr: "Μολδαβία"
+      sk: "Moldavsko"
+  ME:
+    type: country
+    coverage:
+    - ME
+    partner_class: COUNTRY
+    amdocs_code: "Montenegro"
+    translations:
+      en: Montenegro
+      hr: Crna Gora
+      de: Montenegro
+      fr: Monténégro
+      ja: モンテネグロ
+      it: Montenegro
+      es: Montenegro
+      pt: Montenegro
+      pl: "Czarnogóra"
+      cs: "Černá Hora"
+      hu: "Montenegró"
+      gr: "Μαυροβούνιο"
+      sk: "Čierna Hora"
+  MG:
+    type: country
+    coverage:
+    - MG
+    partner_class: COUNTRY
+    amdocs_code: "Madagascar"
+    translations:
+      en: "Madagascar"
+      hr: "Madagaskar"
+      de: "Madagaskar"
+      fr: "Madagascar"
+      ja: "マダガスカル"
+      it: "Madagascar"
+      es: "Madagascar"
+      pt: "Madagáscar"
+      pl: "Madagaskar"
+      cs: "Madagaskar"
+      hu: "Madagaszkár"
+      gr: "Μαδαγασκάρη"
+      sk: "Madagaskar"
+  MK:
+    type: country
+    coverage:
+    - MK
+    partner_class: COUNTRY
+    amdocs_code: "The Republic of North Macedonia"
+    translations:
+      en: The Republic of North Macedonia
+      hr: Sjeverna Makedonija
+      de: Nordmazedonien
+      fr: Macédoine du Nord
+      ja: 北マケドニア
+      it: Macedonia del Nord
+      es: Macedonia del Norte
+      pt: Macedónia do Norte
+      pl: "Macedonia Północna"
+      cs: "Severní Makedonie"
+      hu: "Észak-Macedónia"
+      gr: "Βόρεια Μακεδονία"
+      sk: "Severné Macedónsko"
+  ML:
+    type: country
+    coverage:
+    - ML
+    partner_class: COUNTRY
+    amdocs_code: "Mali"
+    translations:
+      en: Mali
+      hr: Mali
+      de: Mali
+      fr: Mali
+      ja: マリ
+      it: Mali
+      es: Malí
+      pt: Mali
+      pl: "Mali"
+      cs: "Mali"
+      hu: "Mali"
+      gr: "Μάλι"
+      sk: "Mali"
+  MN:
+    type: country
+    coverage:
+    - MN
+    partner_class: COUNTRY
+    amdocs_code: "Mongolia"
+    translations:
+      en: "Mongolia"
+      hr: "Mongolija"
+      de: "Mongolei"
+      fr: "Mongolie"
+      ja: "モンゴル"
+      it: "Mongolia"
+      es: "Mongolia"
+      pt: "Mongólia"
+      pl: "Mongolia"
+      cs: "Mongolsko"
+      hu: "Mongólia"
+      gr: "Μογγολία"
+      sk: "Mongolsko"
+  MO:
+    type: country
+    coverage:
+    - MO
+    partner_class: COUNTRY
+    amdocs_code: "Macao"
+    translations:
+      en: Macao
+      hr: PUP Makao Kina
+      de: Macao
+      fr: Macao
+      ja: マカオ
+      it: Macao
+      es: Macao
+      pt: Macau
+      pl: "SRA Makau (Chiny)"
+      cs: "Macao – ZAO Číny"
+      hu: "Makaó KKT"
+      gr: "Μακάο ΕΔΠ Κίνας"
+      sk: "Macao – OAO Číny"
+  MQ:
+    type: country
+    coverage:
+    - MQ
+    partner_class: COUNTRY
+    amdocs_code: "Martinique"
+    translations:
+      en: "Martinique"
+      hr: "Martinik"
+      de: "Martinique"
+      fr: "Martinique"
+      ja: "マルティニーク"
+      it: "Martinica"
+      es: "Martinica"
+      pt: "Martinica"
+      pl: "Martynika"
+      cs: "Martinik"
+      hu: "Martinique"
+      gr: "Μαρτινίκα"
+      sk: "Martinik"
+  MR:
+    type: country
+    coverage:
+    - MR
+    partner_class: COUNTRY
+    amdocs_code: "Mauritania"
+    translations:
+      en: "Mauritania"
+      hr: "Mauritanija"
+      de: "Mauretanien"
+      fr: "Mauritanie"
+      ja: "モーリタニア"
+      it: "Mauritania"
+      es: "Mauritania"
+      pt: "Mauritânia"
+      pl: "Mauretania"
+      cs: "Mauritánie"
+      hu: "Mauritánia"
+      gr: "Μαυριτανία"
+      sk: "Mauritánia"
+  MS:
+    type: country
+    coverage:
+    - MS
+    partner_class: COUNTRY
+    amdocs_code: "Montserrat"
+    translations:
+      en: "Montserrat"
+      hr: "Montserrat"
+      de: "Montserrat"
+      fr: "Montserrat"
+      ja: "モントセラト"
+      it: "Montserrat"
+      es: "Montserrat"
+      pt: "Montserrat"
+      pl: "Montserrat"
+      cs: "Montserrat"
+      hu: "Montserrat"
+      gr: "Μονσεράτ"
+      sk: "Montserrat"
+  MT:
+    type: country
+    coverage:
+    - IT
+    - MT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Malta"
+    translations:
+      en: Malta
+      hr: Malta
+      de: Malta
+      fr: Malte
+      ja: マルタ
+      it: Malta
+      es: Malta
+      pt: Malta
+      pl: "Malta"
+      cs: "Malta"
+      hu: "Málta"
+      gr: "Μάλτα"
+      sk: "Malta"
+  MU:
+    type: country
+    coverage:
+    - MU
+    partner_class: COUNTRY
+    amdocs_code: "Mauritius"
+    translations:
+      en: Mauritius
+      hr: Mauricijus
+      de: Mauritius
+      fr: Maurice
+      ja: モーリシャス
+      it: Mauritius
+      es: Mauricio
+      pt: Maurícia
+      pl: "Mauritius"
+      cs: "Mauricius"
+      hu: "Mauritius"
+      gr: "Μαυρίκιος"
+      sk: "Maurícius"
+  MV:
+    type: country
+    coverage:
+    - MV
+    partner_class: COUNTRY
+    amdocs_code: "Maldives"
+    translations:
+      en: Maldives
+      hr: Maldivi
+      de: Malediven
+      fr: Maldives
+      ja: モルディブ
+      it: Maldive
+      es: Maldivas
+      pt: Maldivas
+      pl: "Malediwy"
+      cs: "Maledivy"
+      hu: "Maldív-szigetek"
+      gr: "Μαλδίβες"
+      sk: "Maldivy"
+  MW:
+    type: country
+    coverage:
+    - MW
+    partner_class: COUNTRY
+    amdocs_code: "Malawi"
+    translations:
+      en: "Malawi"
+      hr: "Malavi"
+      de: "Malawi"
+      fr: "Malawi"
+      ja: "マラウイ"
+      it: "Malawi"
+      es: "Malaui"
+      pt: "Malawi"
+      pl: "Malawi"
+      cs: "Malawi"
+      hu: "Malawi"
+      gr: "Μαλάουι"
+      sk: "Malawi"
+  MX:
+    type: country
+    coverage:
+    - MX
+    partner_class: COUNTRY
+    amdocs_code: "Mexico"
+    translations:
+      en: Mexico
+      hr: Meksiko
+      de: Mexiko
+      fr: Mexique
+      ja: メキシコ
+      it: Messico
+      es: México
+      pt: México
+      pl: "Meksyk"
+      cs: "Mexiko"
+      hu: "Mexikó"
+      gr: "Μεξικό"
+      sk: "Mexiko"
+  MY:
+    type: country
+    coverage:
+    - MY
+    partner_class: COUNTRY
+    amdocs_code: "Malaysia"
+    translations:
+      en: Malaysia
+      hr: Malezija
+      de: Malaysia
+      fr: Malaisie
+      ja: マレーシア
+      it: Malesia
+      es: Malasia
+      pt: Malásia
+      pl: "Malezja"
+      cs: "Malajsie"
+      hu: "Malajzia"
+      gr: "Μαλαισία"
+      sk: "Malajzia"
+  MZ:
+    type: country
+    coverage:
+    - MZ
+    partner_class: COUNTRY
+    amdocs_code: "Mozambique"
+    translations:
+      en: "Mozambique"
+      hr: "Mozambik"
+      de: "Mosambik"
+      fr: "Mozambique"
+      ja: "モザンビーク"
+      it: "Mozambico"
+      es: "Mozambique"
+      pt: "Moçambique"
+      pl: "Mozambik"
+      cs: "Mosambik"
+      hu: "Mozambik"
+      gr: "Μοζαμβίκη"
+      sk: "Mozambik"
+  NA:
+    type: country
+    coverage:
+    - NA
+    partner_class: COUNTRY
+    amdocs_code: "Namibia"
+    translations:
+      en: "Namibia"
+      hr: "Namibija"
+      de: "Namibia"
+      fr: "Namibie"
+      ja: "ナミビア"
+      it: "Namibia"
+      es: "Namibia"
+      pt: "Namíbia"
+      pl: "Namibia"
+      cs: "Namibie"
+      hu: "Namíbia"
+      gr: "Ναμίμπια"
+      sk: "Namíbia"
+  NG:
+    type: country
+    coverage:
+    - NG
+    partner_class: COUNTRY
+    amdocs_code: "Nigeria"
+    translations:
+      en: Nigeria
+      hr: Nigerija
+      de: Nigeria
+      fr: Nigéria
+      ja: ナイジェリア
+      it: Nigeria
+      es: Nigeria
+      pt: Nigéria
+      pl: "Nigeria"
+      cs: "Nigérie"
+      hu: "Nigéria"
+      gr: "Νιγηρία"
+      sk: "Nigéria"
+  NI:
+    type: country
+    coverage:
+    - NI
+    partner_class: COUNTRY
+    amdocs_code: "Nicaragua"
+    translations:
+      en: Nicaragua
+      hr: Nikaragva
+      de: Nicaragua
+      fr: Nicaragua
+      ja: ニカラグア
+      it: Nicaragua
+      es: Nicaragua
+      pt: Nicarágua
+      pl: "Nikaragua"
+      cs: "Nikaragua"
+      hu: "Nicaragua"
+      gr: "Νικαράγουα"
+      sk: "Nikaragua"
+  NL:
+    type: country
+    coverage:
+    - BE
+    - NL
+    - LU
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Netherlands"
+    translations:
+      en: Netherlands
+      hr: Nizozemska
+      de: Niederlande
+      fr: Pays-Bas
+      ja: オランダ
+      it: Paesi Bassi
+      es: Países Bajos
+      pt: Países Baixos
+      pl: "Holandia"
+      cs: "Nizozemsko"
+      hu: "Hollandia"
+      gr: "Κάτω Χώρες"
+      sk: "Holandsko"
+  'NO':
+    type: country
+    coverage:
+    - DK
+    - 'NO'
+    - SE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Norway"
+    translations:
+      en: Norway
+      hr: Norveška
+      de: Norwegen
+      fr: Norvège
+      ja: ノルウェー
+      it: Norvegia
+      es: Noruega
+      pt: Noruega
+      pl: "Norwegia"
+      cs: "Norsko"
+      hu: "Norvégia"
+      gr: "Νορβηγία"
+      sk: "Nórsko"
+  NP:
+    type: country
+    coverage:
+    - NP
+    partner_class: COUNTRY
+    amdocs_code: "Nepal"
+    translations:
+      en: Nepal
+      hr: Nepal
+      de: Nepal
+      fr: Népal
+      ja: ネパール
+      it: Nepal
+      es: Nepal
+      pt: Nepal
+      pl: "Nepal"
+      cs: "Nepál"
+      hu: "Nepál"
+      gr: "Νεπάλ"
+      sk: "Nepál"
+  NZ:
+    type: country
+    coverage:
+    - NZ
+    partner_class: COUNTRY
+    amdocs_code: "New Zealand"
+    translations:
+      en: New Zealand
+      hr: Novi Zeland
+      de: Neuseeland
+      fr: Nouvelle-Zélande
+      ja: ニュージーランド
+      it: Nuova Zelanda
+      es: Nueva Zelanda
+      pt: Nova Zelândia
+      pl: "Nowa Zelandia"
+      cs: "Nový Zéland"
+      hu: "Új-Zéland"
+      gr: "Νέα Ζηλανδία"
+      sk: "Nový Zéland"
+  OM:
+    type: country
+    coverage:
+    - OM
+    partner_class: COUNTRY
+    amdocs_code: "Oman"
+    translations:
+      en: Oman
+      hr: Oman
+      de: Oman
+      fr: Oman
+      ja: オマーン
+      it: Oman
+      es: Omán
+      pt: Omã
+      pl: "Oman"
+      cs: "Omán"
+      hu: "Omán"
+      gr: "Ομάν"
+      sk: "Omán"
+  PA:
+    type: country
+    coverage:
+    - PA
+    partner_class: COUNTRY
+    amdocs_code: "Panama"
+    translations:
+      en: Panama
+      hr: Panama
+      de: Panama
+      fr: Panama
+      ja: パナマ
+      it: Panamá
+      es: Panamá
+      pt: Panamá
+      pl: "Panama"
+      cs: "Panama"
+      hu: "Panama"
+      gr: "Παναμάς"
+      sk: "Panama"
+  PE:
+    type: country
+    coverage:
+    - PE
+    partner_class: COUNTRY
+    amdocs_code: "Peru"
+    translations:
+      en: Peru
+      hr: Peru
+      de: Peru
+      fr: Pérou
+      ja: ペルー
+      it: Perù
+      es: Perú
+      pt: Peru
+      pl: "Peru"
+      cs: "Peru"
+      hu: "Peru"
+      gr: "Περού"
+      sk: "Peru"
+  PF:
+    type: country
+    coverage:
+    - PF
+    partner_class: COUNTRY
+    amdocs_code: "French Polynesia"
+    translations:
+      en: French Polynesia
+      pl: "Polinezja Francuska"
+      cs: "Francouzská Polynésie"
+      hu: "Francia Polinézia"
+      gr: "Γαλλική Πολυνησία"
+      sk: "Francúzska Polynézia"
+  PG:
+    type: country
+    coverage:
+    - PG
+    partner_class: COUNTRY
+    amdocs_code: "Papua New Guinea"
+    translations:
+      en: Papua New Guinea
+      hr: Papua Nova Gvineja
+      de: Papua-Neuguinea
+      fr: Papouasie-Nouvelle-Guinée
+      ja: パプアニューギニア
+      it: Papua Nuova Guinea
+      es: Papua Nueva Guinea
+      pt: Papua-Nova Guiné
+      pl: "Papua-Nowa Gwinea"
+      cs: "Papua-Nová Guinea"
+      hu: "Pápua Új-Guinea"
+      gr: "Παπούα Νέα Γουινέα"
+      sk: "Papua-Nová Guinea"
+  PH:
+    type: country
+    coverage:
+    - PH
+    partner_class: COUNTRY
+    amdocs_code: "Philippines"
+    translations:
+      en: Philippines
+      hr: Filipini
+      de: Philippinen
+      fr: Philippines
+      ja: フィリピン
+      it: Filippine
+      es: Filipinas
+      pt: Filipinas
+      pl: "Filipiny"
+      cs: "Filipíny"
+      hu: "Fülöp-szigetek"
+      gr: "Φιλιππίνες"
+      sk: "Filipíny"
+  PK:
+    type: country
+    coverage:
+    - PK
+    partner_class: COUNTRY
+    amdocs_code: "Pakistan"
+    translations:
+      en: Pakistan
+      hr: Pakistan
+      de: Pakistan
+      fr: Pakistan
+      ja: パキスタン
+      it: Pakistan
+      es: Pakistán
+      pt: Paquistão
+      pl: "Pakistan"
+      cs: "Pákistán"
+      hu: "Pakisztán"
+      gr: "Πακιστάν"
+      sk: "Pakistan"
+  PL:
+    type: country
+    coverage:
+    - PL
+    - CZ
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Poland"
+    translations:
+      en: Poland
+      hr: Poljska
+      de: Polen
+      fr: Pologne
+      ja: ポーランド
+      it: Polonia
+      es: Polonia
+      pt: Polónia
+      pl: "Polska"
+      cs: "Polsko"
+      hu: "Lengyelország"
+      gr: "Πολωνία"
+      sk: "Poľsko"
+  PR:
+    type: country
+    coverage:
+    - PR
+    partner_class: COUNTRY
+    amdocs_code: "Puerto Rico"
+    translations:
+      en: Puerto Rico
+      hr: Portoriko
+      de: Puerto Rico
+      fr: Porto Rico
+      ja: プエルトリコ
+      it: Porto Rico
+      es: Puerto Rico
+      pt: Porto Rico
+      pl: "Portoryko"
+      cs: "Portoriko"
+      hu: "Puerto Rico"
+      gr: "Πουέρτο Ρίκο"
+      sk: "Portoriko"
+  PS:
+    type: country
+    coverage:
+    - PS
+    partner_class: COUNTRY
+    amdocs_code: "State of Palestine"
+    translations:
+      en: "State of Palestine"
+      hr: "Palestina"
+      de: "Staat Palästina"
+      fr: "État de Palestine"
+      ja: "パレスチナ国"
+      it: "Stato di Palestina"
+      es: "Estado de Palestina"
+      pt: "Estado da Palestina"
+      pl: "Palestyna"
+      cs: "Palestina"
+      hu: "Palesztina"
+      gr: "Παλαιστίνη"
+      sk: "Palestína"
+  PT:
+    type: country
+    coverage:
+    - ES
+    - PT
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Portugal"
+    translations:
+      en: Portugal
+      hr: Portugal
+      de: Portugal
+      fr: Portugal
+      ja: ポルトガル
+      it: Portogallo
+      es: Portugal
+      pt: Portugal
+      pl: "Portugalia"
+      cs: "Portugalsko"
+      hu: "Portugália"
+      gr: "Πορτογαλία"
+      sk: "Portugalsko"
+  PY:
+    type: country
+    coverage:
+    - PY
+    partner_class: COUNTRY
+    amdocs_code: "Paraguay"
+    translations:
+      en: Paraguay
+      hr: Paragvaj
+      de: Paraguay
+      fr: Paraguay
+      ja: パラグアイ
+      it: Paraguay
+      es: Paraguay
+      pt: Paraguai
+      pl: "Paragwaj"
+      cs: "Paraguay"
+      hu: "Paraguay"
+      gr: "Παραγουάη"
+      sk: "Paraguaj"
+  QA:
+    type: country
+    coverage:
+    - QA
+    partner_class: COUNTRY
+    amdocs_code: "Qatar"
+    translations:
+      en: Qatar
+      hr: Katar
+      de: Katar
+      fr: Qatar
+      ja: カタール
+      it: Qatar
+      es: Catar
+      pt: Catar
+      pl: "Katar"
+      cs: "Katar"
+      hu: "Katar"
+      gr: "Κατάρ"
+      sk: "Katar"
+  RE:
+    type: country
+    coverage:
+    - RE
+    partner_class: COUNTRY
+    amdocs_code: "Reunion"
+    translations:
+      en: Reunion
+      hr: Réunion
+      de: Réunion
+      fr: Réunion
+      ja: レユニオン
+      it: Réunion
+      es: Reunión
+      pt: Reunião
+      pl: "Reunion"
+      cs: "Réunion"
+      hu: "Réunion"
+      gr: "Ρεϊνιόν"
+      sk: "Réunion"
+  RO:
+    type: country
+    coverage:
+    - RO
+    - BG
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Romania"
+    translations:
+      en: Romania
+      hr: Rumunjska
+      de: Rumänien
+      fr: Roumanie
+      ja: ルーマニア
+      it: Romania
+      es: Rumanía
+      pt: Roménia
+      pl: "Rumunia"
+      cs: "Rumunsko"
+      hu: "Románia"
+      gr: "Ρουμανία"
+      sk: "Rumunsko"
+  RS:
+    type: country
+    coverage:
+    - RS
+    partner_class: COUNTRY
+    amdocs_code: "Serbia"
+    translations:
+      en: Serbia
+      hr: Srbija
+      de: Serbien
+      fr: Serbie
+      ja: セルビア
+      it: Serbia
+      es: Serbia
+      pt: Sérvia
+      pl: "Serbia"
+      cs: "Srbsko"
+      hu: "Szerbia"
+      gr: "Σερβία"
+      sk: "Srbsko"
+  RU:
+    type: country
+    coverage:
+    - RU
+    partner_class: COUNTRY
+    amdocs_code: "Russian Federation"
+    translations:
+      en: Russian Federation
+      hr: Rusija
+      de: Russische Föderation
+      fr: Russie
+      ja: ロシア連邦
+      it: Russia
+      es: Rusia
+      pt: Rússia
+      pl: "Rosja"
+      cs: "Rusko"
+      hu: "Oroszország"
+      gr: "Ρωσία"
+      sk: "Rusko"
+  RW:
+    type: country
+    coverage:
+    - RW
+    partner_class: COUNTRY
+    amdocs_code: "Rwanda"
+    translations:
+      en: Rwanda
+      hr: Ruanda
+      de: Ruanda
+      fr: Rwanda
+      ja: ルワンダ
+      it: Ruanda
+      es: Ruanda
+      pt: Ruanda
+      pl: "Rwanda"
+      cs: "Rwanda"
+      hu: "Ruanda"
+      gr: "Ρουάντα"
+      sk: "Rwanda"
+  SA:
+    type: country
+    coverage:
+    - SA
+    partner_class: COUNTRY
+    amdocs_code: "Saudi Arabia"
+    translations:
+      en: Saudi Arabia
+      hr: Saudijska Arabija
+      de: Saudi-Arabien
+      fr: Arabie Saoudite
+      ja: サウジアラビア
+      it: Arabia Saudita
+      es: Arabia Saudita
+      pt: Arábia Saudita
+      pl: "Arabia Saudyjska"
+      cs: "Saúdská Arábie"
+      hu: "Szaúd-Arábia"
+      gr: "Σαουδική Αραβία"
+      sk: "Saudská Arábia"
+  SC:
+    type: country
+    coverage:
+    - SC
+    partner_class: COUNTRY
+    amdocs_code: "Seychelles"
+    translations:
+      en: "Seychelles"
+      hr: "Sejšeli"
+      de: "Seychellen"
+      fr: "Seychelles"
+      ja: "セーシェル"
+      it: "Seychelles"
+      es: "Seychelles"
+      pt: "Seicheles"
+      pl: "Seszele"
+      cs: "Seychely"
+      hu: "Seychelle-szigetek"
+      gr: "Σεϋχέλλες"
+      sk: "Seychely"
+  SD:
+    type: country
+    coverage:
+    - SD
+    partner_class: COUNTRY
+    amdocs_code: "Sudan"
+    translations:
+      en: Sudan
+      hr: Sudan
+      de: Sudan
+      fr: Soudan
+      ja: スーダン
+      it: Sudan
+      es: Sudán
+      pt: Sudão
+      pl: "Sudan"
+      cs: "Súdán"
+      hu: "Szudán"
+      gr: "Σουδάν"
+      sk: "Sudán"
+  SE:
+    type: country
+    coverage:
+    - DK
+    - 'NO'
+    - SE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Sweden"
+    translations:
+      en: Sweden
+      hr: Švedska
+      de: Schweden
+      fr: Suède
+      ja: スウェーデン
+      it: Svezia
+      es: Suecia
+      pt: Suécia
+      pl: "Szwecja"
+      cs: "Švédsko"
+      hu: "Svédország"
+      gr: "Σουηδία"
+      sk: "Švédsko"
+  SG:
+    type: country
+    coverage:
+    - SG
+    partner_class: COUNTRY
+    amdocs_code: "Singapore"
+    translations:
+      en: Singapore
+      hr: Singapur
+      de: Singapur
+      fr: Singapour
+      ja: シンガポール
+      it: Singapore
+      es: Singapur
+      pt: Singapura
+      pl: "Singapur"
+      cs: "Singapur"
+      hu: "Szingapúr"
+      gr: "Σιγκαπούρη"
+      sk: "Singapur"
+  SI:
+    type: country
+    coverage:
+    - AT
+    - HR
+    - SI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Slovenia"
+    translations:
+      en: Slovenia
+      hr: Slovenija
+      de: Slowenien
+      fr: Slovénie
+      ja: スロベニア
+      it: Slovenia
+      es: Eslovenia
+      pt: Eslovénia
+      pl: "Słowenia"
+      cs: "Slovinsko"
+      hu: "Szlovénia"
+      gr: "Σλοβενία"
+      sk: "Slovinsko"
+  SK:
+    type: country
+    coverage:
+    - SK
+    - HU
+    partner_class: MEDIUM_REGION
+    amdocs_code: "Slovakia"
+    translations:
+      en: Slovakia
+      hr: Slovačka
+      de: Slowakei
+      fr: Slovaquie
+      ja: スロバキア
+      it: Slovacchia
+      es: Eslovaquia
+      pt: Eslováquia
+      pl: "Słowacja"
+      cs: "Slovensko"
+      hu: "Szlovákia"
+      gr: "Σλοβακία"
+      sk: "Slovensko"
+  SL:
+    type: country
+    coverage:
+    - SL
+    partner_class: COUNTRY
+    amdocs_code: "Sierra Leone"
+    translations:
+      en: Sierra Leone
+      hr: Sijera Leone
+      de: Sierra Leone
+      fr: Sierra Leone
+      ja: シエラレオネ
+      it: Sierra Leone
+      es: Sierra Leona
+      pt: Serra Leoa
+      pl: "Sierra Leone"
+      cs: "Sierra Leone"
+      hu: "Sierra Leone"
+      gr: "Σιέρα Λεόνε"
+      sk: "Sierra Leone"
+  SN:
+    type: country
+    coverage:
+    - SN
+    partner_class: COUNTRY
+    amdocs_code: "Senegal"
+    translations:
+      en: Senegal
+      hr: Senegal
+      de: Senegal
+      fr: Sénégal
+      ja: セネガル
+      it: Senegal
+      es: Senegal
+      pt: Senegal
+      pl: "Senegal"
+      cs: "Senegal"
+      hu: "Szenegál"
+      gr: "Σενεγάλη"
+      sk: "Senegal"
+  SR:
+    type: country
+    coverage:
+    - SR
+    partner_class: COUNTRY
+    amdocs_code: "Suriname"
+    translations:
+      en: Suriname
+      hr: Surinam
+      de: Suriname
+      fr: Suriname
+      ja: スリナム
+      it: Suriname
+      es: Surinam
+      pt: Suriname
+      pl: "Surinam"
+      cs: "Surinam"
+      hu: "Suriname"
+      gr: "Σουρινάμ"
+      sk: "Surinam"
+  ST:
+    type: country
+    coverage:
+    - ST
+    partner_class: COUNTRY
+    amdocs_code: "Sao Tome and Principe"
+    translations:
+      en: "São Tomé and Príncipe"
+      hr: "Sveti Toma i Princip"
+      de: "São Tomé und Príncipe"
+      fr: "Sao Tomé-et-Principe"
+      ja: "サントメ・プリンシペ"
+      it: "São Tomé e Príncipe"
+      es: "Santo Tomé y Príncipe"
+      pt: "São Tomé e Príncipe"
+      pl: "Wyspy Świętego Tomasza i Książęca"
+      cs: "Svatý Tomáš a Princův ostrov"
+      hu: "São Tomé és Príncipe"
+      gr: "Σάο Τομέ και Πρίνσιπε"
+      sk: "Svätý Tomáš a Princov ostrov"
+  SV:
+    type: country
+    coverage:
+    - SV
+    partner_class: COUNTRY
+    amdocs_code: "El Salvador"
+    translations:
+      en: El Salvador
+      hr: Salvador
+      de: El Salvador
+      fr: El Salvador
+      ja: エルサルバドル
+      it: El Salvador
+      es: El Salvador
+      pt: El Salvador
+      pl: "Salwador"
+      cs: "Salvador"
+      hu: "Salvador"
+      gr: "Ελ Σαλβαδόρ"
+      sk: "Salvádor"
+  TC:
+    type: country
+    coverage:
+    - TC
+    partner_class: COUNTRY
+    amdocs_code: "Turks and Caicos Islands"
+    translations:
+      en: Turks and Caicos Islands
+      hr: Otoci Turks i Caicos
+      de: Turks- und Caicosinseln
+      fr: Îles Turques-et-Caïques
+      ja: タークス・カイコス諸島
+      it: Isole Turks e Caicos
+      es: Islas Turcas y Caicos
+      pt: Ilhas Turcas e Caicos
+      pl: "Turks i Caicos"
+      cs: "Turks a Caicos"
+      hu: "Turks- és Caicos-szigetek"
+      gr: "Νήσοι Τερκς και Κάικος"
+      sk: "Turks a Caicos"
+  TD:
+    type: country
+    coverage:
+    - TD
+    partner_class: COUNTRY
+    amdocs_code: "Chad"
+    translations:
+      en: Chad
+      hr: Čad
+      de: Tschad
+      fr: Tchad
+      ja: チャド
+      it: Ciad
+      es: Chad
+      pt: Chade
+      pl: "Czad"
+      cs: "Čad"
+      hu: "Csád"
+      gr: "Τσαντ"
+      sk: "Čad"
+  TG:
+    type: country
+    coverage:
+    - TG
+    partner_class: COUNTRY
+    amdocs_code: "Togo"
+    translations:
+      en: Togo
+      hr: Togo
+      de: Togo
+      fr: Togo
+      ja: トーゴ
+      it: Togo
+      es: Togo
+      pt: Togo
+      pl: "Togo"
+      cs: "Togo"
+      hu: "Togo"
+      gr: "Τόγκο"
+      sk: "Togo"
+  TH:
+    type: country
+    coverage:
+    - TH
+    partner_class: COUNTRY
+    amdocs_code: "Thailand"
+    translations:
+      en: Thailand
+      hr: Tajland
+      de: Thailand
+      fr: Thaïlande
+      ja: タイ
+      it: Thailandia
+      es: Tailandia
+      pt: Tailândia
+      pl: "Tajlandia"
+      cs: "Thajsko"
+      hu: "Thaiföld"
+      gr: "Ταϊλάνδη"
+      sk: "Thajsko"
+  TJ:
+    type: country
+    coverage:
+    - TJ
+    partner_class: COUNTRY
+    amdocs_code: "Tajikistan"
+    translations:
+      en: Tajikistan
+      hr: Tadžikistan
+      de: Tadschikistan
+      fr: Tadjikistan
+      ja: タジキスタン
+      it: Tagikistan
+      es: Tayikistán
+      pt: Tajiquistão
+      pl: "Tadżykistan"
+      cs: "Tádžikistán"
+      hu: "Tádzsikisztán"
+      gr: "Τατζικιστάν"
+      sk: "Tadžikistan"
+  TL:
+    type: country
+    coverage:
+    - TL
+    partner_class: COUNTRY
+    amdocs_code: "Timor-Leste"
+    translations:
+      en: "Timor-Leste"
+      hr: "Istočni Timor"
+      de: "Timor-Leste"
+      fr: "Timor-Leste"
+      ja: "東ティモール"
+      it: "Timor Est"
+      es: "Timor Oriental"
+      pt: "Timor-Leste"
+      pl: "Timor Wschodni"
+      cs: "Východní Timor"
+      hu: "Kelet-Timor"
+      gr: "Τιμόρ-Λέστε"
+      sk: "Východný Timor"
+  TN:
+    type: country
+    coverage:
+    - TN
+    partner_class: COUNTRY
+    amdocs_code: "Tunisia"
+    translations:
+      en: Tunisia
+      hr: Tunis
+      de: Tunesien
+      fr: Tunisie
+      ja: チュニジア
+      it: Tunisia
+      es: Túnez
+      pt: Tunísia
+      pl: "Tunezja"
+      cs: "Tunisko"
+      hu: "Tunézia"
+      gr: "Τυνησία"
+      sk: "Tunisko"
+  TO:
+    type: country
+    coverage:
+    - TO
+    partner_class: COUNTRY
+    amdocs_code: "Tonga"
+    translations:
+      en: Tonga
+      hr: Tonga
+      de: Tonga
+      fr: Tonga
+      ja: トンガ
+      it: Tonga
+      es: Tonga
+      pt: Tonga
+      pl: "Tonga"
+      cs: "Tonga"
+      hu: "Tonga"
+      gr: "Τόνγκα"
+      sk: "Tonga"
+  TR:
+    type: country
+    coverage:
+    - TR
+    partner_class: COUNTRY
+    amdocs_code: "Türkiye"
+    translations:
+      en: Türkiye
+      hr: Turska
+      de: Türkei
+      fr: Turquie
+      ja: トルコ
+      it: Turchia
+      es: Turquía
+      pt: Turquia
+      pl: "Turcja"
+      cs: "Turecko"
+      hu: "Törökország"
+      gr: "Τουρκία"
+      sk: "Turecko"
+  TW:
+    type: country
+    coverage:
+    - TW
+    partner_class: COUNTRY
+    amdocs_code: "Taiwan, Province of China"
+    translations:
+      en: Taiwan, Province of China
+      hr: Tajvan
+      de: Taiwan
+      fr: Taïwan
+      ja: 台湾
+      it: Repubblica di Cina
+      es: Taiwán
+      pt: Taiwan
+      pl: "Tajwan"
+      cs: "Tchaj-wan"
+      hu: "Tajvan"
+      gr: "Ταϊβάν"
+      sk: "Taiwan"
+  TZ:
+    type: country
+    coverage:
+    - TZ
+    partner_class: COUNTRY
+    amdocs_code: "United Republic of Tanzania"
+    translations:
+      en: United Republic of Tanzania
+      hr: Tanzanija
+      de: Tansania, Vereinigte Republik
+      fr: République unie de Tanzanie
+      ja: タンザニア
+      it: Tanzania
+      es: Tanzania
+      pt: Tanzânia
+      pl: "Tanzania"
+      cs: "Tanzanie"
+      hu: "Tanzánia"
+      gr: "Τανζανία"
+      sk: "Tanzánia"
+  UA:
+    type: country
+    coverage:
+    - UA
+    partner_class: COUNTRY
+    amdocs_code: "Ukraine"
+    translations:
+      en: Ukraine
+      hr: Ukrajina
+      de: Ukraine
+      fr: Ukraine
+      ja: ウクライナ
+      it: Ucraina
+      es: Ucrania
+      pt: Ucrânia
+      pl: "Ukraina"
+      cs: "Ukrajina"
+      hu: "Ukrajna"
+      gr: "Ουκρανία"
+      sk: "Ukrajina"
+  UG:
+    type: country
+    coverage:
+    - UG
+    partner_class: COUNTRY
+    amdocs_code: "Uganda"
+    translations:
+      en: "Uganda"
+      hr: "Uganda"
+      de: "Uganda"
+      fr: "Ouganda"
+      ja: "ウガンダ"
+      it: "Uganda"
+      es: "Uganda"
+      pt: "Uganda"
+      pl: "Uganda"
+      cs: "Uganda"
+      hu: "Uganda"
+      gr: "Ουγκάντα"
+      sk: "Uganda"
+  US:
+    type: country
+    coverage:
+    - US
+    partner_class: COUNTRY
+    amdocs_code: "United States of America"
+    translations:
+      en: United States of America
+      hr: Sjedinjene Američke Države
+      de: Vereinigte Staaten von Amerika
+      fr: États-Unis d'Amérique
+      ja: アメリカ合衆国
+      it: Stati Uniti d'America
+      es: Estados Unidos
+      pt: Estados Unidos da América
+      pl: "Stany Zjednoczone"
+      cs: "Spojené státy"
+      hu: "Egyesült Államok"
+      gr: "Ηνωμένες Πολιτείες"
+      sk: "Spojené štáty"
+  UY:
+    type: country
+    coverage:
+    - UY
+    partner_class: COUNTRY
+    amdocs_code: "Uruguay"
+    translations:
+      en: Uruguay
+      hr: Urugvaj
+      de: Uruguay
+      fr: Uruguay
+      ja: ウルグアイ
+      it: Uruguay
+      es: Uruguay
+      pt: Uruguai
+      pl: "Urugwaj"
+      cs: "Uruguay"
+      hu: "Uruguay"
+      gr: "Ουρουγουάη"
+      sk: "Uruguaj"
+  UZ:
+    type: country
+    coverage:
+    - UZ
+    partner_class: COUNTRY
+    amdocs_code: "Uzbekistan"
+    translations:
+      en: Uzbekistan
+      hr: Uzbekistan
+      de: Usbekistan
+      fr: Ouzbékistan
+      ja: ウズベキスタン
+      it: Uzbekistan
+      es: Uzbekistán
+      pt: Usbequistão
+      pl: "Uzbekistan"
+      cs: "Uzbekistán"
+      hu: "Üzbegisztán"
+      gr: "Ουζμπεκιστάν"
+      sk: "Uzbekistan"
+  VC:
+    type: country
+    coverage:
+    - VC
+    partner_class: COUNTRY
+    amdocs_code: "Saint Vincent and the Grenadines"
+    translations:
+      en: "Saint Vincent and the Grenadines"
+      hr: "Sveti Vincent i Grenadini"
+      de: "St. Vincent und die Grenadinen"
+      fr: "Saint-Vincent-et-les-Grenadines"
+      ja: "セントビンセントおよびグレナディーン諸島"
+      it: "Saint Vincent e Grenadine"
+      es: "San Vicente y las Granadinas"
+      pt: "São Vicente e Granadinas"
+      pl: "Saint Vincent i Grenadyny"
+      cs: "Svatý Vincenc a Grenadiny"
+      hu: "Saint Vincent és a Grenadine-szigetek"
+      gr: "Άγιος Βικέντιος και Γρεναδίνες"
+      sk: "Svätý Vincent a Grenadíny"
+  VE:
+    type: country
+    coverage:
+    - VE
+    partner_class: COUNTRY
+    amdocs_code: "Venezuela"
+    translations:
+      en: Venezuela
+      hr: Venezuela
+      de: Venezuela
+      fr: Venezuela
+      ja: ベネズエラ・ボリバル共和国
+      it: Venezuela
+      es: Venezuela
+      pt: Venezuela
+      pl: "Wenezuela"
+      cs: "Venezuela"
+      hu: "Venezuela"
+      gr: "Βενεζουέλα"
+      sk: "Venezuela"
+  VG:
+    type: country
+    coverage:
+    - VG
+    partner_class: COUNTRY
+    amdocs_code: "Virgin Islands, British"
+    translations:
+      en: Virgin Islands, British
+      hr: Britanski Djevičanski otoci
+      de: Britische Jungferninseln
+      fr: Îles vierges britanniques
+      ja: イギリス領ヴァージン諸島
+      it: Isole Vergini Britanniche
+      es: Islas Vírgenes británicas
+      pt: Ilhas Virgens Britânicas
+      pl: "Brytyjskie Wyspy Dziewicze"
+      cs: "Britské Panenské ostrovy"
+      hu: "Brit Virgin-szigetek"
+      gr: "Βρετανικές Παρθένες Νήσοι"
+      sk: "Britské Panenské ostrovy"
+  VN:
+    type: country
+    coverage:
+    - VN
+    partner_class: COUNTRY
+    amdocs_code: "Vietnam"
+    translations:
+      en: Vietnam
+      hr: Vijetnam
+      de: Vietnam
+      fr: Vietnam
+      ja: ベトナム
+      it: Vietnam
+      es: Vietnam
+      pt: Vietname
+      pl: "Wietnam"
+      cs: "Vietnam"
+      hu: "Vietnám"
+      gr: "Βιετνάμ"
+      sk: "Vietnam"
+  WS:
+    type: country
+    coverage:
+    - WS
+    partner_class: COUNTRY
+    amdocs_code: "Samoa"
+    translations:
+      en: "Samoa"
+      hr: "Samoa"
+      de: "Samoa"
+      fr: "Samoa"
+      ja: "サモア"
+      it: "Samoa"
+      es: "Samoa"
+      pt: "Samoa"
+      pl: "Samoa"
+      cs: "Samoa"
+      hu: "Szamoa"
+      gr: "Σαμόα"
+      sk: "Samoa"
+  XK:
+    type: country
+    coverage:
+    - XK
+    partner_class: COUNTRY
+    amdocs_code: "Kosovo"
+    translations:
+      en: Kosovo
+      hr: Kosovo
+      de: Kosovo
+      fr: Kosovo
+      ja: コソボ
+      it: Kosovo
+      es: Kosovo
+      pt: Kosovo
+      pl: "Kosowo"
+      cs: "Kosovo"
+      hu: "Koszovó"
+      gr: "Κοσσυφοπέδιο"
+      sk: "Kosovo"
+  ZA:
+    type: country
+    coverage:
+    - ZA
+    partner_class: COUNTRY
+    amdocs_code: "South Africa"
+    translations:
+      en: South Africa
+      hr: Južnoafrička Republika
+      de: Südafrika
+      fr: Afrique du Sud
+      ja: 南アフリカ
+      it: Sudafrica
+      es: Sudáfrica
+      pt: África do Sul
+      pl: "Republika Południowej Afryki"
+      cs: "Jihoafrická republika"
+      hu: "Dél-afrikai Köztársaság"
+      gr: "Νότια Αφρική"
+      sk: "Južná Afrika"
+  PW:
+    type: country
+    coverage:
+    - PW
+    partner_class: COUNTRY
+    amdocs_code: "Palau"
+    translations:
+      en: Palau
+      pl: "Palau"
+      cs: "Palau"
+      hu: "Palau"
+      gr: "Παλάου"
+      sk: "Palau"
+  ZW:
+    type: country
+    coverage:
+    - ZW
+    partner_class: COUNTRY
+    amdocs_code: "Zimbabwe"
+    translations:
+      en: "Zimbabwe"
+      hr: "Zimbabve"
+      de: "Simbabwe"
+      fr: "Zimbabwe"
+      ja: "ジンバブエ"
+      it: "Zimbabwe"
+      es: "Zimbabue"
+      pt: "Zimbabué"
+      pl: "Zimbabwe"
+      cs: "Zimbabwe"
+      hu: "Zimbabwe"
+      gr: "Ζιμπάμπουε"
+      sk: "Zimbabwe"
+  GLOBAL:
+    type: global
+    members:
+    - AL
+    - AM
+    - AR
+    - AT
+    - AU
+    - BA
+    - BE
+    - BG
+    - BH
+    - BR
+    - BS
+    - CA
+    - CH
+    - CL
+    - CN
+    - CO
+    - CR
+    - CY
+    - CZ
+    - DE
+    - DK
+    - DZ
+    - EC
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GE
+    - GG
+    - GR
+    - GT
+    - HK
+    - HR
+    - HU
+    - ID
+    - IE
+    - IL
+    - IN
+    - IQ
+    - IS
+    - IT
+    - JE
+    - JM
+    - JO
+    - JP
+    - KG
+    - KR
+    - KW
+    - LI
+    - LT
+    - LU
+    - LV
+    - MA
+    - MD
+    - ME
+    - MK
+    - MT
+    - MX
+    - MY
+    - NI
+    - NL
+    - 'NO'
+    - NZ
+    - PE
+    - PH
+    - PK
+    - PL
+    - PR
+    - PT
+    - PY
+    - QA
+    - RE
+    - RO
+    - RS
+    - RU
+    - SE
+    - SG
+    - SI
+    - SK
+    - SV
+    - TC
+    - TH
+    - TR
+    - TW
+    - UA
+    - US
+    - UY
+    - UZ
+    - VG
+    - VN
+    - XK
+    parent_regions: []
+    partner_class: GLOBAL
+    amdocs_code: "GLOBAL"
+    translations:
+      en: Global
+      hr: Global
+      de: Global
+      fr: Global
+      ja: Global
+      it: Global
+      es: Global
+      pt: Global
+      pl: "Globalny"
+      cs: "Globální"
+      hu: "Globális"
+      gr: "Παγκόσμια"
+      sk: "Globálne"
+  EUROPA:
+    type: region
+    members:
+    - AL
+    - AT
+    - BA
+    - BE
+    - BG
+    - BY
+    - CH
+    - CY
+    - CZ
+    - DE
+    - DK
+    - EE
+    - ES
+    - FI
+    - FO
+    - FR
+    - GB
+    - GG
+    - GR
+    - HR
+    - HU
+    - IE
+    - IS
+    - IT
+    - JE
+    - LI
+    - LT
+    - LU
+    - LV
+    - MD
+    - ME
+    - MK
+    - MT
+    - NL
+    - 'NO'
+    - PL
+    - PT
+    - RO
+    - RS
+    - RU
+    - SE
+    - SI
+    - SK
+    - TR
+    - UA
+    - XK
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "EUROPA"
+    translations:
+      en: Europe
+      hr: Evropa
+      de: Europa
+      fr: Europe
+      ja: ヨーロッパ
+      it: Europa
+      es: Europa
+      pt: Europa
+      pl: "Europa"
+      cs: "Evropa"
+      hu: "Európa"
+      gr: "Ευρώπη"
+      sk: "Európa"
+  EU_UK_NOR:
+    type: region
+    members:
+    - AT
+    - BE
+    - BG
+    - HR
+    - CY
+    - CZ
+    - DK
+    - EE
+    - FI
+    - FR
+    - DE
+    - GR
+    - HU
+    - IE
+    - IT
+    - LV
+    - LT
+    - LU
+    - MT
+    - NL
+    - PL
+    - PT
+    - RO
+    - SK
+    - SI
+    - ES
+    - SE
+    - 'NO'
+    - GB
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: LARGE_REGION
+    amdocs_code: "EU_UK_NOR"
+    translations:
+      en: EU+UK+NOR
+      hr: EU+UK+NOR
+      de: EU+UK+NOR
+      fr: EU+UK+NOR
+      ja: EU+UK+NOR
+      it: EU+UK+NOR
+      es: EU+UK+NOR
+      pt: EU+UK+NOR
+      pl: "UE+UK+NOR"
+      cs: "EU+UK+NOR"
+      hu: "EU+UK+NOR"
+      gr: "ΕΕ+ΗΒ+ΝΟΡ"
+      sk: "EÚ+UK+NOR"
+  NORTH_AMERICA:
+    type: region
+    members:
+    - CA
+    - MX
+    - US
+    parent_regions:
+    - GLOBAL
+    partner_class: LARGE_REGION
+    amdocs_code: "NORTH_AMERICA"
+    translations:
+      en: North America
+      hr: North America
+      de: North America
+      fr: North America
+      ja: 北アメリカ
+      it: North America
+      es: América del Norte
+      pt: América do Norte
+      pl: "Ameryka Północna"
+      cs: "Severní Amerika"
+      hu: "Észak-Amerika"
+      gr: "Βόρεια Αμερική"
+      sk: "Severná Amerika"
+  MENA:
+    type: region
+    members:
+    - BH
+    - EG
+    - IQ
+    - IL
+    - JO
+    - KW
+    - MA
+    - OM
+    - QA
+    - SA
+    - TN
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "MENA"
+    translations:
+      en: Middle East and North Africa
+      hr: Middle East and North Africa
+      de: Middle East and North Africa
+      fr: Middle East and North Africa
+      ja: 中東と北アフリカ
+      it: Middle East and North Africa
+      es: Medio Oriente y Norte de África
+      pt: Médio Oriente e Norte de África
+      pl: "Bliski Wschód i Afryka Północna"
+      cs: "Blízký východ a severní Afrika"
+      hu: "Közel-Kelet és Észak-Afrika"
+      gr: "Μέση Ανατολή και Βόρεια Αφρική"
+      sk: "Blízky východ a severná Afrika"
+  AFRICA:
+    type: region
+    members:
+    - BW
+    - CD
+    - DZ
+    - EG
+    - GH
+    - GM
+    - LR
+    - MA
+    - ML
+    - MU
+    - NG
+    - RE
+    - RW
+    - SL
+    - SN
+    - TD
+    - TN
+    - ZA
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "AFRICA"
+    translations:
+      en: Africa
+      hr: Afrika
+      de: Afrika
+      fr: Afrique
+      ja: アフリカ
+      it: Africa
+      es: África
+      pt: África
+      pl: "Afryka"
+      cs: "Afrika"
+      hu: "Afrika"
+      gr: "Αφρική"
+      sk: "Afrika"
+  LATAM:
+    type: region
+    members:
+    - AR
+    - BR
+    - CL
+    - CO
+    - CR
+    - EC
+    - GT
+    - MX
+    - NI
+    - PE
+    - PY
+    - SR
+    - SV
+    - UY
+    - VE
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "LATAM"
+    translations:
+      en: Latin America
+      hr: Latin America
+      de: Latin America
+      fr: Latin America
+      ja: ラテンアメリカ
+      it: America Latina
+      es: América Latina
+      pt: América Latina
+      pl: "Ameryka Łacińska"
+      cs: "Latinská Amerika"
+      hu: "Latin-Amerika"
+      gr: "Λατινική Αμερική"
+      sk: "Latinská Amerika"
+  OCEANIA:
+    type: region
+    members:
+    - AU
+    - NZ
+    parent_regions:
+    - AUS_NZ
+    - GLOBAL
+    - PACIFIC_LONG_HAUL
+    partner_class: LARGE_REGION
+    amdocs_code: "OCEANIA"
+    translations:
+      en: Oceania
+      hr: Oceania
+      de: Oceania
+      fr: Oceanie
+      ja: オセアニア
+      it: Oceania
+      es: Oceanía
+      pt: Oceânia
+      pl: "Oceania"
+      cs: "Oceánie"
+      hu: "Óceánia"
+      gr: "Ωκεανία"
+      sk: "Oceánia"
+  ASIA:
+    type: region
+    members:
+    - AF
+    - AM
+    - CN
+    - GE
+    - HK
+    - ID
+    - IN
+    - IQ
+    - JP
+    - KG
+    - KR
+    - MO
+    - MY
+    - PH
+    - PK
+    - SG
+    - TH
+    - TW
+    - UZ
+    - VN
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "ASIA"
+    translations:
+      en: Asia
+      hr: Azija
+      de: Asien
+      fr: Asie
+      ja: アジア
+      it: Asia
+      es: Asia
+      pt: Ásia
+      pl: "Azja"
+      cs: "Asie"
+      hu: "Ázsia"
+      gr: "Ασία"
+      sk: "Ázia"
+  CARIBBEAN:
+    type: region
+    members:
+    - AG
+    - AI
+    - BB
+    - BM
+    - BQ
+    - BS
+    - GP
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - SR
+    - TC
+    - VG
+    parent_regions: []
+    partner_class: LARGE_REGION
+    amdocs_code: "CARIBBEAN"
+    translations:
+      en: Caribbean
+      hr: Karibski
+      de: Karibik
+      fr: Caraïbes
+      ja: カリブ海
+      it: Caribbean
+      es: Caribe
+      pt: Caraíbas
+      pl: "Karaiby"
+      cs: "Karibik"
+      hu: "Karib-térség"
+      gr: "Καραϊβική"
+      sk: "Karibik"
+  SE_EUROPE:
+    type: region
+    members:
+    - GR
+    - RO
+    - BG
+    - HR
+    - RS
+    - BA
+    - AL
+    - ME
+    - MK
+    - XK
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SE_EUROPE"
+    translations:
+      en: South-East Europe
+      hr: Jugoistočna Europa
+      de: Südosteuropa
+      fr: Europe du Sud-Est
+      ja: 南欧
+      it: Europa del Sud-Est
+      es: Europa del Sud-Este
+      pt: Sudeste da Europa
+      pl: "Europa Południowo-Wschodnia"
+      cs: "Jihovýchodní Evropa"
+      hu: "Délkelet-Európa"
+      gr: "Νοτιοανατολική Ευρώπη"
+      sk: "Juhovýchodná Európa"
+  WEST_BALKANS:
+    type: region
+    members:
+    - HR
+    - BA
+    - RS
+    - ME
+    - AL
+    - MK
+    - XK
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    - SE_EUROPE
+    partner_class: MEDIUM_REGION
+    amdocs_code: "WEST_BALKANS"
+    translations:
+      en: Western Balkans
+      hr: Zapadni Balkan
+      de: Westlicher Balkan
+      fr: Balkans occidentaux
+      ja: 西バルカン
+      it: Balcani occidentali
+      es: Balcanes occidentales
+      pt: Balcãs Ocidentais
+      pl: "Bałkany Zachodnie"
+      cs: "Západní Balkán"
+      hu: "Nyugat-Balkán"
+      gr: "Δυτικά Βαλκάνια"
+      sk: "Západný Balkán"
+  ADRIATIC:
+    type: region
+    members:
+    - IT
+    - SI
+    - HR
+    - ME
+    - AL
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "ADRIATIC"
+    translations:
+      en: Adriatic
+      hr: Jadranska regija
+      de: Adria
+      fr: Adriatique
+      ja: アドリア
+      it: Adriatico
+      es: Adriático
+      pt: Adriático
+      pl: "Adriatyk"
+      cs: "Jadran"
+      hu: "Adria"
+      gr: "Αδριατική"
+      sk: "Jadran"
+  WEST_EUROPE:
+    type: region
+    members:
+    - FR
+    - ES
+    - PT
+    parent_regions:
+    - EUROPA
+    - EU_UK_NOR
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "WEST_EUROPE"
+    translations:
+      en: Western Europe
+      hr: Zapadna Europa
+      de: Westeuropa
+      fr: Europe de l'Ouest
+      ja: 西ヨーロッパ
+      it: Europa occidentale
+      es: Europa Occidental
+      pt: Europa Ocidental
+      pl: "Europa Zachodnia"
+      cs: "Západní Evropa"
+      hu: "Nyugat-Európa"
+      gr: "Δυτική Ευρώπη"
+      sk: "Západná Európa"
+  BRITISH_ISLES_IR:
+    type: region
+    members:
+    - GB
+    - IE
+    - GG
+    - JE
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "BRITISH_ISLES_IR"
+    translations:
+      en: British Isles & Ireland
+      hr: Britanski otoci i Irska
+      de: Britische Inseln & Irland
+      fr: Îles britanniques & Irlande
+      ja: イギリス諸島・アイルランド
+      it: Isole britanniche e Irlanda
+      es: Islas británicas e Irlanda
+      pt: Ilhas Britânicas e Irlanda
+      pl: "Wyspy Brytyjskie i Irlandia"
+      cs: "Britské ostrovy a Irsko"
+      hu: "Brit-szigetek és Írország"
+      gr: "Βρετανικά Νησιά και Ιρλανδία"
+      sk: "Britské ostrovy a Írsko"
+  CENTRAL_EUROPE:
+    type: region
+    members:
+    - DE
+    - AT
+    - CH
+    - CZ
+    - SK
+    - HU
+    - PL
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CENTRAL_EUROPE"
+    translations:
+      en: Central Europe
+      hr: Srednja Europa
+      de: Mitteleuropa
+      fr: Europe centrale
+      ja: 中央ヨーロッパ
+      it: Europa centrale
+      es: Europa Central
+      pt: Europa Central
+      pl: "Europa Środkowa"
+      cs: "Střední Evropa"
+      hu: "Közép-Európa"
+      gr: "Κεντρική Ευρώπη"
+      sk: "Stredná Európa"
+  NORDICS:
+    type: region
+    members:
+    - DK
+    - SE
+    - 'NO'
+    - FI
+    - IS
+    - FO
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "NORDICS"
+    translations:
+      en: Nordics
+      hr: Nordijske zemlje
+      de: Nordische Länder
+      fr: Pays nordiques
+      ja: 北欧
+      it: Paesi nordici
+      es: Países nórdicos
+      pt: Países Nórdicos
+      pl: "Kraje nordyckie"
+      cs: "Severské země"
+      hu: "Északi országok"
+      gr: "Σκανδιναβικές χώρες"
+      sk: "Severské krajiny"
+  BALTICS_FI:
+    type: region
+    members:
+    - EE
+    - LV
+    - LT
+    - FI
+    parent_regions:
+    - EUROPA
+    - EU_UK_NOR
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "BALTICS_FI"
+    translations:
+      en: Baltics & Finland
+      hr: Baltik i Finska
+      de: Baltikum & Finnland
+      fr: Pays baltes & Finlande
+      ja: バルト諸国・フィンランド
+      it: Paesi Baltici e Finlandia
+      es: Países bálticos y Finlandia
+      pt: Bálticos e Finlândia
+      pl: "Kraje bałtyckie i Finlandia"
+      cs: "Pobaltí a Finsko"
+      hu: "Balti államok és Finnország"
+      gr: "Βαλτικές χώρες και Φινλανδία"
+      sk: "Pobaltie a Fínsko"
+  BENELUX_FR:
+    type: region
+    members:
+    - BE
+    - NL
+    - LU
+    - FR
+    parent_regions:
+    - EUROPA
+    - EU_UK_NOR
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "BENELUX_FR"
+    translations:
+      en: Benelux & France
+      hr: Beneluks i Francuska
+      de: Benelux & Frankreich
+      fr: Benelux & France
+      ja: ベネルクス・フランス
+      it: Benelux e Francia
+      es: Benelux y Francia
+      pt: Benelux e França
+      pl: "Beneluks i Francja"
+      cs: "Benelux a Francie"
+      hu: "Benelux és Franciaország"
+      gr: "Μπενελούξ και Γαλλία"
+      sk: "Benelux a Francúzsko"
+  MEDITERRANEAN:
+    type: region
+    members:
+    - ES
+    - FR
+    - IT
+    - HR
+    - GR
+    - MT
+    - CY
+    - TR
+    - ME
+    - AL
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "MEDITERRANEAN"
+    translations:
+      en: Mediterranean
+      hr: Mediteran
+      de: Mittelmeer
+      fr: Méditerranée
+      ja: 地中海
+      it: Mediterraneo
+      es: Meditáneo
+      pt: Mediterrâneo
+      pl: "Region Morza Śródziemnego"
+      cs: "Středomoří"
+      hu: "Mediterrán térség"
+      gr: "Μεσόγειος"
+      sk: "Stredomorie"
+  EAST_EUROPE:
+    type: region
+    members:
+    - PL
+    - CZ
+    - SK
+    - HU
+    - RO
+    - BG
+    - MD
+    - UA
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "EAST_EUROPE"
+    translations:
+      en: Eastern Europe
+      hr: Istočna Europa
+      de: Osteuropa
+      fr: Europe de l'Est
+      ja: 東ヨーロッパ
+      it: Europa orientale
+      es: Europa del Este
+      pt: Europa de Leste
+      pl: "Europa Wschodnia"
+      cs: "Východní Evropa"
+      hu: "Kelet-Európa"
+      gr: "Ανατολική Ευρώπη"
+      sk: "Východná Európa"
+  ALPINE_REGION:
+    type: region
+    members:
+    - AT
+    - CH
+    - LI
+    - SI
+    - IT
+    - FR
+    - DE
+    parent_regions:
+    - EUROPA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "ALPINE_REGION"
+    translations:
+      en: Alpine Region
+      hr: Alpska regija
+      de: Alpenregion
+      fr: Région alpine
+      ja: アルプス地方
+      it: Regione alpina
+      es: Región alpina
+      pt: Região Alpina
+      pl: "Region alpejski"
+      cs: "Alpský region"
+      hu: "Alpesi régió"
+      gr: "Περιοχή των Άλπεων"
+      sk: "Alpský región"
+  GULF_TRAVEL:
+    type: region
+    members:
+    - BH
+    - KW
+    - OM
+    - QA
+    - SA
+    parent_regions:
+    - MENA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "GULF_TRAVEL"
+    translations:
+      en: Gulf Travel
+      hr: Putovanje u Zaljev
+      de: Golf-Reise
+      fr: Voyage dans le Golfe
+      ja: 湾岸旅行
+      it: Viaggio nel Golfo
+      es: Viaje al Golfo
+      pt: Viagem no Golfo
+      pl: "Region Zatoki Perskiej"
+      cs: "Oblast Perského zálivu"
+      hu: "Öböl-térség"
+      gr: "Περιοχή του Κόλπου"
+      sk: "Oblasť Perzského zálivu"
+  LEVANT:
+    type: region
+    members:
+    - IL
+    - JO
+    parent_regions:
+    - GLOBAL
+    - MENA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "LEVANT"
+    translations:
+      en: Levant
+      hr: Levant
+      de: Levante
+      fr: Levant
+      ja: レバント
+      it: Levante
+      es: Levante
+      pt: Levante
+      pl: "Lewant"
+      cs: "Levant"
+      hu: "Levante"
+      gr: "Λεβάντες"
+      sk: "Levant"
+  CAUCASUS:
+    type: region
+    members:
+    - AM
+    - AZ
+    - GE
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CAUCASUS"
+    translations:
+      en: Caucasus
+      hr: Kavkaz
+      de: Kaukasus
+      fr: Caucase
+      ja: コーカサス
+      it: Caucaso
+      es: Cáucaso
+      pt: Cáucaso
+      pl: "Kaukaz"
+      cs: "Kavkaz"
+      hu: "Kaukázus"
+      gr: "Καύκασος"
+      sk: "Kaukaz"
+  CENTRAL_ASIA:
+    type: region
+    members:
+    - KG
+    - TJ
+    - UZ
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CENTRAL_ASIA"
+    translations:
+      en: Central Asia
+      hr: Srednja Azija
+      de: Zentralasien
+      fr: Asie centrale
+      ja: 中央アジア
+      it: Asia centrale
+      es: Asia Central
+      pt: Ásia Central
+      pl: "Azja Środkowa"
+      cs: "Střední Asie"
+      hu: "Közép-Ázsia"
+      gr: "Κεντρική Ασία"
+      sk: "Stredná Ázia"
+  INDOCHINA:
+    type: region
+    members:
+    - TH
+    - VN
+    parent_regions:
+    - ASIA
+    - GLOBAL
+    - SOUTHEAST_ASIA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "INDOCHINA"
+    translations:
+      en: Indochina
+      hr: Indokina
+      de: Indochina
+      fr: Indochine
+      ja: インドシナ
+      it: Indocina
+      es: Indochina
+      pt: Indochina
+      pl: "Indochiny"
+      cs: "Indočína"
+      hu: "Indokína"
+      gr: "Ινδοκίνα"
+      sk: "Indočína"
+  SOUTHEAST_ASIA:
+    type: region
+    members:
+    - SG
+    - MY
+    - TH
+    - ID
+    - VN
+    - PH
+    parent_regions:
+    - ASIA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SOUTHEAST_ASIA"
+    translations:
+      en: Southeast Asia
+      hr: Jugoistočna Azija
+      de: Südostasien
+      fr: Asie du Sud-Est
+      ja: 東南アジア
+      it: Sud-est asiatico
+      es: Sudeste asiático
+      pt: Sudeste Asiático
+      pl: "Azja Południowo-Wschodnia"
+      cs: "Jihovýchodní Asie"
+      hu: "Délkelet-Ázsia"
+      gr: "Νοτιοανατολική Ασία"
+      sk: "Juhovýchodná Ázia"
+  ISLAND_SE_ASIA:
+    type: region
+    members:
+    - SG
+    - MY
+    - ID
+    - PH
+    parent_regions:
+    - ASIA
+    - GLOBAL
+    - SOUTHEAST_ASIA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "ISLAND_SE_ASIA"
+    translations:
+      en: Island Southeast Asia
+      hr: Otočna Jugoistočna Azija
+      de: Insel-Südostasien
+      fr: Asie du Sud-Est insulaire
+      ja: 島嶼東南アジア
+      it: Asia sud-orientale insulare
+      es: Sudeste asiático insular
+      pt: Sudeste Asiático Insular
+      pl: "Wyspiarska Azja Południowo-Wschodnia"
+      cs: "Ostrovní jihovýchodní Asie"
+      hu: "Szigetvilági Délkelet-Ázsia"
+      gr: "Νησιωτική Νοτιοανατολική Ασία"
+      sk: "Ostrovná juhovýchodná Ázia"
+  EAST_ASIA_PLUS:
+    type: region
+    members:
+    - CN
+    - HK
+    - MO
+    - TW
+    parent_regions:
+    - ASIA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "EAST_ASIA_PLUS"
+    translations:
+      en: East Asia Plus
+      hr: Istočna Azija Plus
+      de: Ostasien Plus
+      fr: Asie de l'Est Plus
+      ja: 東アジアプラス
+      it: Asia orientale Plus
+      es: Asia Oriental Plus
+      pt: Ásia Oriental Plus
+      pl: "Azja Wschodnia Plus"
+      cs: "Východní Asie Plus"
+      hu: "Kelet-Ázsia Plus"
+      gr: "Ανατολική Ασία Plus"
+      sk: "Východná Ázia Plus"
+  JP_KR_TW:
+    type: region
+    members:
+    - JP
+    - KR
+    - TW
+    parent_regions:
+    - ASIA
+    - GLOBAL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "JP_KR_TW"
+    translations:
+      en: Japan, Korea & Taiwan
+      hr: Japan, Koreja i Tajvan
+      de: Japan, Korea & Taiwan
+      fr: Japon, Corée & Taïwan
+      ja: 日本・韓国・台湾
+      it: Giappone, Corea e Taiwan
+      es: Japón, Corea y Taiwán
+      pt: Japão, Coreia e Taiwan
+      pl: "Japonia, Korea i Tajwan"
+      cs: "Japonsko, Korea a Tchaj-wan"
+      hu: "Japán, Korea és Tajvan"
+      gr: "Ιαπωνία, Κορέα και Ταϊβάν"
+      sk: "Japonsko, Kórea a Taiwan"
+  SUBCONTINENT:
+    type: region
+    members:
+    - IN
+    - PK
+    - LK
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SUBCONTINENT"
+    translations:
+      en: Subcontinent
+      hr: Potkontinent
+      de: Subkontinent
+      fr: Sous-continent
+      ja: 亜大陸
+      it: Subcontinente
+      es: Subcontinente
+      pt: Subcontinente
+      pl: "Subkontynent"
+      cs: "Subkontinent"
+      hu: "Szubkontinens"
+      gr: "Υποήπειρος"
+      sk: "Subkontinent"
+  NORTH_AFRICA:
+    type: region
+    members:
+    - MA
+    - DZ
+    - TN
+    - EG
+    parent_regions:
+    - AFRICA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "NORTH_AFRICA"
+    translations:
+      en: North Africa
+      hr: Sjeverna Afrika
+      de: Nordafrika
+      fr: Afrique du Nord
+      ja: 北アフリカ
+      it: Nord Africa
+      es: África del Norte
+      pt: Norte de África
+      pl: "Afryka Północna"
+      cs: "Severní Afrika"
+      hu: "Észak-Afrika"
+      gr: "Βόρεια Αφρική"
+      sk: "Severná Afrika"
+  EAST_AFRICA:
+    type: region
+    members:
+    - TZ
+    - RW
+    parent_regions:
+    - AFRICA_SAFARI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "EAST_AFRICA"
+    translations:
+      en: East Africa
+      hr: Istočna Afrika
+      de: Ostafrika
+      fr: Afrique de l'Est
+      ja: 東アフリカ
+      it: Africa orientale
+      es: África Oriental
+      pt: África Oriental
+      pl: "Afryka Wschodnia"
+      cs: "Východní Afrika"
+      hu: "Kelet-Afrika"
+      gr: "Ανατολική Αφρική"
+      sk: "Východná Afrika"
+  SOUTHERN_AFRICA:
+    type: region
+    members:
+    - ZA
+    - BW
+    parent_regions:
+    - AFRICA
+    - AFRICA_SAFARI
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SOUTHERN_AFRICA"
+    translations:
+      en: Southern Africa
+      hr: Južna Afrika
+      de: Südafrika
+      fr: Afrique australe
+      ja: 南アフリカ
+      it: Africa meridionale
+      es: África Austral
+      pt: África Austral
+      pl: "Afryka Południowa"
+      cs: "Jižní Afrika"
+      hu: "Dél-Afrika"
+      gr: "Νότια Αφρική"
+      sk: "Južná Afrika"
+  WEST_AFRICA:
+    type: region
+    members:
+    - GH
+    - SN
+    - NG
+    - GM
+    - SL
+    - TG
+    - ML
+    - LR
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "WEST_AFRICA"
+    translations:
+      en: West Africa
+      hr: Zapadna Afrika
+      de: Westafrika
+      fr: Afrique de l'Ouest
+      ja: 西アフリカ
+      it: Africa occidentale
+      es: África Occidental
+      pt: África Ocidental
+      pl: "Afryka Zachodnia"
+      cs: "Západní Afrika"
+      hu: "Nyugat-Afrika"
+      gr: "Δυτική Αφρική"
+      sk: "Západná Afrika"
+  AFRICA_SAFARI:
+    type: region
+    members:
+    - TZ
+    - ZA
+    - BW
+    - RW
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "AFRICA_SAFARI"
+    translations:
+      en: Africa Safari
+      hr: Afrika safari
+      de: Afrika Safari
+      fr: Safari en Afrique
+      ja: アフリカサファリ
+      it: Safari in Africa
+      es: Safari en África
+      pt: Safari na África
+      pl: "Afryka Safari"
+      cs: "Afrika Safari"
+      hu: "Afrika Szafari"
+      gr: "Σαφάρι στην Αφρική"
+      sk: "Afrika Safari"
+  INDIAN_OCEAN:
+    type: region
+    members:
+    - MU
+    - RE
+    - MV
+    parent_regions: []
+    partner_class: MEDIUM_REGION
+    amdocs_code: "INDIAN_OCEAN"
+    translations:
+      en: Indian Ocean
+      hr: Indijski ocean
+      de: Indischer Ozean
+      fr: Océan Indien
+      ja: インド洋
+      it: Oceano Indiano
+      es: Océano Índico
+      pt: Oceano Índico
+      pl: "Ocean Indyjski"
+      cs: "Indický oceán"
+      hu: "Indiai-óceán"
+      gr: "Ινδικός Ωκεανός"
+      sk: "Indický oceán"
+  CENTRAL_AFRICA:
+    type: region
+    members:
+    - CD
+    - TD
+    parent_regions:
+    - AFRICA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CENTRAL_AFRICA"
+    translations:
+      en: Central Africa
+      hr: Srednja Afrika
+      de: Zentralafrika
+      fr: Afrique centrale
+      ja: 中央アフリカ
+      it: Africa centrale
+      es: África Central
+      pt: África Central
+      pl: "Afryka Środkowa"
+      cs: "Střední Afrika"
+      hu: "Közép-Afrika"
+      gr: "Κεντρική Αφρική"
+      sk: "Stredná Afrika"
+  CENTRAL_AMERICA:
+    type: region
+    members:
+    - CR
+    - GT
+    - MX
+    - NI
+    - SV
+    parent_regions:
+    - GLOBAL
+    - LATAM
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CENTRAL_AMERICA"
+    translations:
+      en: Central America
+      hr: Srednja Amerika
+      de: Mittelamerika
+      fr: Amérique centrale
+      ja: 中央アメリカ
+      it: America centrale
+      es: América Central
+      pt: América Central
+      pl: "Ameryka Środkowa"
+      cs: "Střední Amerika"
+      hu: "Közép-Amerika"
+      gr: "Κεντρική Αμερική"
+      sk: "Stredná Amerika"
+  SOUTH_AMERICA:
+    type: region
+    members:
+    - AR
+    - BR
+    - CL
+    - CO
+    - EC
+    - PE
+    - PY
+    - SR
+    - UY
+    - VE
+    parent_regions:
+    - LATAM
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SOUTH_AMERICA"
+    translations:
+      en: South America
+      hr: Južna Amerika
+      de: Südamerika
+      fr: Amérique du Sud
+      ja: 南アメリカ
+      it: Sudamerica
+      es: América del Sur
+      pt: América do Sul
+      pl: "Ameryka Południowa"
+      cs: "Jižní Amerika"
+      hu: "Dél-Amerika"
+      gr: "Νότια Αμερική"
+      sk: "Južná Amerika"
+  ANDEAN:
+    type: region
+    members:
+    - CO
+    - EC
+    - PE
+    - CL
+    parent_regions:
+    - GLOBAL
+    - LATAM
+    - SOUTH_AMERICA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "ANDEAN"
+    translations:
+      en: Andean
+      hr: Ande
+      de: Anden
+      fr: Andes
+      ja: アンデス
+      it: Ande
+      es: Andes
+      pt: Andino
+      pl: "Andy"
+      cs: "Andy"
+      hu: "Andok"
+      gr: "Άνδεις"
+      sk: "Andy"
+  SOUTH_CONE:
+    type: region
+    members:
+    - BR
+    - AR
+    - CL
+    - UY
+    - PY
+    parent_regions:
+    - GLOBAL
+    - LATAM
+    - SOUTH_AMERICA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "SOUTH_CONE"
+    translations:
+      en: Southern Cone
+      hr: Južni stožer
+      de: Südkegel
+      fr: Cône sud
+      ja: 南部コーン
+      it: Cono Sud
+      es: Cono Sur
+      pt: Cone Sul
+      pl: "Stożek Południowy"
+      cs: "Jižní kužel"
+      hu: "Déli Kúp"
+      gr: "Νότιος Κώνος"
+      sk: "Južný kužeľ"
+  CARIBBEAN_CRUISE:
+    type: region
+    members:
+    - AG
+    - BB
+    - BS
+    - JM
+    - KN
+    - KY
+    - LC
+    - PR
+    - TC
+    parent_regions:
+    - CARIBBEAN
+    partner_class: MEDIUM_REGION
+    amdocs_code: "CARIBBEAN_CRUISE"
+    translations:
+      en: Caribbean Cruise
+      hr: Karipsko krstarenje
+      de: Karibik-Kreuzfahrt
+      fr: Croisière aux Caraïbes
+      ja: カリブ海クルーズ
+      it: Crociera nei Caraibi
+      es: Crucero por el Caribe
+      pt: Cruzeiro nas Caraíbas
+      pl: "Rejs po Karaibach"
+      cs: "Karibská plavba"
+      hu: "Karibi hajóút"
+      gr: "Κρουαζιέρα στην Καραϊβική"
+      sk: "Karibská plavba"
+  LESSER_ANTILLES:
+    type: region
+    members:
+    - AG
+    - AI
+    - BB
+    - BQ
+    - GP
+    - KN
+    - LC
+    - VG
+    parent_regions:
+    - CARIBBEAN
+    partner_class: MEDIUM_REGION
+    amdocs_code: "LESSER_ANTILLES"
+    translations:
+      en: Lesser Antilles
+      hr: Mali Antili
+      de: Kleine Antillen
+      fr: Petites Antilles
+      ja: 小アンティル諸島
+      it: Piccole Antille
+      es: Antillas Menores
+      pt: Pequenas Antilhas
+      pl: "Małe Antyle"
+      cs: "Malé Antily"
+      hu: "Kis-Antillák"
+      gr: "Μικρές Αντίλλες"
+      sk: "Malé Antily"
+  NORTH_ATLANTIC_ISLANDS:
+    type: region
+    members:
+    - BM
+    - BS
+    - TC
+    - PR
+    parent_regions:
+    - CARIBBEAN
+    partner_class: MEDIUM_REGION
+    amdocs_code: "NORTH_ATLANTIC_ISLANDS"
+    translations:
+      en: North Atlantic Islands
+      hr: Sjevernoatlantski otoci
+      de: Nordatlantische Inseln
+      fr: Îles de l'Atlantique Nord
+      ja: 北大西洋諸島
+      it: Isole dell'Atlantico settentrionale
+      es: Islas del Atlántico Norte
+      pt: Ilhas do Atlântico Norte
+      pl: "Wyspy Północnego Atlantyku"
+      cs: "Ostrovy severního Atlantiku"
+      hu: "Észak-atlanti szigetek"
+      gr: "Νησιά Βόρειου Ατλαντικού"
+      sk: "Ostrovy severného Atlantiku"
+  USA_CANADA:
+    type: region
+    members:
+    - US
+    - CA
+    parent_regions:
+    - GLOBAL
+    - NORTH_AMERICA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "USA_CANADA"
+    translations:
+      en: USA & Canada
+      hr: SAD i Kanada
+      de: USA & Kanada
+      fr: États-Unis & Canada
+      ja: アメリカ・カナダ
+      it: USA e Canada
+      es: EE. UU. y Canadá
+      pt: EUA e Canadá
+      pl: "USA i Kanada"
+      cs: "USA a Kanada"
+      hu: "USA és Kanada"
+      gr: "ΗΠΑ και Καναδάς"
+      sk: "USA a Kanada"
+  AUS_NZ:
+    type: region
+    members:
+    - AU
+    - NZ
+    parent_regions:
+    - GLOBAL
+    - OCEANIA
+    - PACIFIC_LONG_HAUL
+    partner_class: MEDIUM_REGION
+    amdocs_code: "AUS_NZ"
+    translations:
+      en: Australia & New Zealand
+      hr: Australija i Novi Zeland
+      de: Australien & Neuseeland
+      fr: Australie & Nouvelle-Zélande
+      ja: オーストラリア・ニュージーランド
+      it: Australia e Nuova Zelanda
+      es: Australia y Nueva Zelanda
+      pt: Austrália e Nova Zelândia
+      pl: "Australia i Nowa Zelandia"
+      cs: "Austrálie a Nový Zéland"
+      hu: "Ausztrália és Új-Zéland"
+      gr: "Αυστραλία και Νέα Ζηλανδία"
+      sk: "Austrália a Nový Zéland"
+  PACIFIC_LONG_HAUL:
+    type: region
+    members:
+    - AU
+    - NZ
+    parent_regions:
+    - AUS_NZ
+    - GLOBAL
+    - OCEANIA
+    partner_class: MEDIUM_REGION
+    amdocs_code: "PACIFIC_LONG_HAUL"
+    translations:
+      en: Pacific Long Haul
+      hr: Daleki Pacifik
+      de: Pazifik Langstrecke
+      fr: Long-courrier Pacifique
+      ja: 太平洋長距離
+      it: Lungo raggio Pacifico
+      es: Largo recorrido Pacífico
+      pt: Pacífico Longo Curso
+      pl: "Dalekie trasy Pacyfiku"
+      cs: "Dálkové trasy v Pacifiku"
+      hu: "Csendes-óceáni hosszú táv"
+      gr: "Μακρινές διαδρομές Ειρηνικού"
+      sk: "Diaľkové trasy v Pacifiku"

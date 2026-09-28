@@ -11,10 +11,15 @@ from typing import Any, Iterable
 import yaml
 
 try:
+    from destination_catalog import legacy_regions_payload
+except ImportError:
+    from automation.destination_catalog import legacy_regions_payload
+
+try:
     from config import INPUT_REGIONS, OUTPUT_NAME
 except Exception:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
-    INPUT_REGIONS = PROJECT_ROOT / "inputs" / "regions.yaml"
+    INPUT_REGIONS = PROJECT_ROOT / "inputs" / "destinations.yaml"
     OUTPUT_NAME = "region_prices_current.csv"
 
 # Regional eligibility and anchor guardrails.
@@ -61,9 +66,12 @@ class RegionGenerationResult:
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
+    path = Path(path)
     with open(path, "r", encoding="utf-8") as f:
-        data = yaml.load(f, Loader=NoBooleanSafeLoader)
-    return data or {}
+        data = yaml.load(f, Loader=NoBooleanSafeLoader) or {}
+    if isinstance(data, dict) and isinstance(data.get("destinations"), dict):
+        return legacy_regions_payload(path)
+    return data
 
 
 def parse_bool(value: Any) -> bool:
@@ -906,7 +914,7 @@ def generate_region_prices(
     if not input_csv.exists():
         raise FileNotFoundError(f"Pricing CSV not found: {input_csv}")
     if not regions_yaml.exists():
-        raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
+        raise FileNotFoundError(f"Destination/region catalogue not found: {regions_yaml}")
 
     rows, fieldnames = _read_pricing_rows(input_csv)
     if not rows:
@@ -961,12 +969,13 @@ def generate_region_prices_for_export_folder(
     _required_columns(fieldnames)
 
     regions_data = load_yaml(regions_yaml)
-    exclusion_path = (
-        Path(region_exclusions_json)
+    # Region membership now lives directly in destinations.yaml.  Legacy
+    # exclusions are read only when an explicit path is supplied.
+    region_country_exclusions = (
+        load_region_country_exclusions(Path(region_exclusions_json))
         if region_exclusions_json is not None
-        else regions_yaml.with_name(REGION_COUNTRY_EXCLUSIONS_NAME)
+        else {}
     )
-    region_country_exclusions = load_region_country_exclusions(exclusion_path)
     rows_by_currency = {
         currency_code: _currency_rows_from_consolidated(rows, currency_code)
         for currency_code in CURRENCIES
@@ -1031,7 +1040,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate region prices from an exported HT prices CSV.")
     parser.add_argument("--input", dest="input_csv", help="Input manual_prices_current.csv")
     parser.add_argument("--output-folder", help=f"Folder where {OUTPUT_NAME} will be written")
-    parser.add_argument("--regions-yaml", default=str(INPUT_REGIONS), help="Path to regions.yaml")
+    parser.add_argument("--regions-yaml", default=str(INPUT_REGIONS), help="Path to destinations.yaml (legacy regions.yaml also supported)")
     parser.add_argument("--currency", choices=list(CURRENCIES), help="Currency of the input export")
     args = parser.parse_args()
 

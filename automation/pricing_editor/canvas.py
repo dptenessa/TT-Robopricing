@@ -986,6 +986,19 @@ class PriceCurveCanvas(QWidget):
                 ]
                 self._draw_polyline(painter, cost_floor_pts, QColor("#c62828"), 2, dashed=True)
 
+                # For regional destinations, show the counterfactual floor if the
+                # currently binding country were removed. This is informational
+                # only and deliberately drawn in very light grey.
+                without_driver_pts = [
+                    {"x": p["x"], "y": p["cost_floor_without_driver"]}
+                    for p in package_points
+                    if p.get("cost_floor_without_driver") is not None
+                ]
+                if without_driver_pts:
+                    self._draw_polyline(
+                        painter, without_driver_pts, QColor("#d8d8d8"), 2, dashed=True
+                    )
+
             if is_selected_plan:
                 self._draw_polyline(painter, package_points, highlight_blue, 2, dashed=False)
             else:
@@ -1072,6 +1085,18 @@ class PriceCurveCanvas(QWidget):
         y = rect.top() + 10
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x), int(y), "Legend")
+        y += 14
+
+        painter.setPen(QPen(QColor("#c62828"), 2, Qt.DashLine))
+        painter.drawLine(int(legend_x), int(y), int(legend_x) + 20, int(y))
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Current cost floor")
+        y += 14
+
+        painter.setPen(QPen(QColor("#d8d8d8"), 2, Qt.DashLine))
+        painter.drawLine(int(legend_x), int(y), int(legend_x) + 20, int(y))
+        painter.setPen(QColor("#777777"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Floor without binding country")
         y += 14
 
         painter.setPen(QPen(QColor("#bdbdbd"), 1))

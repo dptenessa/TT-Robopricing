@@ -18,6 +18,11 @@ try:
 except ImportError:
     from automation.pricing_book import read_pricing_workbook, normalize_pricing_dataframe
 
+try:
+    from destination_catalog import destination_specs, partner_offer_ids, region_destination_specs
+except ImportError:
+    from automation.destination_catalog import destination_specs, partner_offer_ids, region_destination_specs
+
 
 PARTNER_DROP_COLUMNS: tuple[str, ...] = (
     "EUR_TO_USD",
@@ -322,15 +327,24 @@ def _clean_translation_value(value: object) -> str:
 def _read_translation_catalog(
     path: Path,
 ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
-    """Read T-Travel display translations from Regions_countries_list.xlsx.
-
-    Country translations are read from sheet Countries using ISO2.
-    Region translations are read from sheet Codes using Region_tech_name.
-    The workbook is the maintained source for customer-facing translations;
-    it does not define the technical country destination key.
-    """
+    """Read customer-facing translations from destinations.yaml or legacy XLSX."""
     if not path.exists():
-        raise FileNotFoundError(f"Translation workbook not found: {path}")
+        raise FileNotFoundError(f"Translation catalogue not found: {path}")
+
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        specs = destination_specs(path)
+        countries: dict[str, dict[str, object]] = {}
+        regions: dict[str, dict[str, object]] = {}
+        for code, spec in specs.items():
+            translations = {
+                language: _clean_translation_value((spec.get("translations") or {}).get(language, ""))
+                for language in REQUIRED_TRANSLATION_LANGUAGES
+            }
+            if spec.get("type") == "country":
+                countries[code] = translations
+            elif spec.get("type") in {"region", "global"}:
+                regions[code] = translations
+        return countries, regions
 
     countries = pd.read_excel(path, sheet_name="Countries", dtype=object)
     regions = pd.read_excel(path, sheet_name="Codes", dtype=object)
@@ -391,7 +405,7 @@ def _required_translations(
     translations = catalog.get(code)
     if translations is None:
         raise ValueError(
-            f"Active {kind} {code!r} is missing from Regions_countries_list.xlsx."
+            f"Active {kind} {code!r} is missing from the destination translation catalogue."
         )
 
     missing = [
@@ -661,9 +675,33 @@ def _read_or_rebuild_membership_snapshot(
 
 
 def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, object]]:
-    """Load static commercial metadata and locked membership for managed regions."""
+    """Load commercial metadata and locked membership for managed regions."""
     if not regions_yaml.exists():
-        raise FileNotFoundError(f"regions.yaml not found: {regions_yaml}")
+        raise FileNotFoundError(f"Destination/region catalogue not found: {regions_yaml}")
+
+    if regions_yaml.suffix.lower() in {".yaml", ".yml"}:
+        raw_regions = region_destination_specs(regions_yaml)
+        catalog: dict[str, dict[str, object]] = {}
+        allowed_types = {"GLOBAL", "LARGE_REGION", "MEDIUM_REGION"}
+        for code, spec in raw_regions.items():
+            region_type = str(spec.get("partner_class", "")).strip().upper()
+            product_name = str((spec.get("translations") or {}).get("en", "")).strip() or code
+            countries = [_country_code(item) for item in (spec.get("members") or [])]
+            countries = [item for item in countries if item]
+            if region_type not in allowed_types:
+                raise ValueError(
+                    f"Region {code!r} has unsupported partner_class {region_type!r}. "
+                    f"Expected one of: {', '.join(sorted(allowed_types))}."
+                )
+            if not countries:
+                raise ValueError(f"Region {code!r} has no locked members in destinations.yaml.")
+            catalog[code] = {
+                "region_type": region_type,
+                "region_product_name": product_name,
+                "countries": countries,
+                "parent_regions": list(spec.get("parent_regions") or []),
+            }
+        return catalog
 
     data = yaml.safe_load(regions_yaml.read_text(encoding="utf-8")) or {}
     regions = data.get("regions") or {}
@@ -672,7 +710,6 @@ def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, object]]:
 
     allowed_types = {"GLOBAL", "LARGE_REGION", "MEDIUM_REGION"}
     catalog: dict[str, dict[str, object]] = {}
-
     for raw_code, raw_spec in regions.items():
         code = _country_code(raw_code)
         if not code:
@@ -682,30 +719,24 @@ def _region_catalog(regions_yaml: Path) -> dict[str, dict[str, object]]:
                 f"Region {code!r} must be a mapping with region_type, "
                 "region_product_name and countries."
             )
-
         region_type = str(raw_spec.get("region_type", "")).strip().upper()
         product_name = str(raw_spec.get("region_product_name", "")).strip()
         countries = [_country_code(item) for item in (raw_spec.get("countries") or [])]
         countries = [item for item in countries if item]
-
         if region_type not in allowed_types:
             raise ValueError(
                 f"Region {code!r} has unsupported region_type {region_type!r}. "
                 f"Expected one of: {', '.join(sorted(allowed_types))}."
             )
         if not product_name:
-            raise ValueError(
-                f"Region {code!r} is missing region_product_name in regions.yaml."
-            )
+            raise ValueError(f"Region {code!r} is missing region_product_name in regions.yaml.")
         if not countries:
             raise ValueError(f"Region {code!r} has no locked countries in regions.yaml.")
-
         catalog[code] = {
             "region_type": region_type,
             "region_product_name": product_name,
             "countries": countries,
         }
-
     return catalog
 
 
@@ -859,10 +890,21 @@ def _updated_destination_table(
     authoritative current inputs.
     """
     if not source_path.exists():
-        raise FileNotFoundError(f"Destination table JSON not found: {source_path}")
-    source_data = json.loads(source_path.read_text(encoding="utf-8"))
-    if not isinstance(source_data, list):
-        raise ValueError("Destination table JSON must contain a list.")
+        raise FileNotFoundError(f"Destination catalogue not found: {source_path}")
+
+    if source_path.suffix.lower() in {".yaml", ".yml"}:
+        source_data: list[dict[str, object]] = []
+        for code, spec in destination_specs(source_path).items():
+            translations = spec.get("translations") or {}
+            source_data.append({
+                "code": code,
+                "dictionary": {"destination": dict(translations)},
+                "regions": list(spec.get("parent_regions") or []),
+            })
+    else:
+        source_data = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(source_data, list):
+            raise ValueError("Destination table JSON must contain a list.")
 
     countries_map = membership_snapshot.get("countries", {})
     if not isinstance(countries_map, dict):
@@ -1161,29 +1203,36 @@ def _partner_ocs_countries(row: pd.Series) -> str:
 def _partner_ocs_offer_id(
     row: pd.Series,
     region_catalog: dict[str, dict[str, object]],
+    destination_catalog: dict[str, dict[str, object]],
+    configured_offer_ids: dict[str, dict[bool, str]],
 ) -> str:
     is_unlimited = str(row.get("Plan", "")).strip().lower() == "unlimited"
     iso = _country_code(row.get("ISO", ""))
+    pricing_unit = _country_code(row.get("PricingUnitIdUsed", ""))
 
-    if len(iso) == 2:
-        offer_type = "COUNTRY"
+    # Country/mini-region rows are keyed by their commercial destination ID.
+    # That destination explicitly declares its partner class in destinations.yaml.
+    commercial_code = pricing_unit if pricing_unit in destination_catalog else iso
+    if commercial_code in destination_catalog:
+        offer_type = str(destination_catalog[commercial_code].get("partner_class", "")).strip().upper()
     else:
         region_code = _region_code_for_row(row, region_catalog)
-        if not region_code:
+        if region_code:
+            offer_type = str(region_catalog[region_code].get("region_type", "")).strip().upper()
+        elif len(iso) == 2:
+            offer_type = "COUNTRY"
+        else:
             raise ValueError(
-                "Cannot determine OCS offer type for regional row because its "
-                "region code is not present in regions.yaml. "
-                f"ISO={row.get('ISO', '')!r}, Country={row.get('Country', '')!r}."
+                "Cannot determine OCS offer type for row. "
+                f"ISO={row.get('ISO', '')!r}, PricingUnitIdUsed={row.get('PricingUnitIdUsed', '')!r}."
             )
-        offer_type = region_catalog[region_code]["region_type"]
 
-    try:
-        return OCS_OFFER_IDS[offer_type][is_unlimited]
-    except KeyError as exc:
+    offer_map = configured_offer_ids.get(offer_type) or OCS_OFFER_IDS.get(offer_type)
+    if not offer_map or is_unlimited not in offer_map:
         raise ValueError(
-            f"No OCS offer ID configured for type {offer_type!r}, "
-            f"unlimited={is_unlimited}."
-        ) from exc
+            f"No OCS offer ID configured for type {offer_type!r}, unlimited={is_unlimited}."
+        )
+    return offer_map[is_unlimited]
 
 def _partner_number_text(value: object) -> str:
     if pd.isna(value):
@@ -1226,6 +1275,8 @@ def _partner_price_output_columns(
     df: pd.DataFrame,
     region_catalog: dict[str, dict[str, object]],
     ppg_country_names: dict[str, str],
+    destination_catalog: dict[str, dict[str, object]],
+    configured_offer_ids: dict[str, dict[bool, str]],
 ) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["Destination"] = df.apply(
@@ -1242,7 +1293,7 @@ def _partner_price_output_columns(
     out["ocsCountries"] = df.apply(_partner_ocs_countries, axis=1)
     joined = out.join(df, how="left")
     out["ocsOfferId"] = joined.apply(
-        lambda row: _partner_ocs_offer_id(row, region_catalog),
+        lambda row: _partner_ocs_offer_id(row, region_catalog, destination_catalog, configured_offer_ids),
         axis=1,
     )
     out["ocsOfferLevelQuota"] = df.get("GB", pd.Series("", index=df.index)).map(_partner_number_text)
@@ -1379,11 +1430,11 @@ def build_partner_price_pack(
 
     destination_table_json = Path(
         destination_table_json
-        or project_root / "inputs" / "export-destination-table_reviewed.json"
+        or project_root / "inputs" / "destinations.yaml"
     )
     regions_yaml = Path(
         regions_yaml
-        or project_root / "inputs" / "regions.yaml"
+        or project_root / "inputs" / "destinations.yaml"
     )
     ppg_csv = Path(
         ppg_csv
@@ -1391,7 +1442,7 @@ def build_partner_price_pack(
     )
     translations_xlsx = Path(
         translations_xlsx
-        or project_root / "inputs" / "Regions_countries_list.xlsx"
+        or project_root / "inputs" / "destinations.yaml"
     )
 
     # Authoritative current sources.
@@ -1400,6 +1451,8 @@ def build_partner_price_pack(
         translations_xlsx
     )
     region_catalog = _region_catalog(regions_yaml)
+    all_destination_specs = destination_specs(regions_yaml)
+    configured_offer_ids = partner_offer_ids(regions_yaml)
     managed_regions = _managed_region_codes(region_catalog)
     current_price_book = local_export_dir / "manual_prices_current.xlsx"
     if not current_price_book.exists():
@@ -1513,6 +1566,8 @@ def build_partner_price_pack(
                 out,
                 region_catalog,
                 ppg_country_names,
+                all_destination_specs,
+                configured_offer_ids,
             )
             prepared_price_outputs[(currency, pack_name)] = partner_out
             prepared_removed_counts[(currency, pack_name)] = sum(

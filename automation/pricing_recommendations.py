@@ -39,6 +39,12 @@ except ImportError:
     from automation.pipeline_files import FILES, PipelineFiles
 
 
+try:
+    from destination_catalog import recommendation_primary_countries
+except ImportError:
+    from automation.destination_catalog import recommendation_primary_countries
+
+
 ANCHOR_DAYS = (1, 3, 7, 10, 15, 30)
 
 
@@ -231,17 +237,22 @@ def _load_promos(path: str | Path | None) -> list[dict[str, Any]]:
 
 
 def _load_priority_countries(path: str | Path | None) -> dict[str, str]:
-    """Load explicit priority countries for shared pricing units.
+    """Load the recommendation-driving country for each commercial destination.
 
-    A multi-country pricing unit without ``priority_country`` is intentionally
-    left without recommendations. This is safer than silently reverting to an
-    equal-weight country average.
+    In destinations.yaml the commercial destination ID itself is the country
+    whose competitor market should drive recommendations, even when technical
+    coverage spans multiple countries (for example ES covers ES+PT).
+    Legacy pricing_units.json remains readable for old snapshots/tools.
     """
     if path is None:
         return {}
     path = Path(path)
     if not path.exists():
         return {}
+
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        return recommendation_primary_countries(path)
+
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -1978,7 +1989,7 @@ def generate_recommendations_from_files(
     price_book_path = Path(price_book_path)
     market_path = Path(market_path or paths.market_annotated)
     promos_path = Path(promos_path or paths.promos_json)
-    pricing_units_path = Path(pricing_units_path or (paths.base_dir / "inputs" / "pricing_units.json"))
+    pricing_units_path = Path(pricing_units_path or paths.destinations_yaml)
     recommendation_dir = paths.work_dir / "pricing_recommendations"
     output_path = Path(output_path or recommendation_dir / "recommendations_latest.csv")
     summary_path = Path(summary_path or recommendation_dir / "recommendations_summary_latest.csv")
@@ -2028,8 +2039,8 @@ def generate_recommendations_from_files(
     print("Pricing Recommendations")
     print(f"Current price book: {price_book_path}")
     print(f"Current market:     {market_path}")
-    print(f"Pricing units:      {pricing_units_path}")
-    print(f"Priority countries: {len(priority_countries)} configured")
+    print(f"Destinations:       {pricing_units_path}")
+    print(f"Commercial markets: {len(priority_countries)} configured")
     print(f"EUR/USD used:       {rate:.4f}")
     print(f"Temporal outliers:  {temporal_outliers_excluded} excluded")
     if not summary.empty:
@@ -2047,7 +2058,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--price-book", default=None, help="Current manual_prices_current.xlsx")
     parser.add_argument("--market", default=None, help="market_prices_annotated_latest.csv")
     parser.add_argument("--promos", default=None, help="promos.json")
-    parser.add_argument("--pricing-units", default=None, help="pricing_units.json with optional priority_country per shared unit")
+    parser.add_argument("--pricing-units", default=None, help="destinations.yaml (legacy pricing_units.json also supported)")
     parser.add_argument("--output", default=None, help="Output recommendations CSV")
     parser.add_argument("--summary", default=None, help="Output summary CSV")
     parser.add_argument("--eur-usd", type=float, default=None, help="Override EUR/USD conversion rate")
