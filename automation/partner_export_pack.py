@@ -129,6 +129,11 @@ REQUIRED_TRANSLATION_LANGUAGES: tuple[str, ...] = (
     "it",
     "es",
     "pt",
+    "pl",
+    "cs",
+    "hu",
+    "gr",
+    "sk",
 )
 
 

@@ -998,10 +998,10 @@ class MainWindow(QMainWindow):
         try:
             export_dir = FILES.editor_exports_dir
             self.save_exports_to_folder(export_dir)
-            self.refresh_pricing_intelligence(force=True, refresh=True)
+            # self.refresh_pricing_intelligence(force=True, refresh=True)
             self.autosave_dirty = False
 
-            self.statusBar().showMessage("Quick saved; recommendations and market insights refreshed.")
+            self.statusBar().showMessage("Quick saved.")
 
         except Exception as e:
             print("Quick save failed:", e)
@@ -1056,7 +1056,7 @@ class MainWindow(QMainWindow):
 
             # The canonical workbook is now saved, so regenerate the disposable
             # recommendation annotation + CSVs + HTML insight view from that exact state.
-            self.refresh_pricing_intelligence(force=True, refresh=True)
+            # self.refresh_pricing_intelligence(force=True, refresh=True)
 
             if not official_export:
                 self.save_export_metadata(
@@ -1311,18 +1311,11 @@ class MainWindow(QMainWindow):
     def on_country_changed(self, country: str):
         self.state.selected_country = country
 
-        # Promo range requires a selected Plan/price point.
-        # Automatically select the first point when changing country.
         points = self.state.current_points()
-        current = self.state.selected_point_info()
 
-        if (
-            not current
-            or str(current.get("country", "")).strip() != str(country).strip()
-        ):
-            self.state.selected_row_id = (
-                str(points[0]["row_id"]) if points else None
-            )
+        self.state.selected_row_id = (
+            str(points[0]["row_id"]) if points else None
+        )
 
         self.refresh_canvas()
 
@@ -1990,7 +1983,7 @@ class MainWindow(QMainWindow):
         if PPG_PATH.exists():
             try:
                 progress("Loading PPG cost lookup...")
-                self.state.ppg_df = pd.read_csv(PPG_PATH)
+                self.state.ppg_df = pd.read_csv(PPG_PATH, keep_default_na=False)
                 self.state.ppg_df.columns = self.state.ppg_df.columns.astype(str).str.strip()
 
                 ppg = self.state.ppg_df.copy()

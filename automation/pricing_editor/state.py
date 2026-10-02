@@ -320,7 +320,9 @@ def load_table(
         lambda row: build_sku_scope_key(row.get("PricingUnitIdUsed", ""), row.get("Plan", ""), row.get("Days", None)),
         axis=1,
     )
-    df["PromoScopeKey"] = df["PromoScopeKey"].where(df["PromoScopeKey"].astype(str).str.strip().ne(""), df["sku_scope_key"])
+    # Promo scope is derived from the current pricing unit + plan + duration.
+    # Do not trust a stale hidden PromoScopeKey copied from another destination.
+    df["PromoScopeKey"] = df["sku_scope_key"]
     return df
 
 
@@ -1053,6 +1055,22 @@ class EditorState:
             for _, row in ht.iterrows():
                 unit_id = str(row.get("PricingUnitIdUsed", "")).strip()
                 scope_key = str(row.get("sku_scope_key", "")).strip()
+
+                # The destination catalogue is authoritative for coverage. This
+                # prevents newly added destinations from inheriting stale hidden
+                # PricingUnitCountriesUsed values copied from another country.
+                destination_spec = _destination_specs_cached().get(unit_id.upper(), {})
+                catalog_coverage = [
+                    str(code).strip().upper()
+                    for code in (destination_spec.get("coverage") or [])
+                    if str(code).strip()
+                ]
+                pricing_unit_countries = (
+                    ",".join(catalog_coverage)
+                    if catalog_coverage
+                    else str(row.get("PricingUnitCountriesUsed", "")).strip()
+                )
+
                 base_prices = {
                     currency: self._price_for_currency_from_row(row, currency)
                     for currency in CURRENCIES
@@ -1096,7 +1114,7 @@ class EditorState:
                     "destination_type": destination_display_type(unit_id),
                     "pricing_source": str(row.get("PricingSourceUsed", "")).strip(),
                     "pricing_region": str(row.get("PricingRegionUsed", "")).strip(),
-                    "pricing_unit_countries": str(row.get("PricingUnitCountriesUsed", "")).strip(),
+                    "pricing_unit_countries": pricing_unit_countries,
                     "source_currency": normalize_currency(row.get("Currency", DEFAULT_CURRENCY)),
                     "editor_scope_countries": ", ".join(sorted(c for c in unit_lookup.get(unit_id, set()) if c)),
                     "entry_key": build_price_row_key(
@@ -1132,7 +1150,11 @@ class EditorState:
             row0_unit_id = str(row0.get("PricingUnitIdUsed", "")).strip()
             type_label = destination_display_type(row0_unit_id).replace("_", " ")
             region_label = str(row0.get("PricingRegionUsed", "")).strip() or "-"
-            coverage_label = str(row0.get("PricingUnitCountriesUsed", "")).strip() or "-"
+            coverage_label = (
+                str(points[0].get("pricing_unit_countries", "")).strip()
+                if points
+                else str(row0.get("PricingUnitCountriesUsed", "")).strip()
+            ) or "-"
             self.country_info_map[country] = (
                 f"{type_label} · {region_label}\n"
                 f"Coverage: {coverage_label}"

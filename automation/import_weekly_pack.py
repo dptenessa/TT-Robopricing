@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import argparse
 import shutil
 import uuid
@@ -196,7 +197,7 @@ def import_pack(pack_path: Path, project_root: Path, dry_run: bool = False) -> i
             if pack_path.suffix.lower() != ".zip":
                 print("Please provide the downloaded weekly-proposal-pack .zip file.")
                 return 1
-            tmp_dir = project_root / f"_weekly_pack_import_{uuid.uuid4().hex}"
+            tmp_dir = Path(tempfile.gettempdir()) / f"ttravel_weekly_pack_{uuid.uuid4().hex}"
             tmp_dir.mkdir(parents=True, exist_ok=False)
             with zipfile.ZipFile(pack_path) as zf:
                 zf.extractall(tmp_dir)
