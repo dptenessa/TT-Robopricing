@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from html import escape
 import json
+import os
 import re
 from string import Template
 from pathlib import Path
@@ -52,7 +53,8 @@ MAX_CURRENT_AGE_DAYS = 14   # old observations are not "latest" market movement
 HISTORICAL_BASELINE_DAYS = 56
 HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
-DASHBOARD_VERSION = "history-charts-v16-commercial-destinations"
+DASHBOARD_VERSION = "history-charts-v18-product-campaign-priorities"
+SALES_LOOKBACK_DAYS = 60
 VERY_COMPETITIVE_GAP_PCT = 0.05
 COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
@@ -88,6 +90,306 @@ def _boolish(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return _text(value).lower() in {"1", "true", "t", "yes", "y"}
+
+
+def _sales_iso2(value: Any) -> str:
+    """Resolve common sales-export country names to ISO-2 codes."""
+    raw = _text(value)
+    if len(raw) == 2 and raw.isalpha():
+        return raw.upper()
+    key = re.sub(r"[^a-z0-9]+", " ", raw.casefold()).strip()
+    aliases = {
+        "germany": "DE", "france": "FR", "spain": "ES", "italy": "IT",
+        "netherlands": "NL", "holland": "NL", "croatia": "HR", "austria": "AT",
+        "switzerland": "CH", "belgium": "BE", "portugal": "PT", "greece": "GR",
+        "poland": "PL", "czech republic": "CZ", "czechia": "CZ", "hungary": "HU",
+        "romania": "RO", "bulgaria": "BG", "slovenia": "SI", "slovakia": "SK",
+        "serbia": "RS", "bosnia and herzegovina": "BA", "montenegro": "ME",
+        "albania": "AL", "ireland": "IE", "denmark": "DK", "sweden": "SE",
+        "norway": "NO", "finland": "FI", "iceland": "IS", "canada": "CA",
+        "mexico": "MX", "brazil": "BR", "argentina": "AR", "chile": "CL",
+        "peru": "PE", "colombia": "CO", "japan": "JP", "china": "CN",
+        "south korea": "KR", "taiwan": "TW", "thailand": "TH", "vietnam": "VN",
+        "indonesia": "ID", "malaysia": "MY", "singapore": "SG", "india": "IN",
+        "australia": "AU", "new zealand": "NZ", "united arab emirates": "AE",
+        "saudi arabia": "SA", "qatar": "QA", "turkey": "TR", "egypt": "EG", "morocco": "MA",
+        "south africa": "ZA", "nigeria": "NG", "kenya": "KE",
+        "united states": "US", "usa": "US", "united states of america": "US",
+        "united kingdom": "GB", "uk": "GB", "great britain": "GB",
+        "south korea": "KR", "czech republic": "CZ", "czechia": "CZ",
+        "uae": "AE", "turkiye": "TR", "türkiye": "TR",
+    }
+    if key in aliases:
+        return aliases[key]
+    try:
+        import pycountry  # type: ignore
+        found = pycountry.countries.lookup(raw)
+        return str(found.alpha_2).upper()
+    except Exception:
+        return ""
+
+
+def _read_sales_csv(path: Path) -> pd.DataFrame:
+    """Read the local T-Travel sales export without exposing it in the report."""
+    for encoding in ("utf-8-sig", "utf-16", "cp1252"):
+        try:
+            return pd.read_csv(path, encoding=encoding, low_memory=False)
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            continue
+    return pd.read_csv(path, low_memory=False)
+
+
+def _sales_competitiveness_matrix(
+    competitiveness: pd.DataFrame,
+    sales_path: str | Path | None = None,
+    recommendations: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """Join origin/destination sales to destination-level price competitiveness.
+
+    Competitiveness comes from the pricing recommendation output; sales come
+    from the local T-Travel export. A route is not labelled competitive unless
+    the destination has at least one credible pricing benchmark.
+    """
+    if sales_path is None:
+        sales_path = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
+    if sales_path is None:
+        try:
+            import config  # type: ignore
+            sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
+        except ImportError:
+            sales_path = None
+    if not sales_path or not Path(sales_path).exists() or competitiveness.empty:
+        return pd.DataFrame(), "Sales file not configured or competitiveness unavailable"
+
+    try:
+        raw = _read_sales_csv(Path(sales_path))
+    except Exception as exc:
+        return pd.DataFrame(), f"Sales file could not be read: {exc}"
+    required = {"BuyerCountry", "Destination", "Quantity", "TransactionDate"}
+    if not required.issubset(raw.columns):
+        return pd.DataFrame(), "Sales export is missing required columns"
+
+    dates = pd.to_datetime(raw["TransactionDate"], errors="coerce", dayfirst=False)
+    quantity = pd.to_numeric(raw["Quantity"], errors="coerce").fillna(0)
+    sale_type = raw.get("TransactionType", pd.Series("SALE", index=raw.index)).astype(str).str.upper()
+    status = raw.get("DocumentStatus", pd.Series("", index=raw.index)).astype(str).str.lower()
+    valid = sale_type.ne("CANCELLATION") & ~status.str.contains("cancel", na=False) & dates.notna() & quantity.gt(0)
+    if not valid.any():
+        return pd.DataFrame(), "No completed sales rows found"
+    as_of = dates[valid].max().date()
+    valid &= dates.dt.date >= as_of - timedelta(days=SALES_LOOKBACK_DAYS - 1)
+    work = raw.loc[valid].copy()
+    work["Origin"] = work["BuyerCountry"].map(_sales_iso2)
+    work["DestinationISO"] = work["Destination"].map(_sales_iso2)
+    work["Units"] = pd.to_numeric(work["Quantity"], errors="coerce").fillna(0)
+    revenue = work["TotalAmount"] if "TotalAmount" in work.columns else pd.Series(0, index=work.index)
+    work["Revenue"] = pd.to_numeric(revenue, errors="coerce").fillna(0)
+    work = work[work["Origin"].ne("") & work["DestinationISO"].ne("") & work["Units"].gt(0)]
+    if work.empty:
+        return pd.DataFrame(), "No sales rows could be mapped to ISO-2 codes"
+
+    comp = competitiveness.copy()
+    comp["ISO"] = comp["ISO"].astype(str).str.upper()
+    comp["Gap"] = pd.to_numeric(comp["TrimmedMeanGapPct"], errors="coerce")
+    comp["CompetitiveScore"] = (100.0 * (1.0 - comp["Gap"])).clip(0, 100)
+    comp = comp.dropna(subset=["Gap"]).drop_duplicates("ISO")
+    grouped = work.groupby(["Origin", "DestinationISO"], as_index=False).agg(
+        SalesUnits=("Units", "sum"), SalesRevenue=("Revenue", "sum")
+    )
+    joined = grouped.merge(
+        comp[["ISO", "Country", "Gap", "CompetitiveScore", "CompetitiveShare", "Evaluated"]],
+        left_on="DestinationISO", right_on="ISO", how="inner",
+    ).drop(columns=["ISO"])
+    if joined.empty:
+        return pd.DataFrame(), f"No sales destinations have a competitiveness benchmark ({as_of})"
+
+    # Cost-floor headroom is destination-level because the pricing output is
+    # product/anchor based. It is shown as context, not used to inflate sales.
+    if recommendations is not None and not recommendations.empty:
+        price = pd.to_numeric(recommendations.get("CurrentNetPrice"), errors="coerce")
+        floor = pd.to_numeric(recommendations.get("CostFloor"), errors="coerce")
+        headroom = recommendations.copy()
+        headroom["_Price"] = price
+        headroom["_Floor"] = floor
+        headroom["_RoomPct"] = ((price - floor) / price).where(price.gt(0) & floor.notna()).clip(lower=0)
+        expanded = []
+        for _, row in headroom.dropna(subset=["_RoomPct"]).iterrows():
+            for code in _row_country_codes(row):
+                expanded.append({"DestinationISO": code, "PriceRoomPct": float(row["_RoomPct"])})
+        if expanded:
+            room = pd.DataFrame(expanded).groupby("DestinationISO", as_index=False)["PriceRoomPct"].median()
+            joined = joined.merge(room, on="DestinationISO", how="left")
+    if "PriceRoomPct" not in joined.columns:
+        joined["PriceRoomPct"] = float("nan")
+
+    sales_mid = float(joined["SalesUnits"].median())
+    comp_mid = float(joined["CompetitiveScore"].median())
+    def quadrant(row: pd.Series) -> str:
+        high_sales = float(row["SalesUnits"]) >= sales_mid
+        strong = float(row["CompetitiveScore"]) >= comp_mid
+        room = float(row.get("PriceRoomPct", 0) or 0)
+        return ("High sales / competitive" if high_sales and strong else
+                "High sales / lower price possible" if high_sales and room >= 0.10 else
+                "High sales / price constrained" if high_sales else
+                "Low sales / competitive" if strong else "Low sales / weak competitiveness")
+    joined["Quadrant"] = joined.apply(quadrant, axis=1)
+    joined["SalesUnits"] = joined["SalesUnits"].round(0).astype(int)
+    joined["SalesRevenue"] = joined["SalesRevenue"].round(2)
+    joined = joined.sort_values(["SalesUnits", "CompetitiveScore"], ascending=[False, False])
+    return joined, f"last {SALES_LOOKBACK_DAYS} days ending {as_of.isoformat()} · medians: {sales_mid:.0f} units / {comp_mid:.0f} competitiveness"
+
+
+def _campaign_product_matrix(
+    competitiveness: pd.DataFrame,
+    recommendations: pd.DataFrame,
+    market: pd.DataFrame,
+    sales_path: str | Path | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """Create route-level campaign rows with a concrete product candidate.
+
+    Sales are observed at origin/destination level because the sales export does
+    not reliably identify the marketed SKU's destination package in a way that
+    can be joined to every pricing anchor. The selected product is therefore a
+    price/competitiveness candidate for the route, not a claim that all route
+    sales came from that SKU.
+    """
+    if sales_path is None:
+        sales_path = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
+    if sales_path is None:
+        try:
+            import config  # type: ignore
+            sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
+        except ImportError:
+            sales_path = None
+    if not sales_path or not Path(sales_path).exists() or recommendations.empty or market.empty:
+        return pd.DataFrame(), "Product candidates unavailable: sales, recommendations or market data missing"
+
+    try:
+        raw = _read_sales_csv(Path(sales_path))
+    except Exception as exc:
+        return pd.DataFrame(), f"Sales file could not be read: {exc}"
+    required = {"BuyerCountry", "Destination", "Quantity", "TransactionDate"}
+    if not required.issubset(raw.columns):
+        return pd.DataFrame(), "Sales export is missing required columns"
+
+    dates = pd.to_datetime(raw["TransactionDate"], errors="coerce", dayfirst=False)
+    quantity = pd.to_numeric(raw["Quantity"], errors="coerce").fillna(0)
+    sale_type = raw.get("TransactionType", pd.Series("SALE", index=raw.index)).astype(str).str.upper()
+    status = raw.get("DocumentStatus", pd.Series("", index=raw.index)).astype(str).str.lower()
+    valid = sale_type.ne("CANCELLATION") & ~status.str.contains("cancel", na=False) & dates.notna() & quantity.gt(0)
+    if not valid.any():
+        return pd.DataFrame(), "No completed sales rows found"
+    as_of = dates[valid].max().date()
+    valid &= dates.dt.date >= as_of - timedelta(days=SALES_LOOKBACK_DAYS - 1)
+    work = raw.loc[valid].copy()
+    work["Origin"] = work["BuyerCountry"].map(_sales_iso2)
+    work["DestinationISO"] = work["Destination"].map(_sales_iso2)
+    work["SalesUnits"] = pd.to_numeric(work["Quantity"], errors="coerce").fillna(0)
+    work = work[work["Origin"].ne("") & work["DestinationISO"].ne("") & work["SalesUnits"].gt(0)]
+    if work.empty:
+        return pd.DataFrame(), "No sales rows could be mapped to ISO-2 codes"
+    sales = work.groupby(["Origin", "DestinationISO"], as_index=False).agg(SalesUnits=("SalesUnits", "sum"))
+
+    comp_names = {}
+    if not competitiveness.empty:
+        comp_names = {
+            _text(row.get("ISO")).upper(): _text(row.get("Country")) or _text(row.get("ISO")).upper()
+            for _, row in competitiveness.iterrows()
+        }
+
+    candidates: list[dict[str, Any]] = []
+    rec = recommendations.copy()
+    rec["Days"] = pd.to_numeric(rec.get("Days"), errors="coerce")
+    rec["GB"] = pd.to_numeric(rec.get("GB"), errors="coerce")
+    rec["CurrentNetPrice"] = pd.to_numeric(rec.get("CurrentNetPrice"), errors="coerce")
+    rec["CostFloor"] = pd.to_numeric(rec.get("CostFloor"), errors="coerce")
+    rec = rec[rec["Days"].isin([1, 3, 7, 10, 15, 30]) & rec["CurrentNetPrice"].gt(0)].copy()
+
+    for _, row in rec.iterrows():
+        days = _num(row.get("Days")); current = _num(row.get("CurrentNetPrice"))
+        if days is None or current is None or current <= 0:
+            continue
+        gb = _num(row.get("GB")) or 0.0
+        plan = _text(row.get("Plan")) or ("Unlimited" if gb <= 0 else "Data")
+        unlimited = "unlimited" in plan.lower() or gb <= 0
+        currency = _text(row.get("Currency")).upper() or "EUR"
+        room = _num(row.get("CostFloor"))
+        room_pct = max(0.0, (current - room) / current) if room is not None and current > 0 else None
+        for code in _row_country_codes(row):
+            ref = _best_market_reference_for_country(
+                market, iso=code, days=float(days), gb=float(gb),
+                unlimited=unlimited, currency=currency,
+            )
+            if not ref:
+                continue
+            benchmark = float(ref["BestBenchmarkPrice"])
+            if benchmark <= 0:
+                continue
+            gap = current / benchmark - 1.0
+            candidates.append({
+                "DestinationISO": code,
+                "Country": comp_names.get(code, code),
+                "Plan": plan,
+                "Days": int(days),
+                "GB": float(gb) if gb > 0 else None,
+                "Currency": currency,
+                "CurrentPrice": current,
+                "CostFloor": room,
+                "PriceRoomPct": room_pct,
+                "BenchmarkPrice": benchmark,
+                "GapPct": gap,
+                "CompetitiveScore": max(0.0, min(100.0, 100.0 * (1.0 - gap))),
+                "ProviderCount": int(ref["ProviderCount"]),
+            })
+
+    if not candidates:
+        return pd.DataFrame(), f"No product candidates with at least {BEST_MARKET_MIN_PROVIDERS} trusted providers"
+    products = pd.DataFrame(candidates)
+    products = products.sort_values(["DestinationISO", "GapPct", "Days"], ascending=[True, True, True])
+
+    # Prefer a commercially usable 7/10-day anchor when it is close to the
+    # strongest candidate; otherwise retain the genuinely most competitive SKU.
+    chosen: list[pd.Series] = []
+    for destination, group in products.groupby("DestinationISO", sort=False):
+        group = group.drop_duplicates(["Plan", "Days", "Currency"], keep="first").copy()
+        best_gap = float(group["GapPct"].min())
+        usable = group[group["GapPct"].le(best_gap + 0.05)]
+        preferred = usable[usable["Days"].isin([7, 10])]
+        pool = preferred if not preferred.empty else usable
+        row = pool.sort_values(["GapPct", "Days"], ascending=[True, True]).iloc[0].copy()
+        chosen.append(row)
+    product_by_destination = pd.DataFrame(chosen)
+    if product_by_destination.empty:
+        return pd.DataFrame(), "No product candidates selected"
+
+    out = sales.merge(product_by_destination, on="DestinationISO", how="inner")
+    sales_median = float(out["SalesUnits"].median()) if not out.empty else 0.0
+    def action(row: pd.Series) -> str:
+        gap = float(row.get("GapPct") or 0.0)
+        room = float(row.get("PriceRoomPct") or 0.0)
+        high_sales = float(row["SalesUnits"]) >= sales_median
+        if gap <= VERY_COMPETITIVE_GAP_PCT:
+            return "Scale current product — no promotion needed"
+        if gap <= COMPETITIVE_GAP_PCT and room >= 0.10:
+            return "Scale current product; test promotion only if volume needs a lift"
+        if gap > COMPETITIVE_GAP_PCT and room >= 0.10:
+            return "Fix price or use a targeted promotion, then scale" if high_sales else "Test a targeted promotion after price review"
+        return "Do not promote yet — price is constrained by cost floor"
+
+    out["CampaignAction"] = out.apply(action, axis=1)
+    out["ProductCandidate"] = out.apply(
+        lambda r: f"{_text(r.get('Plan'))} {int(r['Days'])}d" + (f" / {r['GB']:.1f}GB" if _num(r.get("GB")) else ""),
+        axis=1,
+    )
+    out["SalesUnits"] = out["SalesUnits"].round(0).astype(int)
+    out["Days"] = out["Days"].astype(int)
+    out["CompetitiveScore"] = out["CompetitiveScore"].round(1)
+    out["CurrentPrice"] = out["CurrentPrice"].round(2)
+    out["BenchmarkPrice"] = out["BenchmarkPrice"].round(2)
+    out["GapPct"] = out["GapPct"].round(4)
+    out["PriceRoomPct"] = pd.to_numeric(out["PriceRoomPct"], errors="coerce").round(4)
+    out = out.sort_values(["SalesUnits", "CompetitiveScore"], ascending=[False, False]).reset_index(drop=True)
+    return out, f"last {SALES_LOOKBACK_DAYS} days ending {as_of.isoformat()} · product candidate selected from trusted exact-duration benchmarks"
 
 
 def collect_market_changes(paths: PipelineFiles = FILES) -> pd.DataFrame:
@@ -1455,6 +1757,15 @@ def generate_market_insights(
         latest_market_date=latest_market_date,
         country_names=country_name_map,
     )
+    sales_competitiveness, sales_competitiveness_note = _sales_competitiveness_matrix(
+        competitiveness_countries,
+        recommendations=recs,
+    )
+    campaign_products, campaign_products_note = _campaign_product_matrix(
+        competitiveness_countries,
+        recs,
+        trusted_market,
+    )
 
     actionable = recs[recs.get("Actionable", False).map(_boolish)].copy() if not recs.empty and "Actionable" in recs.columns else pd.DataFrame()
     rec_up = int((actionable.get("Direction", pd.Series(dtype=str)).astype(str).str.upper() == "UP").sum()) if not actionable.empty else 0
@@ -1512,6 +1823,40 @@ def generate_market_insights(
     units_table = _table_html(unit_sorted, [("PricingUnitIdUsed","Pricing unit","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("HighConfidence","High confidence","num"),("MedianMarketGapPct","Median market gap","pct")], "units", 100)
     recommendation_country_table = _table_html(recommendation_countries, [("ISO","ISO","text"),("Country","Country","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("AffectedShare","Anchors affected","pct"),("AvgSuggestedChangePct","Avg suggested change","pct"),("PricingUnits","Pricing units","num")], "recommendation_countries", 200)
     competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors","num"),("TrimmedMeanGapPct","Gap vs best","pct"),("VeryCompetitiveShare","Within 5%","pct"),("AvgProviders","Avg providers","dec")], "competitiveness_countries", 200)
+    if not sales_competitiveness.empty:
+        sales_competitiveness = sales_competitiveness.copy()
+        sales_competitiveness["Route"] = sales_competitiveness["Origin"].astype(str) + " → " + sales_competitiveness["Country"].astype(str)
+        sales_competitiveness_table = _table_html(
+            sales_competitiveness,
+            [("Route", "Route", "text"), ("SalesUnits", "Sales units", "num"),
+             ("CompetitiveScore", "Competitiveness", "dec"), ("Gap", "Gap vs best", "pct"),
+             ("PriceRoomPct", "Room above cost floor", "pct"),
+             ("CompetitiveShare", "Within 15%", "pct"), ("Quadrant", "Campaign interpretation", "text")],
+            "sales_competitiveness", 250,
+        )
+    else:
+        sales_competitiveness_table = '<div class="empty">No sales/competitiveness matrix available yet.</div>'
+
+    if not campaign_products.empty:
+        campaign_products = campaign_products.copy()
+        campaign_products["Route"] = campaign_products["Origin"].astype(str) + " → " + campaign_products["Country"].astype(str)
+        campaign_products_table = _table_html(
+            campaign_products,
+            [
+                ("Route", "Route", "text"),
+                ("SalesUnits", "Sales 60d", "num"),
+                ("ProductCandidate", "Product candidate", "text"),
+                ("CurrentPrice", "Current price", "dec"),
+                ("BenchmarkPrice", "Best benchmark", "dec"),
+                ("GapPct", "Gap vs best", "pct"),
+                ("CompetitiveScore", "Competitiveness", "dec"),
+                ("PriceRoomPct", "Room above floor", "pct"),
+                ("CampaignAction", "Campaign decision", "text"),
+            ],
+            "campaign_products", 250,
+        )
+    else:
+        campaign_products_table = '<div class="empty">No product-level campaign candidates available yet.</div>'
 
     template = Template(r'''<!doctype html>
 <html lang="en">
@@ -1530,6 +1875,7 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 .chart{min-height:260px}.bar-row{display:grid;grid-template-columns:minmax(95px,150px) 1fr 64px;gap:8px;align-items:center;margin:7px 0}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.bar-track{height:16px;background:#eef1f4;border-radius:8px;position:relative;overflow:hidden}.bar-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#b9c1c9}.bar-fill{position:absolute;top:2px;bottom:2px;border-radius:6px;background:var(--magenta)}.bar-value{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}.chart-titleline{display:flex;justify-content:space-between;gap:10px;align-items:end;margin-bottom:8px}.chart-sub{font-size:12px;color:var(--muted)}
 .spark-wrap{height:250px;position:relative}.spark-wrap svg{width:100%;height:100%;display:block}.axis-text{font-size:10px;fill:#74808c}.timeline-line{fill:none;stroke:var(--magenta);stroke-width:3}.timeline-area{fill:rgba(226,0,116,.08)}.timeline-dot{fill:var(--magenta)}.map-wrap{height:470px;position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:linear-gradient(#f8fbfd,#eef4f7)}.map-wrap svg{width:100%;height:100%;display:block}.map-land{fill:#e3eaef;stroke:#b8c5ce;stroke-width:.65}.map-lake{fill:#f4f8fb;stroke:#c6d1d8;stroke-width:.45}.map-border{fill:none;stroke:#c4ced5;stroke-width:.42;opacity:.95}.map-grid{stroke:#d9e2e8;stroke-width:1}.map-equator{stroke:#c0ccd5;stroke-width:1.3}.map-label{font-size:13px;fill:#9aa8b4;font-weight:600;letter-spacing:.05em}.map-dot{stroke:#fff;stroke-width:1.2;cursor:pointer;transition:r .12s,opacity .12s}.map-dot:hover{stroke:#20242a;stroke-width:2;opacity:1!important}.map-iso{font-size:9px;fill:#44515d;font-weight:700;pointer-events:none}.map-legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--muted)}.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}.map-tooltip{position:absolute;display:none;pointer-events:none;z-index:5;min-width:220px;max-width:300px;background:#20242a;color:#fff;border-radius:7px;padding:9px 11px;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:12px;line-height:1.45}.map-tooltip b{font-size:13px}.map-tooltip .muted{color:#cbd2d9}
 .competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.evolution-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.evolution-chart{min-height:285px}.evo-row{display:grid;grid-template-columns:minmax(110px,180px) 1fr 72px;gap:8px;align-items:center;margin:7px 0}.evo-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.evo-fill{position:absolute;left:0;top:3px;bottom:3px;border-radius:5px}.evo-gain{background:var(--green)}.evo-loss{background:var(--red)}.evo-value{text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.evo-controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.evo-controls button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}.evo-controls button.active{background:#111827;color:#fff;border-color:#111827}@media(max-width:900px){.evolution-grid{grid-template-columns:1fr}}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
+.decision-card{border-top:4px solid var(--magenta)}.decision-legend{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 12px}.decision-legend .pill{color:var(--text);background:#f7f8fa}.decision-card table td:last-child{white-space:normal;min-width:240px}
 @media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}.three,.chart-grid{grid-template-columns:1fr}}@media(max-width:750px){.grid,.two,.three,.chart-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -1544,6 +1890,37 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
  <div class="card kpi"><div class="label">Historical observations</div><div class="value">$history_observations</div><div class="note">$history_products comparable product series · $history_min → $history_max</div></div>
  <div class="card kpi"><div class="label">Our recommendations</div><div class="value"><span class="up">↑ $rec_up</span> <span class="down">↓ $rec_down</span></div><div class="note">Exact-duration anchors only</div></div>
 </div>
+
+<section class="card decision-card">
+ <div class="chart-titleline"><div><h2>Where should we campaign next?</h2><div class="chart-sub">T-Travel sales joined to destination competitiveness; this is a prioritisation view, not a pricing forecast.</div></div></div>
+ <div class="decision-legend"><span class="pill">High sales / competitive = scale</span><span class="pill">High sales / weak competitiveness = fix price, then scale</span><span class="pill">Low sales / competitive = test demand</span><span class="pill">Low sales / weak competitiveness = deprioritise</span></div>
+ <h3>Route-level campaign priority</h3>
+ $sales_competitiveness_table
+ <div class="note">$sales_competitiveness_note. Sales are completed T-Travel transactions in the latest 60-day window. Competitiveness is destination-level and uses the latest trusted comparable price anchors.</div>
+ <h3 style="margin-top:18px">Product and promotion decision</h3>
+ <div class="note">The product below is the best current campaign candidate for the destination, selected from exact-duration pricing anchors. Sales are route-level, not SKU-level; the product is therefore a commercial recommendation, not an attribution of historical sales to that SKU.</div>
+ $campaign_products_table
+ <div class="note">$campaign_products_note. “Room above floor” is the percentage distance between current net price and cost floor. A promotion is recommended only where the product is not competitive and there is sufficient floor room.</div>
+</section>
+
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where T-Travel is most competitive</h2><div class="chart-sub">Current net price versus the best credible benchmark from the latest competitor snapshot only</div></div></div>
+ <div class="two">
+  <div><div id="competitivenessCountryChart" class="competitive-chart"></div><div class="note">Benchmark per anchor = the lower of the cheapest trusted exact-duration comparable pack and, for capped plans, the cheapest trusted price/GB × our allowance. At least 2 providers are required. “Very competitive” means our current net price is within 5% of that best benchmark or cheaper. Countries with fewer than 3 comparable anchors are omitted from the chart but remain in the table.</div></div>
+  <div>$competitiveness_country_table<div class="note">Only 1/3/7/10/15/30-day anchors contribute. Capped competitor packs must be 0.5×–2× our GB; one closest-allowance offer per provider is retained (max 5). Only offers present in the latest competitor snapshot contribute; historical prices never enter this benchmark. Quality-excluded rows do not contribute. Regional pricing units are evaluated separately in each covered destination.</div></div>
+ </div>
+</section>
+
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where T-Travel competitiveness is changing</h2><div class="chart-sub">Change in our gap versus the best credible competitor benchmark; positive = gaining competitiveness</div></div></div>
+ <div class="evo-controls" id="evoControls"></div>
+ <div id="evoBasis" class="note"></div>
+ <div class="evolution-grid">
+  <div><h3>Top 10 gaining competitiveness</h3><div id="competitivenessGainers" class="evolution-chart"></div></div>
+  <div><h3>Top 10 losing competitiveness</h3><div id="competitivenessLosers" class="evolution-chart"></div></div>
+ </div>
+ <div class="note">Metric = previous gap versus best credible market − current gap versus best credible market, shown in percentage points. A +10 pp result means our relative position improved by 10 points. Historical T-Travel price snapshots are used when available; otherwise the card explicitly labels the comparison as market-driven only.</div>
+</section>
 
 <section class="card method"><h2>Historical quality guard</h2><div>The primary anomaly check compares each current competitor price with the median of its prior <b>$baseline_days days</b> of history, requiring at least <b>$baseline_min observations</b>. This keeps a repeated bad scrape suspicious even if the immediately previous snapshot is already wrong. Where there is not enough history, the engine falls back to latest-vs-previous. Extreme moves of ≥+$extreme_up or ≤$extreme_down are excluded unless peer providers corroborate the direction <b>or</b> the same provider shows a broad same-direction repricing across at least $broad_moves products in $broad_countries countries. Current cross-sectional outliers remain a separate exclusion gate.</div><div class="note">Raw observations are never deleted. The selectable market windows below are for analysis; the 8-week historical median guard is the data-quality baseline used by recommendations.</div></section>
 
@@ -1567,14 +1944,6 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
  </div>
 </section>
 
-<section class="card">
- <div class="chart-titleline"><div><h2>Where T-Travel is most competitive</h2><div class="chart-sub">Current net price versus the best credible benchmark from the latest competitor snapshot only</div></div></div>
- <div class="two">
-  <div><div id="competitivenessCountryChart" class="competitive-chart"></div><div class="note">Benchmark per anchor = the lower of the cheapest trusted exact-duration comparable pack and, for capped plans, the cheapest trusted price/GB × our allowance. At least 2 providers are required. “Very competitive” means our current net price is within 5% of that best benchmark or cheaper. Countries with fewer than 3 comparable anchors are omitted from the chart but remain in the table.</div></div>
-  <div>$competitiveness_country_table<div class="note">Only 1/3/7/10/15/30-day anchors contribute. Capped competitor packs must be 0.5×–2× our GB; one closest-allowance offer per provider is retained (max 5). Only offers present in the latest competitor snapshot contribute; historical prices never enter this benchmark. Quality-excluded rows do not contribute. Regional pricing units are evaluated separately in each covered destination.</div></div>
- </div>
-</section>
-
 <section class="chart-grid">
  <div class="card chart"><div class="chart-titleline"><div><h2>Largest country movements</h2><div class="chart-sub" id="countryChartSub"></div></div></div><div id="countryChart"></div></div>
  <div class="card chart"><div class="chart-titleline"><div><h2>Largest provider movements</h2><div class="chart-sub" id="providerChartSub"></div></div></div><div id="providerChart"></div></div>
@@ -1591,17 +1960,6 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 </section>
 
 <section class="card dynamic-table"><h2>Largest trusted competitor moves</h2><input class="table-search" id="movesSearch" type="search" placeholder="Filter move…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>ISO</th><th>Country</th><th>Plan</th><th>Days</th><th>GB</th><th>Previous</th><th>Current</th><th>Change</th><th>Previous date</th><th>Current date</th></tr></thead><tbody id="movesBody"></tbody></table></div><div class="note">The table follows the selected time window. Product identity is provider + market + plan + duration + allowance + currency.</div></section>
-
-<section class="card">
- <div class="chart-titleline"><div><h2>Where T-Travel competitiveness is changing</h2><div class="chart-sub">Change in our gap versus the best credible competitor benchmark; positive = gaining competitiveness</div></div></div>
- <div class="evo-controls" id="evoControls"></div>
- <div id="evoBasis" class="note"></div>
- <div class="evolution-grid">
-  <div><h3>Top 10 gaining competitiveness</h3><div id="competitivenessGainers" class="evolution-chart"></div></div>
-  <div><h3>Top 10 losing competitiveness</h3><div id="competitivenessLosers" class="evolution-chart"></div></div>
- </div>
- <div class="note">Metric = previous gap versus best credible market − current gap versus best credible market, shown in percentage points. A +10 pp result means our relative position improved by 10 points. Historical T-Travel price snapshots are used when available; otherwise the card explicitly labels the comparison as market-driven only.</div>
-</section>
 
 <section class="card"><h2>Data quality — excluded suspicious current prices</h2>$quality_table<div class="note">For historical-median rows, “Baseline” is the median of prior observations, not a single snapshot. These rows remain in SQLite for audit/review and are excluded only from trusted analytics/recommendations.</div></section>
 <section class="card"><h2>Provider coverage & freshness</h2>$coverage_table<div class="note">Freshness is measured against the newest observation date in the DB: current ≤7 days, watch 8–14 days, stale &gt;14 days. Coverage deltas can reveal partial/failed scrapes.</div></section>
@@ -1666,12 +2024,17 @@ function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' 
         rec_up=f"{rec_up:,}", rec_down=f"{rec_down:,}", baseline_days=HISTORICAL_BASELINE_DAYS,
         baseline_min=HISTORICAL_MIN_OBSERVATIONS, extreme_up=f"{EXTREME_UP_PCT:.0%}", extreme_down=f"{abs(EXTREME_DOWN_PCT):.0%}", broad_moves=MIN_PROVIDER_BROAD_MOVES, broad_countries=MIN_PROVIDER_BROAD_COUNTRIES,
         days_table=days_table, plans_table=plans_table, quality_table=quality_table, coverage_table=coverage_table, units_table=units_table, recommendation_country_table=recommendation_country_table, competitiveness_country_table=competitiveness_country_table,
+        sales_competitiveness_table=sales_competitiveness_table,
+        sales_competitiveness_note=escape(sales_competitiveness_note),
+        campaign_products_table=campaign_products_table,
+        campaign_products_note=escape(campaign_products_note),
         history_db=escape(str(paths.market_history_db)), history_providers=f"{int(history.get('providers', 0)):,}", history_countries=f"{int(history.get('countries', 0)):,}",
         audit_rows=f"{len(current_outlier_audit):,}", imported=history_stats.imported_files, skipped=history_stats.skipped_files,
         dashboard_json=dashboard_json, default_key=default_key,
     )
     output_path.write_text(html, encoding="utf-8")
     print(f"Market insights generator: {DASHBOARD_VERSION} ({Path(__file__).resolve()})")
+    print(f"Sales/competitiveness matrix: {len(sales_competitiveness)} route rows ({sales_competitiveness_note})")
     print(f"Saved: {output_path}")
     return output_path
 

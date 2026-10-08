@@ -82,3 +82,5 @@ if BASE_DIR.name == "automation":
     BASE_DIR = BASE_DIR.parent
 INPUT_REGIONS = BASE_DIR / "inputs" / "destinations.yaml"
 OUTPUT_NAME = "region_prices_current.csv"
+
+T_TRAVEL_SALES_FILE = r"C:\Users\ddeblock\Deutsche Telekom AG\HT-TD Travel eSIM Launch - Documents\General\11_Reporting\T-Travel_sales_master.csv"
