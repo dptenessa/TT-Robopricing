@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Euronews Travel",
+    "url": "https://www.euronews.com/rss?level=vertical&name=travel",
+    "enabled": true
+  },
+  {
+    "name": "Hospitality Net Asia Pacific",
+    "url": "https://www.hospitalitynet.org/rss/news/asia.xml",
+    "enabled": true
+  },
+  {
+    "name": "Hospitality Net USA and Canada",
+    "url": "https://www.hospitalitynet.org/rss/news/us.xml",
+    "enabled": true
+  },
+  {
+    "name": "Travel and Tour World",
+    "url": "https://feeds.feedburner.com/travelandtourworld/home",
+    "enabled": true
+  },
+  {
+    "name": "Breaking Travel News Events",
+    "url": "https://feeds.feedburner.com/breakingtravelnewsevents/events",
+    "enabled": true
+  },
+  {
+    "name": "Breaking Travel News Tourism",
+    "url": "https://feeds.feedburner.com/breakingtravelnews/news/tourism",
+    "enabled": true
+  }
+]

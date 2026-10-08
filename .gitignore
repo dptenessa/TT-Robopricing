@@ -31,3 +31,25 @@ promo_countries.xlsx
 README.md
 Final_pricing.xlsx
 reorg-import-test*/
+
+# Travel Intelligence
+# Intelligence local runtime files
+automation/intelligence/__pycache__/
+automation/intelligence/cache/
+automation/intelligence/backups/
+automation/intelligence/outputs/
+automation/intelligence/*.db
+automation/intelligence/*.sqlite*
+automation/intelligence/*.db-*
+automation/intelligence/*.html
+automation/intelligence/*.xlsx
+automation/intelligence/**/*.csv
+automation/intelligence/*.log
+
+# Intelligence private configuration
+automation/intelligence/inputs/
+automation/intelligence/credentials.json
+automation/intelligence/google-ads.yaml
+automation/intelligence/.env*
+
+automation/intelligence/config.py
