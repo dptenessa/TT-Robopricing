@@ -14,7 +14,13 @@ last 30 days. Search momentum is then derived from that stored history, rather
 than treating a single rank as a fake 0-100 momentum score.
 """
 from __future__ import annotations
+from functools import lru_cache
+from collector_cache import ensure_cache_schema, fresh, mark, cached_trends
 
+from route_policy import route_allowed, origin_allowed, ROUTE_POLICY_VERSION, configure_input_dir
+
+
+from pathlib import Path
 import argparse
 import csv
 import json
@@ -23,10 +29,12 @@ import os
 import sqlite3
 import statistics
 import urllib.request
+import urllib.error
+import time
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 
-VERSION = "1.5-top100-origins"
+VERSION = "1.7.1-holiday-coverage-validation"
 
 TEST_ORIGINS = ["DE", "FR"]
 TEST_DESTINATIONS = ["JP", "TR", "ES", "MA", "US"]
@@ -93,6 +101,7 @@ def load_input_files(
         except OSError as exc:
             raise RuntimeError(f"Cannot read input file: {path}\n{exc}") from exc
 
+    trend_matches_destination.cache_clear()
     origin_rows = read_rows("origins.csv")
     origins = [
         str(row.get("origin_iso2") or "").strip().upper()
@@ -230,14 +239,121 @@ def ensure_schema(db: sqlite3.Connection) -> None:
     """)
 
 
-def fetch_public_holidays(country: str, year: int, timeout: int) -> list[dict]:
-    url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country}"
+class HolidayDataUnavailable(RuntimeError):
+    """The source explicitly returned no calendar; not an empty holiday year."""
+
+
+def _holiday_json(endpoint: str, timeout: int):
     req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "T-Travel Demand Collector/1.2"},
+        "https://date.nager.at/api/v3/" + endpoint,
+        headers={"User-Agent": "T-Travel Demand Collector/" + VERSION,
+                 "Accept": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status = response.status
+            body = response.read()
+            content_type = response.headers.get("Content-Type", "unknown")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Nager.Date HTTP {exc.code} for {endpoint}") from exc
+    if status == 204:
+        raise HolidayDataUnavailable("Nager.Date returned HTTP 204 (no calendar supplied)")
+    if not body.strip():
+        raise RuntimeError(f"Nager.Date HTTP {status}: empty response for {endpoint}")
+    try:
+        result = json.loads(body.decode("utf-8-sig"))
+    except (ValueError, UnicodeError) as exc:
+        raise RuntimeError(
+            f"Nager.Date HTTP {status}: invalid JSON ({content_type}) for {endpoint}"
+        ) from exc
+    if not isinstance(result, list):
+        raise RuntimeError(f"Nager.Date expected an array for {endpoint}")
+    return result
+
+
+def holiday_support(db, timeout, force=False, offline=False):
+    """Cache the provider's country list for seven days; never guess support."""
+    db.execute("""CREATE TABLE IF NOT EXISTS holiday_source_cache (
+        cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, checked_at REAL NOT NULL)""")
+    cached = db.execute(
+        "SELECT payload,checked_at FROM holiday_source_cache WHERE cache_key='countries'"
+    ).fetchone()
+    if cached and not force and 0 <= time.time()-cached[1] < 7*86400:
+        return set(json.loads(cached[0]))
+    if offline:
+        return None
+    try:
+        rows = _holiday_json("AvailableCountries", timeout)
+        codes = {r["countryCode"].upper() for r in rows
+                 if isinstance(r, dict) and isinstance(r.get("countryCode"), str)
+                 and len(r["countryCode"]) == 2 and r["countryCode"].isalpha()}
+        if not codes or len(codes) != len(rows):
+            raise RuntimeError("Nager.Date country list is empty or malformed")
+        with db:
+            db.execute("INSERT OR REPLACE INTO holiday_source_cache VALUES(?,?,?)",
+                       ("countries", json.dumps(sorted(codes)), time.time()))
+        return codes
+    except Exception as exc:
+        print(f"HOLIDAY ERR country-list: {exc}; trying individual calendars")
+        return None
+
+
+def fetch_public_holidays(country: str, year: int, timeout: int) -> list[dict]:
+    rows = _holiday_json(f"PublicHolidays/{year}/{country}", timeout)
+    # Validate the whole response before replacing a previously valid snapshot.
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not row["name"].strip():
+            raise RuntimeError("Nager.Date holiday record has no valid name")
+        try:
+            day = date.fromisoformat(row["date"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Nager.Date holiday record has no valid date") from exc
+        if day.year != year or row.get("countryCode") != country:
+            raise RuntimeError("Nager.Date holiday record is outside requested country/year")
+    return rows
+
+
+def refresh_holiday_calendars(db, origins, as_of, timeout, force=False, offline=False):
+    supported = holiday_support(db, timeout, force, offline)
+    years = sorted({as_of.year, (as_of + timedelta(days=90)).year})
+    if offline:
+        print("HOLIDAYS: offline; using only valid cached calendars")
+        return
+    for origin in origins:
+        if supported is not None and origin not in supported:
+            # Invalidate old success markers, not historical holiday records.
+            with db:
+                db.execute("DELETE FROM collector_refresh WHERE source='holidays-v1' AND origin=?", (origin,))
+            print(f"HOLIDAYS {origin}: unsupported by Nager.Date; holiday signal N/A")
+            continue
+        for year in years:
+            if not force and holidays_cached(db, origin, year):
+                print(f"HOLIDAYS {origin}/{year}: cached calendar")
+                continue
+            if not force and fresh(db, "holidays-unavailable-v1", origin, str(year), 86400):
+                print(f"HOLIDAYS {origin}/{year}: source supplied no calendar; retry after 24h")
+                continue
+            try:
+                rows = fetch_public_holidays(origin, year, timeout)
+                with db:
+                    db.execute("""DELETE FROM holiday_periods WHERE origin_iso2=?
+                        AND source='Nager.Date' AND holiday_date BETWEEN ? AND ?""",
+                        (origin, f"{year}-01-01", f"{year}-12-31"))
+                    count = store_holidays(db, origin, rows)
+                    mark(db, "holidays-v1", origin, str(year))
+                    db.execute("""DELETE FROM collector_refresh
+                        WHERE source='holidays-unavailable-v1' AND origin=? AND period=?""",
+                        (origin, str(year)))
+                print(f"HOLIDAYS {origin}/{year}: {count} loaded/refreshed")
+            except HolidayDataUnavailable as exc:
+                with db:
+                    mark(db, "holidays-unavailable-v1", origin, str(year))
+                    db.execute("""DELETE FROM collector_refresh
+                        WHERE source='holidays-v1' AND origin=? AND period=?""",
+                        (origin, str(year)))
+                print(f"HOLIDAYS {origin}/{year}: {exc}; signal unavailable, retry after 24h")
+            except Exception as exc:
+                print(f"HOLIDAY ERR {origin}/{year}: {exc}; refresh not marked successful")
 
 
 def store_holidays(db: sqlite3.Connection, country: str, rows: list[dict]) -> int:
@@ -273,18 +389,7 @@ def store_holidays(db: sqlite3.Connection, country: str, rows: list[dict]) -> in
 
 
 def holidays_cached(db: sqlite3.Connection, country: str, year: int) -> bool:
-    """Return true when this origin/year already has a holiday snapshot."""
-    row = db.execute(
-        """
-        SELECT COUNT(*)
-        FROM holiday_periods
-        WHERE origin_iso2=?
-          AND holiday_date BETWEEN ? AND ?
-          AND source='Nager.Date'
-        """,
-        (country, f"{year}-01-01", f"{year}-12-31"),
-    ).fetchone()
-    return bool(row and row[0])
+    return fresh(db, "holidays-v1", country, str(year), 30*86400)
 
 
 def holiday_score(
@@ -292,8 +397,11 @@ def holiday_score(
     origin: str,
     as_of: date,
     horizon_days: int = 45,
-) -> tuple[float, dict]:
+) -> tuple[float | None, dict]:
     end = as_of + timedelta(days=horizon_days)
+    if not all(holidays_cached(db, origin, year) for year in range(as_of.year, end.year + 1)):
+        return None, {"upcoming": [], "available": False,
+                      "note": "Holiday calendar unavailable, incomplete or stale; not evidence of no holidays"}
 
     rows = db.execute("""
         SELECT holiday_date, holiday_name
@@ -342,6 +450,8 @@ def seasonality_score(destination: str, month: int) -> tuple[float, str]:
     return 50.0, "neutral fallback"
 
 
+OBSERVATION_SQL = '\n    INSERT INTO demand_observations(\n        observed_date, origin_iso2, destination_iso2,\n        signal_type, signal_value, baseline_value,\n        normalized_score, source, confidence, metadata_json\n    )\n    VALUES(?,?,?,?,?,?,?,?,?,?)\n    ON CONFLICT(\n        observed_date, origin_iso2, destination_iso2,\n        signal_type, source\n    )\n    DO UPDATE SET\n        signal_value=excluded.signal_value,\n        baseline_value=excluded.baseline_value,\n        normalized_score=excluded.normalized_score,\n        confidence=excluded.confidence,\n        metadata_json=excluded.metadata_json\n    '
+
 def upsert_observation(
     db: sqlite3.Connection,
     observed: str,
@@ -353,24 +463,9 @@ def upsert_observation(
     confidence: float,
     metadata: dict,
 ) -> None:
-    db.execute("""
-    INSERT INTO demand_observations(
-        observed_date, origin_iso2, destination_iso2,
-        signal_type, signal_value, baseline_value,
-        normalized_score, source, confidence, metadata_json
-    )
-    VALUES(?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(
-        observed_date, origin_iso2, destination_iso2,
-        signal_type, source
-    )
-    DO UPDATE SET
-        signal_value=excluded.signal_value,
-        baseline_value=excluded.baseline_value,
-        normalized_score=excluded.normalized_score,
-        confidence=excluded.confidence,
-        metadata_json=excluded.metadata_json
-    """, (
+    if not route_allowed(origin, dest):
+        return
+    db.execute(OBSERVATION_SQL, (
         observed,
         origin,
         dest,
@@ -447,6 +542,8 @@ def store_google_ads_monthly(
     monthly_searches: float,
     avg_monthly_searches: float,
 ) -> None:
+    if not route_allowed(origin, destination):
+        return
     db.execute("""
     INSERT INTO google_ads_keywords(
         observed_date, origin_iso2, destination_iso2, keyword,
@@ -506,6 +603,8 @@ def collect_google_ads(
         keyword_to_dest: dict[str, str] = {}
 
         for dest in destinations:
+            if not route_allowed(origin, dest):
+                continue
             for keyword in keyword_set(origin, dest):
                 keywords.append(keyword)
                 keyword_to_dest[keyword.lower()] = dest
@@ -591,6 +690,8 @@ def collect_google_ads(
             matched += 1
 
         for dest in destinations:
+            if not route_allowed(origin, dest):
+                continue
             average = average_by_dest[dest]
             baseline = baseline_score_from_volume(average)
 
@@ -643,6 +744,8 @@ def collect_google_ads(
             f"{matched} keyword rows matched"
         )
         for dest in destinations:
+            if not route_allowed(origin, dest):
+                continue
             avg = average_by_dest[dest]
             if avg > 0:
                 print(
@@ -654,6 +757,7 @@ def collect_google_ads(
     return output
 
 
+@lru_cache(maxsize=200000)
 def trend_matches_destination(term: str, destination: str) -> bool:
     normalized = " ".join(
         str(term or "").lower().replace("–", " ").replace("-", " ").split()
@@ -701,111 +805,68 @@ def collect_google_trends_history(
     destinations: list[str],
     project_id: str,
     history_days: int = 30,
+    refresh: bool = False,
+    offline: bool = False,
 ) -> dict[tuple[str, str], float]:
     """Fetch and store daily Top/Rising terms for the recent history window."""
-    try:
-        from google.cloud import bigquery
-    except ImportError:
-        print(
-            "GOOGLE TRENDS SKIP: install with: "
-            "pip install google-cloud-bigquery"
-        )
-        return {}
-
-    try:
-        client = bigquery.Client(project=project_id)
-    except Exception as exc:
-        print(
-            "GOOGLE TRENDS SKIP: BigQuery authentication/project "
-            f"problem ({exc})"
-        )
-        return {}
-
     min_date = date.fromisoformat(observed) - timedelta(days=history_days - 1)
-    origin_sql = ",".join(
-        "'" + origin.upper() + "'"
-        for origin in origins
-        if len(origin) == 2 and origin.isalpha()
-    )
-
-    if not origin_sql:
-        return {}
-
-    sql = f"""
-    WITH top_terms AS (
-      SELECT DISTINCT
-        refresh_date,
-        country_code,
-        term,
-        score,
-        rank,
-        CAST(NULL AS STRING) AS week,
-        'top' AS kind
-      FROM `bigquery-public-data.google_trends.international_top_terms`
-      WHERE refresh_date BETWEEN DATE('{min_date.isoformat()}')
-                              AND DATE('{observed}')
-        AND country_code IN ({origin_sql})
-    ),
-    rising_terms AS (
-      SELECT DISTINCT
-        refresh_date,
-        country_code,
-        term,
-        score,
-        rank,
-        CAST(NULL AS STRING) AS week,
-        'rising' AS kind
-      FROM `bigquery-public-data.google_trends.international_top_rising_terms`
-      WHERE refresh_date BETWEEN DATE('{min_date.isoformat()}')
-                              AND DATE('{observed}')
-        AND country_code IN ({origin_sql})
-    )
-    SELECT * FROM top_terms
-    UNION ALL
-    SELECT * FROM rising_terms
-    ORDER BY refresh_date DESC, country_code, kind, rank
-    """
-
-    try:
-        rows = list(client.query(sql).result())
-    except Exception as exc:
-        print(f"GOOGLE TRENDS ERR: {exc}")
-        return {}
-
-    captured_at = (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
-
-    matched_counts: defaultdict[tuple[str, str], int] = defaultdict(int)
-    rows_by_origin: defaultdict[str, list] = defaultdict(list)
-    unique_source_dates: set[str] = set()
-
+    def query(lo, hi, members):
+        from google.cloud import bigquery
+        client = bigquery.Client(project=project_id)
+        origin_sql = ",".join("'"+o+"'" for o in members if len(o)==2 and o.isalpha())
+        sql = f"""
+        WITH top_terms AS (
+          SELECT DISTINCT
+            refresh_date,
+            country_code,
+            term,
+            score,
+            rank,
+            CAST(NULL AS STRING) AS week,
+            'top' AS kind
+          FROM `bigquery-public-data.google_trends.international_top_terms`
+          WHERE refresh_date BETWEEN DATE('{lo}')
+                                  AND DATE('{hi}')
+            AND country_code IN ({origin_sql})
+        ),
+        rising_terms AS (
+          SELECT DISTINCT
+            refresh_date,
+            country_code,
+            term,
+            score,
+            rank,
+            CAST(NULL AS STRING) AS week,
+            'rising' AS kind
+          FROM `bigquery-public-data.google_trends.international_top_rising_terms`
+          WHERE refresh_date BETWEEN DATE('{lo}')
+                                  AND DATE('{hi}')
+            AND country_code IN ({origin_sql})
+        )
+        SELECT * FROM top_terms
+        UNION ALL
+        SELECT * FROM rising_terms
+        ORDER BY refresh_date DESC, country_code, kind, rank
+        """
+    
+        return client.query(sql).result()
+    rows = cached_trends(db, observed, origins, history_days, query,
+                         force=refresh, offline=offline)
+    rows_by_origin = defaultdict(list)
     for row in rows:
-        store_trend_row(db, row, captured_at)
         rows_by_origin[str(row.country_code)].append(row)
-        unique_source_dates.add(str(row.refresh_date))
-
-        for dest in destinations:
-            if trend_matches_destination(str(row.term), dest):
-                matched_counts[(str(row.country_code), dest)] += 1
-
-    print(
-        f"GOOGLE TRENDS: {len(rows)} daily rows read across "
-        f"{len(unique_source_dates)} refresh dates; "
-        f"stored raw history in google_trends_terms"
-    )
 
     output: dict[tuple[str, str], float] = {}
 
     for origin in origins:
+        by_term = defaultdict(list)
+        for row in rows_by_origin.get(origin, []):
+            by_term[str(row.term)].append(row)
         for dest in destinations:
-            # The BigQuery result already contains the complete requested
-            # history. Reuse it in memory instead of issuing a SQLite query
-            # for every origin/destination corridor.
-            rows_match = rows_by_origin.get(origin, [])
+            if not route_allowed(origin, dest):
+                continue
+            rows_match = [row for term, term_rows in by_term.items()
+                          if trend_matches_destination(term, dest) for row in term_rows]
 
             day_scores: dict[str, float] = {}
             terms_by_day: defaultdict[str, set[str]] = defaultdict(set)
@@ -1006,6 +1067,8 @@ def store_combined_momentum(
 ) -> None:
     for origin in origins:
         for dest in destinations:
+            if not route_allowed(origin, dest):
+                continue
             trend_score = trends.get((origin, dest))
             ads_score = ads.get((origin, dest))
 
@@ -1020,9 +1083,7 @@ def store_combined_momentum(
                 source = "Google Trends + Google Ads"
                 confidence = 0.90
             elif trend_score is not None:
-                score = trend_score
-                source = "Google Trends BigQuery"
-                confidence = 0.85
+                continue
             else:
                 score = ads_score
                 source = "Google Ads Keyword Planner"
@@ -1049,7 +1110,7 @@ def main() -> int:
         description="Collect T-Travel demand signals"
     )
 
-    parser.add_argument("--database", default="events.db")
+    parser.add_argument("--database", default=str(Path(__file__).resolve().parent / "events.db"))
     parser.add_argument(
         "--input-dir",
         default=INPUT_DIR,
@@ -1093,13 +1154,14 @@ def main() -> int:
     parser.add_argument(
         "--no-network",
         action="store_true",
-        help="Skip holiday API; useful for offline testing",
+        help="Disable external network calls; reuse complete cached Trends history",
     )
     parser.add_argument(
         "--refresh-holidays",
         action="store_true",
         help="Refetch cached Nager.Date holiday snapshots",
     )
+    parser.add_argument("--refresh-trends", action="store_true", help="Requery the full requested Trends window")
     parser.add_argument("--timeout", type=int, default=20)
 
     parser.add_argument(
@@ -1129,6 +1191,7 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+    configure_input_dir(args.input_dir)
 
     as_of = (
         date.fromisoformat(args.date)
@@ -1167,8 +1230,12 @@ def main() -> int:
             f"{args.portfolio_file}"
         )
 
+    origins = [o for o in origins if origin_allowed(o, args.input_dir)]
+    print("Route policy:", ROUTE_POLICY_VERSION)
     db = sqlite3.connect(args.database)
     ensure_schema(db)
+    ensure_cache_schema(db)
+    db.execute("PRAGMA busy_timeout=30000")
 
     print(f"T-Travel Demand Collector {VERSION}")
     print(
@@ -1180,79 +1247,26 @@ def main() -> int:
         destinations,
     )
 
-    if not args.no_network:
-        for origin in origins:
-            try:
-                total = 0
-                years = sorted({
-                    as_of.year,
-                    (as_of + timedelta(days=90)).year,
-                })
+    refresh_holiday_calendars(
+        db, origins, as_of, args.timeout,
+        force=args.refresh_holidays, offline=args.no_network,
+    )
 
-                for year in years:
-                    if not args.refresh_holidays and holidays_cached(db, origin, year):
-                        continue
-                    total += store_holidays(
-                        db,
-                        origin,
-                        fetch_public_holidays(
-                            origin,
-                            year,
-                            args.timeout,
-                        ),
-                    )
-
-                print(
-                    f"HOLIDAYS {origin}: "
-                    f"{total} loaded/refreshed"
-                )
-
-            except Exception as exc:
-                print(f"HOLIDAY ERR {origin}: {exc}")
-
-    written = 0
-
+    base_rows = []
+    observed = as_of.isoformat()
     for origin in origins:
-        hscore, hmeta = holiday_score(
-            db,
-            origin,
-            as_of,
-        )
-
+        hscore, hmeta = holiday_score(db, origin, as_of)
         for dest in destinations:
-            sscore, note = seasonality_score(
-                dest,
-                as_of.month,
-            )
-
-            upsert_observation(
-                db,
-                as_of.isoformat(),
-                origin,
-                dest,
-                "holiday",
-                hscore,
-                "Nager.Date public holidays",
-                0.60,
-                hmeta,
-            )
-
-            upsert_observation(
-                db,
-                as_of.isoformat(),
-                origin,
-                dest,
-                "seasonality",
-                sscore,
-                "V1 heuristic",
-                0.35,
-                {
-                    "note": note,
-                    "month": as_of.month,
-                },
-            )
-
-            written += 2
+            if not route_allowed(origin, dest):
+                continue
+            sscore, note = seasonality_score(dest, as_of.month)
+            base_rows.append((observed, origin, dest, "holiday", hscore, None, hscore,
+                "Nager.Date public holidays", 0.60 if hscore is not None else 0.0, json.dumps(hmeta, ensure_ascii=False)))
+            base_rows.append((observed, origin, dest, "seasonality", sscore, None, sscore,
+                "V1 heuristic", 0.35, json.dumps({"note":note,"month":as_of.month},ensure_ascii=False)))
+    with db:
+        db.executemany(OBSERVATION_SQL, base_rows)
+    written = len(base_rows)
 
     trends_scores: dict[tuple[str, str], float] = {}
     ads_scores: dict[tuple[str, str], float] = {}
@@ -1266,6 +1280,7 @@ def main() -> int:
                 destinations,
                 args.google_trends_project,
                 max(1, args.google_trends_history_days),
+                refresh=args.refresh_trends, offline=args.no_network,
             )
         else:
             print(
@@ -1273,7 +1288,7 @@ def main() -> int:
                 "--google-trends-project PROJECT_ID to enable"
             )
 
-    if not args.skip_google_ads:
+    if not args.skip_google_ads and not args.no_network:
         if args.google_ads_customer_id:
             ads_scores = collect_google_ads(
                 db,

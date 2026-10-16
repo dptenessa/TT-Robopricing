@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import json
@@ -26,13 +26,13 @@ def _state(store: PromoStore, c: Campaign, today: date) -> tuple[str, str]:
     if imported and end is not None and end < today:
         return "Removal overdue", "overdue"
     if imported:
-        return "Published · imported manually", "published"
+        return "Published Â· imported manually", "published"
     if started and end is not None and end < today:
         return "Removal overdue", "overdue"
     if started:
         return "Published", "published"
     if end is not None and end < today:
-        return "Expired · never published", "missed"
+        return "Expired Â· never published", "missed"
     if start is not None and start <= today:
         return "Start due", "due"
     return "Planned", "planned"
@@ -70,15 +70,9 @@ def _key_dates(payload: list[dict], today: date) -> list[dict]:
         start = _parse(c.get("actual_start", ""))
         end = _parse(c.get("actual_end", ""))
         if not c.get("imported") and start is not None:
-            items.extend([
-                {"date": (start - timedelta(days=1)).isoformat(), "kind": "Reminder", "label": f"{c['name']} starts tomorrow", "campaign": c["name"]},
-                {"date": start.isoformat(), "kind": "PUBLISH", "label": f"Publish {c['name']} to current prices", "campaign": c["name"]},
-            ])
+            items.append({"date": start.isoformat(), "kind": "PUBLISH", "label": f"Publish {c['name']} to current prices", "campaign": c["name"]})
         if end is not None:
-            items.extend([
-                {"date": (end - timedelta(days=1)).isoformat(), "kind": "Reminder", "label": f"{c['name']} ends tomorrow", "campaign": c["name"]},
-                {"date": end.isoformat(), "kind": "REMOVE", "label": f"Remove {c['name']} from current prices", "campaign": c["name"]},
-            ])
+            items.append({"date": end.isoformat(), "kind": "REMOVE", "label": f"Remove {c['name']} from current prices", "campaign": c["name"]})
     items.sort(key=lambda x: (x["date"], x["kind"], x["campaign"]))
     return [x for x in items if x["date"] >= (today - timedelta(days=7)).isoformat()]
 
@@ -123,12 +117,12 @@ table{{width:100%;border-collapse:collapse;background:white;border:1px solid var
 </head>
 <body>
 <div class=\"wrap\">
-  <div class=\"head\"><div><h1>T-Travel Promotion Plan</h1><div class=\"sub\">Management timeline · generated {html.escape(generated)} · current status is based on actual publication to manual prices</div></div>
+  <div class=\"head\"><div><h1>T-Travel Promotion Plan</h1><div class=\"sub\">Management timeline Â· generated {html.escape(generated)} Â· current status is based on actual publication to manual prices</div></div>
   <div class=\"controls\"><span class=\"sub\">Horizon</span><button data-months=\"3\">3 months</button><button class=\"active\" data-months=\"6\">6 months</button><button data-months=\"12\">12 months</button><button id=\"expiredToggle\">Hide expired</button></div></div>
   <div class=\"cards\" id=\"cards\"></div>
   <div class=\"legend\"><span><i class=\"dot\" style=\"background:var(--planned)\"></i>Planned</span><span><i class=\"dot\" style=\"background:var(--published)\"></i>Published</span><span><i class=\"dot\" style=\"background:var(--overdue)\"></i>Removal overdue</span><span><i class=\"dot\" style=\"background:var(--expired)\"></i>Expired</span></div>
   <div class=\"panel timeline-scroll\"><div class=\"timeline\" id=\"timeline\"></div></div>
-  <div class=\"section-title\"><h2>Next key dates</h2><div class=\"sub\">Includes the day-before reminders mirrored in Outlook</div></div>
+  <div class=\"section-title\"><h2>Next key dates</h2><div class=\"sub\">Campaign changes applied at midnight on each date</div></div>
   <table><thead><tr><th>Date</th><th>Action</th><th>Campaign</th><th>What happens</th></tr></thead><tbody id=\"keyDates\"></tbody></table>
 </div>
 <script>
@@ -150,7 +144,7 @@ function render(){{
   const tl=document.getElementById('timeline'); tl.innerHTML=''; tl.style.setProperty('--month-w',(100/months)+'%');
   const mh=document.createElement('div'); mh.className='months'; mh.style.gridTemplateColumns=`repeat(${{months}},1fr)`; for(let i=0;i<months;i++){{let d=addMonths(start,i); let x=document.createElement('div');x.className='month';x.textContent=d.toLocaleDateString('en-GB',{{month:'short',year:'numeric'}});mh.appendChild(x)}} tl.appendChild(mh);
   if(!visible.length){{tl.insertAdjacentHTML('beforeend','<div class=\"empty\">No campaigns in this horizon.</div>');return}}
-  visible.forEach(c=>{{const row=document.createElement('div');row.className='row'; row.innerHTML=`<div class=\"name\"><strong>${{esc(c.name)}}</strong><span>${{esc(c.promo)}} · ${{esc(c.state)}}</span></div><div class=\"track\"></div>`; const tr=row.querySelector('.track'); const cs=Math.max(parse(c.start),start), ce=Math.min(new Date(parse(c.end).getTime()+86400000),end); const left=Math.max(0,(cs-start)/span*100), width=Math.max(.35,(ce-cs)/span*100); const bar=document.createElement('div');bar.className='bar '+c.state_key;bar.style.left=left+'%';bar.style.width=width+'%';bar.title=`${{c.name}}\n${{c.start}} → ${{c.end}}\n${{c.promo}}\n${{c.state}}`;bar.textContent=c.name;tr.appendChild(bar);tl.appendChild(row)}});
+  visible.forEach(c=>{{const row=document.createElement('div');row.className='row'; row.innerHTML=`<div class=\"name\"><strong>${{esc(c.name)}}</strong><span>${{esc(c.promo)}} Â· ${{esc(c.state)}}</span></div><div class=\"track\"></div>`; const tr=row.querySelector('.track'); const cs=Math.max(parse(c.start),start), ce=Math.min(new Date(parse(c.end).getTime()+86400000),end); const left=Math.max(0,(cs-start)/span*100), width=Math.max(.35,(ce-cs)/span*100); const bar=document.createElement('div');bar.className='bar '+c.state_key;bar.style.left=left+'%';bar.style.width=width+'%';bar.title=`${{c.name}}\n${{c.start}} â†’ ${{c.end}}\n${{c.promo}}\n${{c.state}}`;bar.textContent=c.name;tr.appendChild(bar);tl.appendChild(row)}});
   if(today>=start&&today<end){{const line=document.createElement('div');line.className='today';line.style.left=`calc(230px + ${{(today-start)/span*100}}% * (100% - 230px) / 100)`; /* fallback corrected below */ tl.appendChild(line); requestAnimationFrame(()=>{{const w=tl.clientWidth-230;line.style.left=(230+w*((today-start)/span))+'px'}})}}
   renderKeys();
 }}
@@ -165,3 +159,4 @@ render();
     if open_after and os.name == "nt":
         os.startfile(out_path)  # type: ignore[attr-defined]
     return out_path
+

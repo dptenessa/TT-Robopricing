@@ -1981,6 +1981,8 @@ def generate_recommendations_from_files(
     summary_path: str | Path | None = None,
     eur_to_usd: float | None = None,
     config: RecommendationConfig = DEFAULT_CONFIG,
+    generate_insights: bool = True,
+    annotate_workbook: bool = True,
 ) -> pd.DataFrame:
     default_price_book = paths.base_dir / "outputs" / "manual_prices" / "current" / "manual_prices_current.xlsx"
     legacy_price_book = paths.base_dir / "outputs" / "manual_prices" / "current" / "manual_prices_current.csv"
@@ -2020,20 +2022,21 @@ def generate_recommendations_from_files(
     # the disposable Excel annotation must not make the workbook look newer
     # than the recommendation output and trigger a pointless recalculation on
     # every editor launch.
-    if price_book_path.suffix.lower() == ".xlsx":
+    if annotate_workbook and price_book_path.suffix.lower() == ".xlsx":
         annotate_price_book_with_recommendations(price_book_path, recommendations)
     recommendations.to_csv(output_path, index=False)
     summary.to_csv(summary_path, index=False)
-    try:
+    if generate_insights:
         try:
-            from market_insights import generate_market_insights
-        except ImportError:
-            from automation.market_insights import generate_market_insights
-        generate_market_insights(paths, recommendations_path=output_path)
-    except Exception as exc:
-        # Recommendation generation must remain usable even if the optional HTML
-        # insight view cannot be produced from an incomplete scrape history.
-        print(f"Market insights warning: {exc}")
+            try:
+                from market_insights import generate_market_insights
+            except ImportError:
+                from automation.market_insights import generate_market_insights
+            generate_market_insights(paths, recommendations_path=output_path)
+        except Exception as exc:
+            # Recommendation generation must remain usable even if the optional HTML
+            # insight view cannot be produced from an incomplete scrape history.
+            print(f"Market insights warning: {exc}")
 
     print()
     print("Pricing Recommendations")

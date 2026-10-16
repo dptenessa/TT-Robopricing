@@ -7,6 +7,8 @@ The importer stores a baseline-search observation using the same score scale as
 the API collector, so the opportunity builder can use it immediately.
 """
 from __future__ import annotations
+from route_policy import route_allowed, origin_allowed, ROUTE_POLICY_VERSION
+
 
 import argparse
 import csv
@@ -18,6 +20,9 @@ import sqlite3
 import unicodedata
 from datetime import date
 from pathlib import Path
+
+
+VERSION = "2.0-monthly-history"
 
 
 def norm(value: object) -> str:
@@ -114,7 +119,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Import a manual Google Ads Keyword Planner CSV")
     parser.add_argument("--export", required=True, type=Path, help="Downloaded Keyword Planner CSV")
     parser.add_argument("--origin", required=True, help="Origin ISO2 used for the Keyword Planner location")
-    parser.add_argument("--database", default="events.db")
+    parser.add_argument("--database", default=str(Path(__file__).resolve().parent / "events.db"))
     parser.add_argument("--input-dir", type=Path, default=Path(__file__).resolve().parent / "inputs" / "travel_demand")
     parser.add_argument("--date", default=date.today().isoformat())
     args = parser.parse_args()
@@ -154,15 +159,34 @@ def main() -> int:
     if not avg_col:
         raise SystemExit("Could not find an Avg. monthly searches column in the export.")
 
+    month_names = {name.lower(): index for index, name in enumerate(
+        ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], 1)}
+    month_columns = {}
+    for header in headers:
+        match = re.fullmatch(r"Searches:\s*([A-Za-z]{3})\s+(\d{4})", header.strip())
+        if match and match[1].lower() in month_names:
+            month_columns[header] = (int(match[2]), month_names[match[1].lower()])
+    history_rows = {}
     known = aliases(args.input_dir)
     totals: dict[str, float] = {}
     matched_rows = 0
     for row in rows:
         dest = destination_for(row.get(keyword_col, ""), row.get(direct_dest_col, "") if direct_dest_col else "", known)
-        if not dest:
+        if not dest or not route_allowed(origin, dest):
             continue
         totals[dest] = totals.get(dest, 0.0) + number(row.get(avg_col))
         matched_rows += 1
+        keyword = str(row.get(keyword_col, "")).strip()
+        for column, (year, month) in month_columns.items():
+            raw_value = str(row.get(column) or "").strip()
+            # Missing values are not zero searches.
+            if not re.fullmatch(r"[0-9][0-9,. ]*", raw_value):
+                continue
+            value = number(raw_value)
+            history_rows[(dest, keyword, year, month)] = (
+                args.date, origin, dest, keyword, year, month, value,
+                number(row.get(avg_col)), "Google Ads Keyword Planner")
+
 
     if not totals:
         raise SystemExit("No exported keywords could be mapped to destinations. Check the keyword language/aliases.")
@@ -190,8 +214,16 @@ def main() -> int:
           confidence=excluded.confidence,
           metadata_json=excluded.metadata_json
         """, (args.date, origin, dest, "baseline_search", score, average, score, source, 0.80, json.dumps(metadata, ensure_ascii=False)))
+    # Replace this origin's manual monthly snapshot atomically on re-import.
+    # Older snapshots remain history; report reads one latest collection only.
+    if month_columns:
+        db.execute("DELETE FROM google_ads_keywords WHERE observed_date=? AND origin_iso2=? AND source=?",
+                   (args.date, origin, source))
+        db.executemany("INSERT INTO google_ads_keywords VALUES(?,?,?,?,?,?,?,?,?)",
+                       history_rows.values())
     db.commit()
     db.close()
+    print(f"Monthly history: {len(history_rows)} keyword/month rows from {len(month_columns)} monthly columns")
     print(f"Imported {matched_rows} keyword rows for {origin}; updated {len(totals)} destination baselines in {args.database}")
     for dest, average in sorted(totals.items(), key=lambda x: -x[1])[:20]:
         print(f"  {origin}->{dest}: baseline {baseline(average):.1f} ({average:,.0f} average monthly searches)")

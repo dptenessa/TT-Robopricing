@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build transparent origin->destination opportunity scores from events.db."""
 from __future__ import annotations
+from route_policy import route_allowed, origin_allowed, ROUTE_POLICY_VERSION
+
 
 import argparse
 import csv
@@ -14,7 +16,7 @@ from pathlib import Path
 
 from event_matching import classify, destination_matches, origin_matches, overlaps, parse_date, scoreable
 
-VERSION = "1.7-distance-factor"
+VERSION = "1.8-shared-route-exclusions"
 SALES_LOOKBACK_DAYS = 60
 MIN_ORIGIN_MARKET_WEIGHT = 50.0
 SALES_COUNTRY_ALIASES = {}
@@ -175,6 +177,8 @@ def ensure_schema(db):
 def upsert_observation(db, observed, origin, dest, signal_type, score,
                        source, confidence, metadata):
     """Store one dated demand signal without creating duplicate rows."""
+    if not route_allowed(origin, dest):
+        return
     db.execute("""
         CREATE TABLE IF NOT EXISTS demand_observations (
             observed_date TEXT NOT NULL,
@@ -325,7 +329,7 @@ def load_sales_scores(path, as_of, lookback_days=SALES_LOOKBACK_DAYS):
                     continue
                 origin = sales_country_code(row.get("BuyerCountry"))
                 destination = sales_country_code(row.get("Destination"))
-                if not origin or not destination:
+                if not route_allowed(origin, destination):
                     continue
                 try:
                     quantity = float(str(row.get("Quantity") or "1").replace(",", "."))
@@ -596,13 +600,13 @@ def status(score, c7):
 
 def main():
     p=argparse.ArgumentParser(description="Build T-Travel opportunity scores")
-    p.add_argument("--database", default="events.db")
+    p.add_argument("--database", default=str(Path(__file__).resolve().parent / "events.db"))
     p.add_argument("--test", action="store_true", help="Score only sample corridors")
     p.add_argument("--origin", help="Single origin ISO2")
     p.add_argument(
         "--origins",
         default="",
-        help="Comma-separated origin ISO2 codes; explicit origins bypass the market-weight filter",
+        help="Comma-separated origin ISO2 codes; all origins remain subject to the shared route policy",
     )
     p.add_argument("--destinations", default="")
     p.add_argument("--date", help="Score date YYYY-MM-DD")
@@ -645,6 +649,8 @@ def main():
         else:
             print("ORIGIN FILTER SKIP: origin_market_weights.csv not found")
 
+    origins = [o for o in origins if origin_allowed(o)]
+    print("Route policy:", ROUTE_POLICY_VERSION)
     sales_scores = load_sales_scores(
         SALES_FILE,
         as_of,
@@ -652,7 +658,7 @@ def main():
     )
     sales_scores = {
         key: item for key, item in sales_scores.items()
-        if key[0] in origins
+        if key[0] in origins and key[1] in dests and route_allowed(*key)
     }
     for (origin, dest), item in sales_scores.items():
         upsert_observation(
@@ -675,6 +681,8 @@ def main():
     print(f"T-Travel Opportunity Builder {VERSION} | {as_of}")
     for origin in origins:
         for dest in dests:
+            if not route_allowed(origin, dest):
+                continue
             baseline=latest_signal(db,as_of.isoformat(),origin,dest,"baseline_search")
             momentum=latest_signal(db,as_of.isoformat(),origin,dest,"search_momentum")
             sales_item=sales_scores.get((origin,dest))

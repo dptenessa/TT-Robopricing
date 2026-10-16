@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Create a Google Ads Keyword Planner upload file for one origin market."""
 from __future__ import annotations
+from route_policy import route_allowed, origin_allowed, ROUTE_POLICY_VERSION
+
 
 import argparse
 import csv
@@ -48,6 +50,8 @@ def main() -> int:
 
     keywords = []
     for code, name in sorted(names.items()):
+        if not route_allowed(origin, code, str(args.input_dir)):
+            continue
         for template in templates:
             keyword = template.replace("{d}", name).strip()
             if keyword:

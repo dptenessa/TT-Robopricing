@@ -367,7 +367,7 @@ class PromoPlanner(tk.Tk):
         execution.grid(row=1, column=0, sticky="ew", pady=(0, 9))
         execution.columnconfigure(2, weight=1)
         ttk.Label(execution, text="Execute a planned date", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=5, sticky="w")
-        ttk.Label(execution, text="Jump between key dates where campaigns start or end. Removals are applied before new starts.", style="CardText.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(2, 8))
+        ttk.Label(execution, text="Each key date marks changes at midnight. Removals are applied before new starts.", style="CardText.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(2, 8))
 
         keynav = ttk.Frame(execution, style="Card.TFrame")
         keynav.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(0, 9))
@@ -415,18 +415,20 @@ class PromoPlanner(tk.Tk):
         self._refresh_execution_date()
 
     def _key_dates(self) -> list[str]:
-        """All dates on which at least one campaign starts or ends."""
+        """Return midnight boundaries: end dates and the prior day for starts."""
         dates = set()
         for c in self.store.list_campaigns():
             if c.start_date:
-                dates.add(c.start_date)
+                start = datetime.strptime(c.start_date, "%Y-%m-%d").date()
+                dates.add((start - timedelta(days=1)).isoformat())
             if c.end_date:
                 dates.add(c.end_date)
         return sorted(dates)
 
     def _key_date_counts(self, key_date: str) -> tuple[int, int]:
         campaigns = self.store.list_campaigns()
-        starting = sum(1 for c in campaigns if c.start_date == key_date)
+        next_day = (datetime.strptime(key_date, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
+        starting = sum(1 for c in campaigns if c.start_date == next_day)
         ending = sum(1 for c in campaigns if c.end_date == key_date)
         return starting, ending
 
@@ -472,17 +474,13 @@ class PromoPlanner(tk.Tk):
         start = max(0, min(idx - 2, max(0, len(dates) - 6)))
         visible = dates[start:start + 6]
         for d in visible:
-            starts, ends = self._key_date_counts(d)
             try:
-                label_date = datetime.strptime(d, "%Y-%m-%d").strftime("%d %b")
+                boundary = datetime.strptime(d, "%Y-%m-%d").date()
+                next_day = boundary + timedelta(days=1)
+                label_date = f"{boundary.strftime('%d %b').upper()} 24:00\n→ {next_day.strftime('%d %b').upper()} 00:00"
             except Exception:
                 label_date = d
-            bits = []
-            if starts:
-                bits.append(f"+{starts}")
-            if ends:
-                bits.append(f"−{ends}")
-            label = label_date + ("  " + "/".join(bits) if bits else "")
+            label = label_date
             style = "Accent.TButton" if d == selected else "Grey.TButton"
             ttk.Button(
                 self.key_date_strip, text=label, style=style,
@@ -491,12 +489,13 @@ class PromoPlanner(tk.Tk):
 
     def _actions_for_execution_date(self, execution_date: str):
         actions = []
+        next_day = (datetime.strptime(execution_date, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
         for c in self.store.list_campaigns():
             started = self.store.has_execution(c.id, "START")
             ended = self.store.has_execution(c.id, "END")
             if c.end_date == execution_date and started and not ended:
                 actions.append((c, "END"))
-            if c.start_date == execution_date and not started:
+            if c.start_date == next_day and not started:
                 actions.append((c, "START"))
         return actions
 
@@ -513,14 +512,16 @@ class PromoPlanner(tk.Tk):
         actions = self._actions_for_execution_date(d)
         ending = [c.name for c, a in actions if a == "END"]
         starting = [c.name for c, a in actions if a == "START"]
+        boundary = datetime.strptime(d, "%Y-%m-%d").date()
+        next_day = boundary + timedelta(days=1)
         batch = self.store.get_active_batch_for_date(d)
         parts = []
         if ending:
-            parts.append("ENDING: " + ", ".join(ending))
+            parts.append(f"ENDING {boundary.strftime('%d %b').upper()} AT 24:00: " + ", ".join(ending))
         if starting:
-            parts.append("STARTING: " + ", ".join(starting))
+            parts.append(f"STARTING {next_day.strftime('%d %b').upper()} AT 00:00: " + ", ".join(starting))
         if not parts:
-            parts.append("No unapplied campaign changes scheduled for this date.")
+            parts.append("No unapplied campaign changes scheduled for this midnight boundary.")
         if batch:
             parts.append(f"This date was executed at {batch['executed_at']} (batch #{batch['id']}).")
         self.execution_summary.configure(text="  |  ".join(parts))
@@ -671,9 +672,10 @@ class PromoPlanner(tk.Tk):
                 kd = datetime.strptime(key_date, "%Y-%m-%d").date()
             except ValueError:
                 continue
-            if kd < first or kd > last:
+            boundary = kd + timedelta(days=1)
+            if boundary < first or boundary > last:
                 continue
-            kx = left + (kd - first).days * day_w
+            kx = left + (boundary - first).days * day_w
             tag = "keydate_" + key_date.replace("-", "_")
             cv.create_line(kx, 28, kx, height, fill="#F2B7D4", dash=(2, 4), tags=(tag,))
             cv.create_oval(kx - 4, 28, kx + 4, 36, fill=MAGENTA, outline="", tags=(tag,))

@@ -1,4 +1,14 @@
 from __future__ import annotations
+try:
+    from intelligence.route_policy import route_allowed, ROUTE_POLICY_VERSION, EU_COUNTRIES
+except ImportError:
+    from automation.intelligence.route_policy import route_allowed, ROUTE_POLICY_VERSION, EU_COUNTRIES
+
+
+try:
+    from intelligence.destination_coverage import briefings as destination_briefings, briefing_html, briefing_text, overview_html
+except ImportError:
+    from automation.intelligence.destination_coverage import briefings as destination_briefings, briefing_html, briefing_text, overview_html
 
 from datetime import datetime, timedelta
 from html import escape
@@ -53,8 +63,14 @@ MAX_CURRENT_AGE_DAYS = 14   # old observations are not "latest" market movement
 HISTORICAL_BASELINE_DAYS = 56
 HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
-DASHBOARD_VERSION = "history-charts-v18-product-campaign-priorities"
+DASHBOARD_VERSION = "history-charts-v29-pricing-tabs"
 SALES_LOOKBACK_DAYS = 60
+INTELLIGENCE_DATABASE = Path(
+    os.environ.get(
+        "TT_INTELLIGENCE_DATABASE",
+        str(Path(__file__).resolve().parent / "intelligence" / "events.db"),
+    )
+)
 VERY_COMPETITIVE_GAP_PCT = 0.05
 COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
@@ -158,6 +174,8 @@ def _sales_competitiveness_matrix(
             sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
         except ImportError:
             sales_path = None
+    if sales_path is None:
+        sales_path = getattr(FILES, "sales_master_csv", None)
     if not sales_path or not Path(sales_path).exists() or competitiveness.empty:
         return pd.DataFrame(), "Sales file not configured or competitiveness unavailable"
 
@@ -193,6 +211,7 @@ def _sales_competitiveness_matrix(
     comp["Gap"] = pd.to_numeric(comp["TrimmedMeanGapPct"], errors="coerce")
     comp["CompetitiveScore"] = (100.0 * (1.0 - comp["Gap"])).clip(0, 100)
     comp = comp.dropna(subset=["Gap"]).drop_duplicates("ISO")
+    work = work.loc[[route_allowed(o,d) for o,d in zip(work["Origin"],work["DestinationISO"])]]
     grouped = work.groupby(["Origin", "DestinationISO"], as_index=False).agg(
         SalesUnits=("Units", "sum"), SalesRevenue=("Revenue", "sum")
     )
@@ -239,158 +258,950 @@ def _sales_competitiveness_matrix(
     return joined, f"last {SALES_LOOKBACK_DAYS} days ending {as_of.isoformat()} · medians: {sales_mid:.0f} units / {comp_mid:.0f} competitiveness"
 
 
-def _campaign_product_matrix(
-    competitiveness: pd.DataFrame,
-    recommendations: pd.DataFrame,
-    market: pd.DataFrame,
-    sales_path: str | Path | None = None,
+def _load_intelligence_route_priorities(
+    database_path: str | Path | None = None,
 ) -> tuple[pd.DataFrame, str]:
-    """Create route-level campaign rows with a concrete product candidate.
-
-    Sales are observed at origin/destination level because the sales export does
-    not reliably identify the marketed SKU's destination package in a way that
-    can be joined to every pricing anchor. The selected product is therefore a
-    price/competitiveness candidate for the route, not a claim that all route
-    sales came from that SKU.
-    """
-    if sales_path is None:
-        sales_path = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
-    if sales_path is None:
-        try:
-            import config  # type: ignore
-            sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
-        except ImportError:
-            sales_path = None
-    if not sales_path or not Path(sales_path).exists() or recommendations.empty or market.empty:
-        return pd.DataFrame(), "Product candidates unavailable: sales, recommendations or market data missing"
+    """Load the latest sufficiently complete route snapshot and event evidence."""
+    path = Path(database_path or INTELLIGENCE_DATABASE).expanduser()
+    columns = [
+        "Origin", "DestinationISO", "IntelligenceScore", "Momentum", "Coverage",
+        "IntelSalesUnits", "Baseline", "EventsScore", "Seasonality", "Holiday",
+        "DistanceKm", "Change7d", "IntelStatus", "ScoreDate", "MatchedEvents",
+        "EventSegments", "EventInterests", "EventAudience", "EventSources", "EventDetails",
+    ]
+    if not path.exists():
+        return pd.DataFrame(columns=columns), f"Intelligence database not found: {path}"
+    try:
+        with sqlite3.connect(path.resolve().as_uri()+"?mode=ro", uri=True) as db:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "opportunity_scores" not in tables:
+                return pd.DataFrame(columns=columns), "Intelligence DB has no opportunity_scores table; run build_opportunities.py first"
+            snapshots = db.execute(
+                "SELECT score_date, COUNT(*) FROM opportunity_scores GROUP BY score_date ORDER BY score_date"
+            ).fetchall()
+            if not snapshots:
+                return pd.DataFrame(columns=columns), "Intelligence DB has no scored route snapshots"
+            max_rows = max(int(row[1]) for row in snapshots)
+            complete_dates = [str(row[0]) for row in snapshots if int(row[1]) >= max(1, int(max_rows * 0.20))]
+            score_date = complete_dates[-1] if complete_dates else str(snapshots[-1][0])
+            rows = db.execute(
+                """SELECT score_date, origin_iso2, destination_iso2,
+                          baseline_search_score, search_momentum_score,
+                          observed_sales_units, seasonality_score, events_score,
+                          holiday_score, distance_km, opportunity_score,
+                          data_coverage, change_7d, status, components_json
+                   FROM opportunity_scores WHERE score_date=?""",
+                (score_date,),
+            ).fetchall()
+            event_lookup = {}
+            if "events" in tables:
+                event_cols = {r[1] for r in db.execute('PRAGMA table_info("events")')}
+                wanted = [
+                    "Occasion_Event", "Main_Traveller_Segment", "Interests_Motivation",
+                    "Estimated_Addressable_Travellers", "Source_URL", "Start_Date", "End_Date",
+                    "Country", "Destination", "Origin_Markets", "Content_Classification", "Notes",
+                    "Campaign_Start", "Landing_Page_Recommendation",
+                ]
+                present = [c for c in wanted if c in event_cols]
+                if "Occasion_Event" in present:
+                    query = ",".join(f'"{c}"' for c in present)
+                    for event_row in db.execute(f'SELECT {query} FROM events'):
+                        item = {c: str(event_row[i] or "").strip() for i, c in enumerate(present)}
+                        event_lookup.setdefault(item.get("Occasion_Event", "").casefold(), []).append(item)
+    except (OSError, sqlite3.Error) as exc:
+        return pd.DataFrame(columns=columns), f"Could not read Intelligence DB: {exc}"
 
     try:
-        raw = _read_sales_csv(Path(sales_path))
-    except Exception as exc:
-        return pd.DataFrame(), f"Sales file could not be read: {exc}"
-    required = {"BuyerCountry", "Destination", "Quantity", "TransactionDate"}
-    if not required.issubset(raw.columns):
-        return pd.DataFrame(), "Sales export is missing required columns"
-
-    dates = pd.to_datetime(raw["TransactionDate"], errors="coerce", dayfirst=False)
-    quantity = pd.to_numeric(raw["Quantity"], errors="coerce").fillna(0)
-    sale_type = raw.get("TransactionType", pd.Series("SALE", index=raw.index)).astype(str).str.upper()
-    status = raw.get("DocumentStatus", pd.Series("", index=raw.index)).astype(str).str.lower()
-    valid = sale_type.ne("CANCELLATION") & ~status.str.contains("cancel", na=False) & dates.notna() & quantity.gt(0)
-    if not valid.any():
-        return pd.DataFrame(), "No completed sales rows found"
-    as_of = dates[valid].max().date()
-    valid &= dates.dt.date >= as_of - timedelta(days=SALES_LOOKBACK_DAYS - 1)
-    work = raw.loc[valid].copy()
-    work["Origin"] = work["BuyerCountry"].map(_sales_iso2)
-    work["DestinationISO"] = work["Destination"].map(_sales_iso2)
-    work["SalesUnits"] = pd.to_numeric(work["Quantity"], errors="coerce").fillna(0)
-    work = work[work["Origin"].ne("") & work["DestinationISO"].ne("") & work["SalesUnits"].gt(0)]
-    if work.empty:
-        return pd.DataFrame(), "No sales rows could be mapped to ISO-2 codes"
-    sales = work.groupby(["Origin", "DestinationISO"], as_index=False).agg(SalesUnits=("SalesUnits", "sum"))
-
-    comp_names = {}
-    if not competitiveness.empty:
-        comp_names = {
-            _text(row.get("ISO")).upper(): _text(row.get("Country")) or _text(row.get("ISO")).upper()
-            for _, row in competitiveness.iterrows()
-        }
-
-    candidates: list[dict[str, Any]] = []
-    rec = recommendations.copy()
-    rec["Days"] = pd.to_numeric(rec.get("Days"), errors="coerce")
-    rec["GB"] = pd.to_numeric(rec.get("GB"), errors="coerce")
-    rec["CurrentNetPrice"] = pd.to_numeric(rec.get("CurrentNetPrice"), errors="coerce")
-    rec["CostFloor"] = pd.to_numeric(rec.get("CostFloor"), errors="coerce")
-    rec = rec[rec["Days"].isin([1, 3, 7, 10, 15, 30]) & rec["CurrentNetPrice"].gt(0)].copy()
-
-    for _, row in rec.iterrows():
-        days = _num(row.get("Days")); current = _num(row.get("CurrentNetPrice"))
-        if days is None or current is None or current <= 0:
+        from intelligence.event_matching import scoreable, destination_matches, origin_matches
+    except ImportError:
+        try:
+            from automation.intelligence.event_matching import scoreable, destination_matches, origin_matches
+        except ImportError:
+            scoreable = destination_matches = origin_matches = None
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        (date_value, origin, destination, baseline, momentum, sales_units,
+         seasonality, events_score, holiday, distance, score, coverage,
+         change_7d, status, components_json) = row
+        if not route_allowed(origin, destination):
             continue
-        gb = _num(row.get("GB")) or 0.0
-        plan = _text(row.get("Plan")) or ("Unlimited" if gb <= 0 else "Data")
-        unlimited = "unlimited" in plan.lower() or gb <= 0
-        currency = _text(row.get("Currency")).upper() or "EUR"
-        room = _num(row.get("CostFloor"))
-        room_pct = max(0.0, (current - room) / current) if room is not None and current > 0 else None
-        for code in _row_country_codes(row):
-            ref = _best_market_reference_for_country(
-                market, iso=code, days=float(days), gb=float(gb),
-                unlimited=unlimited, currency=currency,
-            )
-            if not ref:
+        try:
+            components = json.loads(components_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            components = {}
+        events = components.get("events", []) if isinstance(components, dict) else []
+        event_details = []
+        event_titles: list[str] = []
+        segments: list[str] = []
+        interests: list[str] = []
+        audiences: list[str] = []
+        sources: list[str] = []
+        for item in events if isinstance(events, list) else []:
+            if not isinstance(item, dict):
                 continue
-            benchmark = float(ref["BestBenchmarkPrice"])
-            if benchmark <= 0:
+            title = str(item.get("event") or "").strip()
+            if not title:
                 continue
-            gap = current / benchmark - 1.0
-            candidates.append({
-                "DestinationISO": code,
-                "Country": comp_names.get(code, code),
-                "Plan": plan,
-                "Days": int(days),
-                "GB": float(gb) if gb > 0 else None,
-                "Currency": currency,
-                "CurrentPrice": current,
-                "CostFloor": room,
-                "PriceRoomPct": room_pct,
-                "BenchmarkPrice": benchmark,
-                "GapPct": gap,
-                "CompetitiveScore": max(0.0, min(100.0, 100.0 * (1.0 - gap))),
-                "ProviderCount": int(ref["ProviderCount"]),
-            })
+            candidates = event_lookup.get(title.casefold(), [])
+            candidates = [e for e in candidates
+                if (not item.get("start_date") or str(item["start_date"])[:10] == e.get("Start_Date", "")[:10])
+                and (not item.get("source_url") or item["source_url"] == e.get("Source_URL"))
+                and scoreable and scoreable(e) and destination_matches(e, str(destination))
+                and origin_matches(e, str(origin))]
+            if len(candidates) != 1:
+                continue
+            detail = candidates[0]
+            start = str(item.get("start_date") or detail.get("Start_Date") or "")[:10]
+            end = str(item.get("end_date") or detail.get("End_Date") or start)[:10]
+            event_details.append({"title": title, "start": start, "end": end,
+                "planning_score": _num(item.get("contribution")) or 0,
+                "source": detail.get("Source_URL", ""), "destination": detail.get("Destination", ""),
+                "segment": detail.get("Main_Traveller_Segment", ""),
+                "interests": detail.get("Interests_Motivation", ""),
+                "audience": detail.get("Estimated_Addressable_Travellers", ""),
+                "campaign_start": detail.get("Campaign_Start", ""),
+                "landing": detail.get("Landing_Page_Recommendation", "")})
+            display = f"{title} ({start}{'–' + end if end and end != start else ''})" if start else title
+            if display not in event_titles:
+                event_titles.append(display)
+            for target, field in ((segments, "Main_Traveller_Segment"), (interests, "Interests_Motivation")):
+                for value in re.split(r"[;|,]", detail.get(field, "")):
+                    value = value.strip()
+                    if value and value not in target:
+                        target.append(value)
+            audience = detail.get("Estimated_Addressable_Travellers", "").strip()
+            if audience and audience not in audiences:
+                audiences.append(f"{title}: {audience}")
+            source = detail.get("Source_URL", "").strip()
+            if source and source not in sources:
+                sources.append(source)
+        result.append({
+            "Origin": str(origin or "").upper(),
+            "DestinationISO": str(destination or "").upper(),
+            "IntelligenceScore": _num(score), "Momentum": _num(momentum),
+            "Coverage": _num(coverage), "IntelSalesUnits": _num(sales_units),
+            "Baseline": _num(baseline), "EventsScore": _num(events_score),
+            "Seasonality": _num(seasonality), "Holiday": _num(holiday),
+            "DistanceKm": _num(distance), "Change7d": _num(change_7d),
+            "IntelStatus": str(status or ""), "ScoreDate": str(date_value or ""),
+            "MatchedEvents": "; ".join(event_titles),
+            "EventSegments": "; ".join(segments),
+            "EventInterests": "; ".join(interests),
+            "EventAudience": "; ".join(audiences),
+            "EventSources": "; ".join(sources), "EventDetails": event_details,
+        })
+    frame = pd.DataFrame(result, columns=columns)
+    return frame, f"Intelligence route priorities: {len(frame):,} routes from complete snapshot {score_date}"
 
-    if not candidates:
-        return pd.DataFrame(), f"No product candidates with at least {BEST_MARKET_MIN_PROVIDERS} trusted providers"
-    products = pd.DataFrame(candidates)
-    products = products.sort_values(["DestinationISO", "GapPct", "Days"], ascending=[True, True, True])
 
-    # Prefer a commercially usable 7/10-day anchor when it is close to the
-    # strongest candidate; otherwise retain the genuinely most competitive SKU.
-    chosen: list[pd.Series] = []
-    for destination, group in products.groupby("DestinationISO", sort=False):
-        group = group.drop_duplicates(["Plan", "Days", "Currency"], keep="first").copy()
-        best_gap = float(group["GapPct"].min())
-        usable = group[group["GapPct"].le(best_gap + 0.05)]
-        preferred = usable[usable["Days"].isin([7, 10])]
-        pool = preferred if not preferred.empty else usable
-        row = pool.sort_values(["GapPct", "Days"], ascending=[True, True]).iloc[0].copy()
-        chosen.append(row)
-    product_by_destination = pd.DataFrame(chosen)
-    if product_by_destination.empty:
-        return pd.DataFrame(), "No product candidates selected"
+# Campaign policy: editable planning thresholds, not learned demand forecasts.
+CAMPAIGN_MAX_COUNT = 20
+CAMPAIGN_MIN_SALES_UNITS = 5
+CAMPAIGN_MIN_ADS_BASELINE = 40.0
+CAMPAIGN_MIN_PRIORITY = 35.0
+CAMPAIGN_MAX_SOURCE_AGE_DAYS = 14
+CAMPAIGN_FLOOR_BUFFER = 0.10
+CAMPAIGN_MAX_DISCOUNT = 0.30
+CAMPAIGN_TARGET_GAP = 0.05
+CAMPAIGN_EEA_FACTOR = 0.75
+CAMPAIGN_EEA = set('AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO'.split())
 
-    out = sales.merge(product_by_destination, on="DestinationISO", how="inner")
-    sales_median = float(out["SalesUnits"].median()) if not out.empty else 0.0
-    def action(row: pd.Series) -> str:
-        gap = float(row.get("GapPct") or 0.0)
-        room = float(row.get("PriceRoomPct") or 0.0)
-        high_sales = float(row["SalesUnits"]) >= sales_median
-        if gap <= VERY_COMPETITIVE_GAP_PCT:
-            return "Scale current product — no promotion needed"
-        if gap <= COMPETITIVE_GAP_PCT and room >= 0.10:
-            return "Scale current product; test promotion only if volume needs a lift"
-        if gap > COMPETITIVE_GAP_PCT and room >= 0.10:
-            return "Fix price or use a targeted promotion, then scale" if high_sales else "Test a targeted promotion after price review"
-        return "Do not promote yet — price is constrained by cost floor"
 
-    out["CampaignAction"] = out.apply(action, axis=1)
-    out["ProductCandidate"] = out.apply(
-        lambda r: f"{_text(r.get('Plan'))} {int(r['Days'])}d" + (f" / {r['GB']:.1f}GB" if _num(r.get("GB")) else ""),
-        axis=1,
-    )
-    out["SalesUnits"] = out["SalesUnits"].round(0).astype(int)
-    out["Days"] = out["Days"].astype(int)
-    out["CompetitiveScore"] = out["CompetitiveScore"].round(1)
-    out["CurrentPrice"] = out["CurrentPrice"].round(2)
-    out["BenchmarkPrice"] = out["BenchmarkPrice"].round(2)
-    out["GapPct"] = out["GapPct"].round(4)
-    out["PriceRoomPct"] = pd.to_numeric(out["PriceRoomPct"], errors="coerce").round(4)
-    out = out.sort_values(["SalesUnits", "CompetitiveScore"], ascending=[False, False]).reset_index(drop=True)
-    return out, f"last {SALES_LOOKBACK_DAYS} days ending {as_of.isoformat()} · product candidate selected from trusted exact-duration benchmarks"
+# Each profile sums to 100%; commercial safety gates never change with risk.
+CAMPAIGN_PROFILE_WEIGHTS = {
+    'conservative': {'sales':45, 'ads':10, 'trends':5, 'context':10, 'competitive':20, 'movement':5, 'room':5},
+    'balanced': {'sales':30, 'ads':20, 'trends':10, 'context':10, 'competitive':20, 'movement':5, 'room':5},
+    'exploratory': {'sales':15, 'ads':30, 'trends':20, 'context':5, 'competitive':20, 'movement':5, 'room':5},
+}
 
+
+def _campaign_profile_scores(signals, sim_factor=1.0):
+    return {name: round(sum(weight * max(0, min(100, _campaign_number(signals.get(key)) or 0)) / 100
+                            for key, weight in weights.items()) * sim_factor, 1)
+            for name, weights in CAMPAIGN_PROFILE_WEIGHTS.items()}
+
+
+def _campaign_timing(details, as_of):
+    next_start = (as_of.replace(day=1) + timedelta(days=32)).replace(day=1)
+    horizon = (next_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    details = details if isinstance(details, list) else []
+    events = [e for e in details if _campaign_date(e.get('start'))
+              and _campaign_date(e.get('end') or e.get('start'))
+              and _campaign_date(e.get('end') or e.get('start')) >= as_of
+              and _campaign_date(e['start']) <= horizon]
+    events.sort(key=lambda e: e['start'])
+    begin, end = as_of, min(as_of + timedelta(days=27), horizon)
+    basis = 'Proposed four-week test starting today; not a forecast for next month.'
+    if events:
+        event = events[0]
+        start = _campaign_date(event['start'])
+        raw = _text(event.get('campaign_start'))
+        found = re.search(r'(\d+)\s*(weeks?|days?)\s*before', raw, re.I)
+        lead = int(found.group(1)) * (7 if found.group(2).lower().startswith('week') else 1) if found else 28
+        explicit = _campaign_date(raw)
+        begin = max(as_of, explicit or start - timedelta(days=lead))
+        end = _campaign_date(event.get('end')) or start
+        if begin > end:
+            begin = as_of
+        basis = 'Event campaign timing from catalogue.' if found or explicit else 'Proposed start four weeks before event; validate lead time.'
+    return begin, end, basis, events
+
+
+
+def _campaign_currency_history(db_path, days_back=28):
+    """Read stored prices at BOTH dates, independently for EUR and USD.
+
+    Base-currency labels do not describe the optional parallel price columns.
+    Expand currencies, deduplicate each commercial SKU/date, then pair dates.
+    Preserve original current product_key for the existing quality guard.
+    This is read-only and does not rewrite history or change the legacy charts.
+    """
+    path=Path(db_path)
+    if not path.exists():
+        return pd.DataFrame()
+    with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True) as db:
+        columns={r[1] for r in db.execute('PRAGMA table_info(market_observations)')}
+        if not columns:
+            return pd.DataFrame()
+        parts=[]
+        for currency, column in [('EUR','eur_price'),('USD','usd_price')]:
+            stored=column if column in columns else 'NULL'
+            value=f"CASE WHEN {stored}>0 THEN {stored} WHEN UPPER(currency)='{currency}' AND price>0 THEN price ELSE NULL END"
+            source=f"CASE WHEN {stored}>0 THEN '{column}' ELSE 'price ({currency})' END"
+            parts.append(f"""SELECT product_key, LOWER(provider) AS provider, UPPER(iso) AS iso,
+                country, plan, LOWER(plan_type) AS plan_type, days, gb,
+                CASE WHEN LOWER(plan_type)='unlimited' THEN 0 ELSE gb END AS allowance_key,
+                '{currency}' AS currency, {value} AS selected_price,
+                {source} AS price_source, observed_date,
+                CASE WHEN UPPER(currency)='{currency}' THEN 0 ELSE 1 END AS base_preference
+                FROM market_observations""")
+        sql="""WITH expanded AS ("""+' UNION ALL '.join(parts)+"""),
+        daily_ranked AS (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY provider,iso,plan_type,days,allowance_key,currency,observed_date
+                ORDER BY base_preference,product_key
+            ) AS daily_rank FROM expanded
+            WHERE selected_price>0 AND provider<>'' AND days>0
+        ), daily AS (SELECT * FROM daily_ranked WHERE daily_rank=1),
+        latest AS (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY provider,iso,plan_type,days,allowance_key,currency
+                ORDER BY observed_date DESC
+            ) AS latest_rank FROM daily
+        ), paired AS (
+            SELECT c.product_key,c.provider,c.iso,c.country,c.plan,c.plan_type,c.days,c.gb,c.currency,
+                   c.selected_price AS CurrentPrice,c.observed_date AS CurrentDate,
+                   c.price_source AS CurrentPriceSource,
+                   p.selected_price AS PreviousPrice,p.observed_date AS PreviousDate,
+                   p.price_source AS PreviousPriceSource,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY c.provider,c.iso,c.plan_type,c.days,c.allowance_key,c.currency
+                       ORDER BY p.observed_date DESC
+                   ) AS pair_rank
+            FROM latest c JOIN daily p ON p.provider=c.provider AND p.iso=c.iso
+              AND p.plan_type=c.plan_type AND p.days=c.days
+              AND p.allowance_key=c.allowance_key AND p.currency=c.currency
+              AND p.observed_date<=date(c.observed_date,?)
+            WHERE c.latest_rank=1
+        ) SELECT product_key,provider,iso,country,plan,plan_type,days,gb,currency,
+                 CurrentPrice,CurrentDate,CurrentPriceSource,
+                 PreviousPrice,PreviousDate,PreviousPriceSource
+          FROM paired WHERE pair_rank=1"""
+        frame=pd.read_sql_query(sql,db,params=(f'-{max(1,int(days_back))} days',))
+    if not frame.empty:
+        frame['PctChange']=frame.CurrentPrice/frame.PreviousPrice-1
+        frame['AbsPctChange']=frame.PctChange.abs()
+        frame['Material']=frame.AbsPctChange>=MIN_MATERIAL_CHANGE_PCT
+    return frame
+
+
+def _campaign_country_movements(changes, as_of):
+    """Provider-balanced country movement, separate from selected-pack evidence."""
+    if changes is None or changes.empty:
+        return {}
+    data = changes.copy()
+    if 'Trusted' in data:
+        data = data[data['Trusted'].map(_boolish)]
+    if not {'iso','currency','provider','PctChange','CurrentDate'}.issubset(data.columns):
+        return {}
+    data = data.loc[data['CurrentDate'].map(lambda v: (d := _campaign_date(v)) is not None and 0 <= (as_of-d).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS)]
+    data['PctChange'] = pd.to_numeric(data['PctChange'], errors='coerce')
+    data = data[data['PctChange'].map(lambda v: pd.notna(v) and math.isfinite(v)) & data['provider'].notna()]
+    if 'product_key' in data:
+        data = data.sort_values('CurrentDate').drop_duplicates(['product_key','currency'], keep='last')
+    output = {}
+    for (iso, currency), group in data.groupby(['iso','currency']):
+        per_provider = group.groupby('provider')['PctChange'].median()
+        raised = sorted(group.loc[group.PctChange > MIN_MATERIAL_CHANGE_PCT, 'provider'].astype(str).unique())
+        lowered = sorted(group.loc[group.PctChange < -MIN_MATERIAL_CHANGE_PCT, 'provider'].astype(str).unique())
+        output[(str(iso).upper(), str(currency).upper())] = {
+            'change': _trimmed_mean(per_provider) if len(per_provider) >= BEST_MARKET_MIN_PROVIDERS else None,
+            'providers': len(per_provider), 'offers': len(group), 'raised': raised, 'lowered': lowered,
+            'increases': int((group.PctChange > MIN_MATERIAL_CHANGE_PCT).sum()),
+            'decreases': int((group.PctChange < -MIN_MATERIAL_CHANGE_PCT).sum()),
+            'current_date': str(group.CurrentDate.max()),
+            'previous_date': str(group.PreviousDate.min()) if 'PreviousDate' in group else '',
+            'pairs': [{key:_text(r.get(key)) for key in ('provider','currency','CurrentPriceSource','PreviousPriceSource','CurrentDate','PreviousDate')}
+                      | {key:_campaign_number(r.get(key)) for key in ('days','gb','CurrentPrice','PreviousPrice','PctChange')}
+                      for r in group.sort_values('PctChange',key=lambda x:x.abs(),ascending=False).head(10).to_dict('records')],
+        }
+    return output
+
+
+def _campaign_plan(value):
+    aliases = {'s':'Lite','basic':'Lite','lite':'Lite','m':'Standard','medium':'Standard',
+               'moderate':'Standard','standard':'Standard','l':'Max','large':'Max',
+               'heavy':'Max','max':'Max','unlimited':'Unlimited'}
+    raw = _text(value).casefold()
+    if raw in aliases:
+        return aliases[raw]
+    for token in re.findall(r'[a-z]+', raw):
+        if len(token) > 1 and token in aliases:
+            return aliases[token]
+    return ''
+
+
+def _campaign_date(value):
+    text = _text(value)
+    if not text:
+        return None
+    for fmt in ('%Y-%m-%d','%m/%d/%Y','%d.%m.%Y','%Y/%m/%d'):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _campaign_number(value):
+    number = _num(value)
+    return number if number is not None and math.isfinite(number) else None
+
+
+def _campaign_price(current, floor, benchmark, guardrail=None):
+    """Return an advisory price on a 0.05 grid; never bypass the floor."""
+    from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+    if any(x is None or not math.isfinite(x) for x in (current, floor, benchmark)):
+        return None
+    if current <= 0 or floor < 0 or benchmark <= 0 or current < floor:
+        return None
+    gap = current / benchmark - 1
+    if gap <= CAMPAIGN_TARGET_GAP:
+        return {'price':current,'discount':0.0,'action':'Keep current price','gap':gap,
+                'room':(current-floor)/current,'target':benchmark*(1+CAMPAIGN_TARGET_GAP)}
+    step = Decimal('0.05')
+    target = float((Decimal(str(benchmark * (1+CAMPAIGN_TARGET_GAP))) / step).to_integral_value(rounding=ROUND_FLOOR)*step)
+    minimum = max(floor*(1+CAMPAIGN_FLOOR_BUFFER), current*(1-CAMPAIGN_MAX_DISCOUNT), guardrail or 0)
+    minimum = float((Decimal(str(minimum))/step).to_integral_value(rounding=ROUND_CEILING)*step)
+    if target < minimum - 1e-8 or target >= current or target <= 0:
+        return None
+    return {'price':target,'discount':1-target/current,'action':'Test targeted promotion',
+            'gap':target/benchmark-1,'room':(target-floor)/target,'target':target}
+
+
+def _campaign_sales(path, country_resolver, as_of):
+    """Aggregate locally; identifiers are used only to reject duplicate/reversed lines."""
+    empty = {'routes':{},'skus':{},'destination_skus':{},'as_of':None,'available':False,
+             'note':'Sales export unavailable','history_complete':False}
+    if not path or not Path(path).exists():
+        return empty
+    try:
+        raw = _read_sales_csv(Path(path))
+        needed = {'BuyerCountry','Destination','Quantity','TransactionDate','TransactionType','DocumentStatus'}
+        if not needed.issubset(raw.columns):
+            empty['note'] = 'Sales columns missing: ' + ', '.join(sorted(needed-set(raw.columns)))
+            return empty
+        dates = raw['TransactionDate'].map(_campaign_date)
+        known_dates = [d for d in dates if d is not None and d <= as_of]
+        if not known_dates:
+            return empty
+        last = max(known_dates)
+        earliest = min(known_dates)
+        recent_begin = last - timedelta(days=29)
+        prior_begin = last - timedelta(days=59)
+        window_begin = as_of - timedelta(days=59)
+        types = raw['TransactionType'].fillna('').astype(str).str.strip().str.upper()
+        statuses = raw['DocumentStatus'].fillna('').astype(str).str.casefold()
+        cancelled = types.isin(['CANCELLATION','REFUND','REVERSAL']) | statuses.str.contains('cancel|refund|revers',regex=True)
+        accepted = types.eq('SALE') & statuses.str.strip().isin(['completeddeliveryandsettledinvoice','completed','settled','paid','delivered']) & ~cancelled
+        duplicate_count = 0
+        if 'LineID' in raw:
+            ids = raw['LineID'].fillna('').astype(str).str.strip()
+            cancelled_ids = set(ids[cancelled & ids.ne('')])
+            accepted &= ~ids.isin(cancelled_ids)
+            # Only exact business-line duplicates are collapsed. Conflicting copies are excluded.
+            compare = [c for c in ['LineID','BuyerCountry','Destination','Quantity','TransactionDate',
+                                  'TransactionType','DocumentStatus','PackageSize','ValidityDays','ProductName'] if c in raw]
+            variants = raw.loc[accepted & ids.ne(''), compare].drop_duplicates()
+            conflicts = set(variants.loc[variants['LineID'].duplicated(keep=False),'LineID'].astype(str))
+            accepted &= ~ids.isin(conflicts)
+            dup = ids.duplicated(keep='first') & ids.ne('')
+            duplicate_count = int((accepted & dup).sum())
+            accepted &= ~dup
+        routes, skus, destination_skus = {}, {}, {}
+        for index, row in raw.loc[accepted].iterrows():
+            ds = dates.loc[index]
+            if ds is None or ds < window_begin or ds > as_of:
+                continue
+            origin, dest = country_resolver(row['BuyerCountry']), country_resolver(row['Destination'])
+            units = _campaign_number(row['Quantity'])
+            if not route_allowed(origin, dest) or units is None or units <= 0:
+                continue
+            key = (origin, dest)
+            item = routes.setdefault(key, {'units':0.0,'recent':0.0,'prior':0.0,'weeks':set()})
+            item['units'] += units
+            if ds >= recent_begin:
+                item['recent'] += units
+            elif ds >= prior_begin:
+                item['prior'] += units
+            item['weeks'].add((last-ds).days//7)
+            plan = _campaign_plan(row.get('PackageSize')) or _campaign_plan(row.get('ProductName'))
+            days = _campaign_number(row.get('ValidityDays'))
+            if days is None:
+                match = re.search(r'(\d+)\s*days?\b',_text(row.get('ProductName')),re.I)
+                days = float(match.group(1)) if match else None
+            if plan and days and days.is_integer() and 1 <= days <= 30:
+                sk = (origin,dest,plan,int(days))
+                dk = (dest,plan,int(days))
+                skus[sk] = skus.get(sk,0.0)+units
+                destination_skus[dk] = destination_skus.get(dk,0.0)+units
+        return {'routes':routes,'skus':skus,'destination_skus':destination_skus,'as_of':last,
+                'available':True,'history_complete':earliest<=prior_begin,
+                'note':f'Completed sales, {window_begin.isoformat()} to {as_of.isoformat()}; export latest {last.isoformat()}; {duplicate_count} duplicate lines ignored'}
+    except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+        empty['note'] = f'Sales could not be read: {exc}'
+        return empty
+
+
+def _campaign_inputs():
+    import csv
+    folder = Path(__file__).resolve().parent / 'intelligence' / 'inputs' / 'travel_demand'
+    names, weights = {}, {}
+    for filename, codefield, namefield in [('origins.csv','origin_iso2','country_name'),
+            ('destination_aliases.csv','destination_iso2','country_name')]:
+        path = folder / filename
+        if path.exists():
+            with path.open(encoding='utf-8-sig',newline='') as f:
+                for row in csv.DictReader(f):
+                    code = _text(row.get(codefield)).upper()
+                    if code and _text(row.get(namefield)):
+                        names[code] = row[namefield].strip()
+    path = folder/'origin_market_weights.csv'
+    if path.exists():
+        with path.open(encoding='utf-8-sig',newline='') as f:
+            for row in csv.DictReader(f):
+                value = _campaign_number(row.get('market_weight'))
+                if value is not None:
+                    weights[_text(row.get('origin_iso2')).upper()] = value
+    return names, weights
+
+
+def _campaign_product_matrix(competitiveness, recommendations, market,
+        competitiveness_trends=None, sales_path=None, intelligence_routes=None,
+        competitor_changes=None, as_of=None, defer_priority=False):
+    """One feasible SKU per eligible route; the UI ranks the full pool per profile."""
+    as_of = as_of or datetime.now().date()
+    if sales_path is None:
+        sales_path = os.environ.get('TT_INTELLIGENCE_SALES_FILE')
+    if sales_path is None:
+        try:
+            import config
+            sales_path = getattr(config,'T_TRAVEL_SALES_FILE',None) or getattr(config,'SALES_FILE',None)
+        except ImportError:
+            pass
+    if sales_path is None:
+        sales_path = getattr(FILES, "sales_master_csv", None)
+    names, weights = _campaign_inputs()
+    country_by_name = {re.sub(r'\W+',' ',v.casefold()).strip():k for k,v in names.items()}
+    def resolve(value):
+        return country_by_name.get(re.sub(r'\W+',' ',_text(value).casefold()).strip()) or _sales_iso2(value)
+    sales = _campaign_sales(sales_path,resolve,as_of)
+    sales_fresh = sales['available'] and (as_of-sales['as_of']).days<=CAMPAIGN_MAX_SOURCE_AGE_DAYS
+    intel = {}
+    if intelligence_routes is not None and not intelligence_routes.empty:
+        for row in intelligence_routes.to_dict('records'):
+            stamp = _campaign_date(row.get('ScoreDate'))
+            if stamp and 0 <= (as_of-stamp).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS:
+                intel[(_text(row.get('Origin')),_text(row.get('DestinationISO')))] = row
+    if not competitiveness.empty:
+        for row in competitiveness.to_dict('records'):
+            names.setdefault(_text(row.get('ISO')), _text(row.get('Country')))
+    route_keys = set(intel) | (set(sales['routes']) if sales_fresh else set())
+    max_units = max([x['units'] for x in sales['routes'].values()] or [1])
+    allowed_routes, gate_count = [], 0
+    for origin,dest in sorted(route_keys):
+        if not route_allowed(origin, dest) or (weights and weights.get(origin,0)<50):
+            gate_count += 1
+            continue
+        evidence = intel.get((origin,dest),{})
+        units = sales['routes'].get((origin,dest),{}).get('units',0) if sales_fresh else 0
+        # Country size and low prices alone cannot establish corridor demand.
+        ads_qualifies = ((_campaign_number(evidence.get('Baseline')) or 0)>=CAMPAIGN_MIN_ADS_BASELINE
+                         and (_campaign_number(evidence.get('IntelligenceScore')) or 0)>=45
+                         and (_campaign_number(evidence.get('Coverage')) or 0)>=50)
+        if units < CAMPAIGN_MIN_SALES_UNITS and not ads_qualifies:
+            gate_count += 1
+            continue
+        allowed_routes.append((origin,dest))
+    if not allowed_routes or recommendations.empty or market.empty:
+        return pd.DataFrame(), f'No campaigns meet demand and pricing evidence requirements. {sales["note"]}; {gate_count} routes excluded by demand/origin checks.'
+
+    market_index = _index_market_offers(market)
+    country_movements = _campaign_country_movements(competitor_changes, as_of)
+    movement_index = {}
+    if competitor_changes is not None and not competitor_changes.empty:
+        changes = competitor_changes.copy()
+        if 'Trusted' in changes:
+            changes = changes[changes['Trusted'].map(_boolish)]
+        for key, group in changes.groupby(['iso','days'],sort=False):
+            movement_index[(str(key[0]).upper(),float(key[1]))] = group
+    eligible_destinations = {d for _,d in allowed_routes}
+    # Conflicting copies of an anchor cannot support an automatic campaign.
+    anchor_rows, conflicting = {}, set()
+    for row in recommendations.to_dict('records'):
+        dest = _text(row.get('ISO')).upper()
+        unit = _text(row.get('PricingUnitIdUsed')).upper()
+        if len(unit)==2 and unit.isalpha():
+            dest = unit
+        if len(dest)!=2 or dest not in eligible_destinations:
+            continue
+        plan = _campaign_plan(row.get('Plan'))
+        days, current = _campaign_number(row.get('Days')), _campaign_number(row.get('CurrentNetPrice'))
+        if not plan or days not in [1,3,7,10,15,30] or current is None or current<=0:
+            continue
+        currency = _text(row.get('Currency')).upper()
+        if currency not in ('EUR','USD'):
+            continue
+        key = (dest,plan,int(days),currency)
+        if key in anchor_rows:
+            old = anchor_rows[key]
+            if any(_campaign_number(old.get(c))!=_campaign_number(row.get(c)) for c in ['CurrentNetPrice','CostFloor','GB']):
+                conflicting.add(key)
+        else:
+            anchor_rows[key] = row
+    products = {}
+    for (dest,plan,days,currency), row in anchor_rows.items():
+        if (dest,plan,days,currency) in conflicting:
+            continue
+        current, floor = _campaign_number(row.get('CurrentNetPrice')), _campaign_number(row.get('CostFloor'))
+        gb = _campaign_number(row.get('GB')) or 0
+        if floor is None or floor<0 or current<floor:
+            continue
+        market_group = market_index.get((dest,float(days)))
+        if market_group is None:
+            continue
+        if 'observed_date' in market_group:
+            valid_dates = market_group['observed_date'].map(_campaign_date)
+            market_group = market_group.loc[pd.Series([d is not None and 0<=(as_of-d).days<=CAMPAIGN_MAX_SOURCE_AGE_DAYS for d in valid_dates], index=market_group.index, dtype=bool)]
+            if market_group.empty:
+                continue
+        local_index = {(dest,float(days)):market_group}
+        ref = _best_market_reference_for_country(market,iso=dest,days=float(days),gb=gb,
+                     unlimited=plan=='Unlimited',currency=currency,market_index=local_index,include_offers=True)
+        if not ref:
+            continue
+        benchmark = ref['BestBenchmarkPrice']
+        price = _campaign_price(current,floor,benchmark,_campaign_number(row.get('GuardrailLower')))
+        if price is None:
+            continue
+        moves = movement_index.get((dest,float(days)))
+        change, moved_providers, pack_evidence = None, [], {}
+        if moves is not None:
+            moves = moves[moves['currency'].astype(str).str.upper().eq(currency)].copy()
+            moves = moves[moves['plan_type'].eq('unlimited') if plan=='Unlimited' else ~moves['plan_type'].eq('unlimited')]
+            if plan!='Unlimited' and gb>0:
+                ratio = pd.to_numeric(moves['gb'],errors='coerce')/gb
+                moves = moves[ratio.between(BEST_MARKET_GB_RATIO_MIN,BEST_MARKET_GB_RATIO_MAX)]
+            if 'CurrentDate' in moves:
+                moves = moves.loc[pd.Series([d is not None and 0<=(as_of-d).days<=CAMPAIGN_MAX_SOURCE_AGE_DAYS for d in moves['CurrentDate'].map(_campaign_date)], index=moves.index, dtype=bool)]
+            pack_evidence = _campaign_country_movements(moves,as_of).get((dest,currency),{})
+            provider_changes = moves.groupby('provider')['PctChange'].median().dropna()
+            if len(provider_changes)>=BEST_MARKET_MIN_PROVIDERS:
+                change = _trimmed_mean(provider_changes)
+                moved_providers = [str(p) for p,v in provider_changes.items() if v>MIN_MATERIAL_CHANGE_PCT]
+        products.setdefault(dest,[]).append({
+            'DestinationISO':dest,'Country':names.get(dest,_text(row.get('Country')) or dest),
+            'Plan':plan,'Days':days,'GB':gb,'Currency':currency,'CurrentPrice':current,
+            'CurrentListPrice':_campaign_number(row.get('CurrentListPrice')),
+            'ExistingPromo':_boolish(row.get('HasActivePromo')),'CostFloor':floor,
+            'BenchmarkPrice':benchmark,'BenchmarkMethod':ref['BenchmarkMethod'],'Providers':ref['Providers'],
+            'ProviderCount':ref['ProviderCount'],'GapPct':current/benchmark-1,
+            'ComparableOffers':ref['ComparableOffers'],
+            'CountryMovement':country_movements.get((dest,currency),{}),
+            'CompetitiveScore':max(0,min(100,100*(1-price['gap']))),
+            'PriceRoomPct':(current-floor)/current,'ProposedPrice':price['price'],
+            'ProposedRoomPct':price['room'],'DiscountPct':price['discount'],'CampaignAction':price['action'],
+            'CompetitorMovement28d':change,'RaisedProviders':', '.join(moved_providers),
+            'PackMovementEvidence':pack_evidence,
+            'ProductCandidate':f'{plan} {days} days',
+        })
+    result, blocked = [], 0
+    for origin,dest in allowed_routes:
+        options = products.get(dest,[])
+        if not options:
+            blocked += 1
+            continue
+        currency = 'EUR' if origin in EU_COUNTRIES else 'USD'
+        options = [x for x in options if x['Currency']==currency]
+        if not options:
+            blocked += 1
+            continue
+        evidence = intel.get((origin,dest),{})
+        sale = sales['routes'].get((origin,dest),{}) if sales_fresh else {}
+        units = sale.get('units',0)
+        route_max = max([sales['skus'].get((origin,dest,x['Plan'],x['Days']),0) for x in options] or [0]) if sales_fresh else 0
+        dest_max = max([sales['destination_skus'].get((dest,x['Plan'],x['Days']),0) for x in options] or [0]) if sales_fresh else 0
+        def product_score(x):
+            route_sku = sales['skus'].get((origin,dest,x['Plan'],x['Days']),0) if sales_fresh else 0
+            dest_sku = sales['destination_skus'].get((dest,x['Plan'],x['Days']),0) if sales_fresh else 0
+            popularity = (0.8*route_sku/route_max if route_max else 0)+(0.2*dest_sku/dest_max if dest_max else 0)
+            movement = x['CompetitorMovement28d']
+            movement_score = max(0,min(100,50+500*movement)) if movement is not None else 0
+            fit = 100 if x['Days'] in (7,10) else 50
+            if route_max or dest_max:
+                return 55*popularity+0.25*x['CompetitiveScore']+0.10*movement_score+0.10*fit
+            return 0.70*x['CompetitiveScore']+0.15*movement_score+0.15*fit
+        best = max(options,key=lambda x:(product_score(x),-x['DiscountPct'],-x['Days'])).copy()
+        strength = 100*math.log1p(units)/math.log1p(max(1,max_units)) if units else 0
+        base = _campaign_number(evidence.get('Baseline')) or 0
+        intelligence = _campaign_number(evidence.get('IntelligenceScore')) or 0
+        move = best['CompetitorMovement28d']
+        move_score = max(0,min(100,50+move*500)) if move is not None else 0
+        # Independent components avoid counting sales twice through Intelligence.
+        sim_factor = CAMPAIGN_EEA_FACTOR if origin in CAMPAIGN_EEA and dest in CAMPAIGN_EEA else 1.0
+        signals = {'sales': strength, 'ads': base,
+                   'trends': _campaign_number(evidence.get('Momentum')) or 0,
+                   'context': sum((_campaign_number(evidence.get(k)) or 0) for k in ('Seasonality','Holiday','EventsScore')) / 3,
+                   'competitive': best['CompetitiveScore'], 'movement': move_score,
+                   'room': best['ProposedRoomPct'] * 100}
+        profile_scores = _campaign_profile_scores(signals, sim_factor)
+        priority = profile_scores['balanced']
+        scale_factor = 1.0
+        if not defer_priority and max(profile_scores.values()) < CAMPAIGN_MIN_PRIORITY:
+            gate_count += 1
+            continue
+        sku_units = sales['skus'].get((origin,dest,best['Plan'],best['Days']),0) if sales_fresh else 0
+        dest_units = sales['destination_skus'].get((dest,best['Plan'],best['Days']),0) if sales_fresh else 0
+        explanation = [f'{units:g} completed route units in the last 60 days.' if sales_fresh else 'Recent sales export unavailable or stale.']
+        if sku_units:
+            explanation.append(f'{sku_units:g} units match this pack and duration on this route.')
+        elif dest_units:
+            explanation.append(f'{dest_units:g} units of this pack/duration sold across origins for this destination; route SKU demand unproven.')
+        else:
+            explanation.append('No matched product sales; pack choice uses price evidence and the 7/10-day planning preference.')
+        if _campaign_number(evidence.get('Momentum')) is not None:
+            explanation.append(f'Google Trends proxy {evidence["Momentum"]:g}/100; this is a search-interest indicator, not traveller volume.')
+        if base:
+            explanation.append(f'Google Ads baseline {base:g}/100 supports travel-search demand.')
+        if sale and sales['history_complete']:
+            prior,recent = sale.get('prior',0),sale.get('recent',0)
+            explanation.append(f'Sales trajectory: {recent:g} units in the latest 30 days versus {prior:g} in the preceding 30 days, ending {sales["as_of"]}.')
+            explanation.append(f'Sustained sales: activity in {len(sale.get("weeks",[]))} of the last 9 calendar-week buckets.')
+        else:
+            explanation.append('Sales trajectory unconfirmed: a full prior 30-day comparison is unavailable.')
+        if move is not None:
+            explanation.append(f'Comparable competitor prices changed {move:+.1%} over the 28-day comparison; providers with increases: {best["RaisedProviders"] or "none"}.')
+        else:
+            explanation.append('No verified 28-day price change detected for this pack; inspect matched-history evidence before assuming stable prices.')
+        if sim_factor<1:
+            explanation.append('Priority reduced 25% for intra-EEA SIM relevance.')
+        data = dict(evidence)
+        data.update(best)
+        data.update({'Origin':origin,'OriginName':names.get(origin,origin),'SalesUnits':units,
+                     'SkuSalesUnits':sku_units,'DestinationSkuUnits':dest_units,
+                     'CampaignPriorityScore':round(priority,1),'Why':explanation,
+                     'ProfileScores':profile_scores,'PrioritySignals':signals,
+                     'SalesAsOf':str(sales['as_of'] or ''),'ScaleFactor':scale_factor,
+                     'SimFactor':sim_factor,'ProductSalesBasis':'route SKU' if sku_units else 'destination SKU' if dest_units else 'price-led hypothesis'})
+        result.append(data)
+    frame = pd.DataFrame(result)
+    if not frame.empty:
+        frame = frame.sort_values(['CampaignPriorityScore','SalesUnits','Origin','DestinationISO'],ascending=[False,False,True,True]).drop_duplicates(['Origin','DestinationISO']).reset_index(drop=True)
+    note = (f'{len(frame)} eligible route candidates; up to {CAMPAIGN_MAX_COUNT} displayed for the selected profile and filters; {gate_count} routes did not meet demand/priority rules; '
+            f'{blocked} had no feasible product with a trusted benchmark, reporting currency and known floor. {sales["note"]}. '
+            f'Intelligence: {len(intel)} fresh scored routes. Origin weights: {"loaded" if weights else "unavailable; demand evidence still required"}.')
+    return frame,note
+
+
+def _campaign_movement_badge(value):
+    """Presentation only; missing history never implies stable prices."""
+    value = _campaign_number(value)
+    if value is None:
+        icon, label, kind = '？', 'Unconfirmed', 'unknown'
+    elif abs(value) < MIN_MATERIAL_CHANGE_PCT or value == 0:
+        icon, label, kind = '→', 'Stable / below material threshold', 'stable'
+    elif value > 0:
+        icon, label, kind = '↑', 'Up', 'up'
+    else:
+        icon, label, kind = '↓', 'Down', 'down'
+    return f'<span class="movement-badge movement-{kind}"><span aria-hidden="true">{icon}</span> {label}</span> '
+
+
+def _campaign_price_evidence_html(row, fmt):
+    def cell(v):
+        return '<td>' + escape(str(v)) + '</td>'
+    def allowance(plan, gb):
+        if plan == 'Unlimited':
+            return 'Unlimited (fair-use/speed terms not verified)'
+        return fmt(gb, 2) + ' GB total'
+    currency = row['Currency']
+    body = '<tr>' + ''.join(cell(v) for v in ['T-Travel · current', row['Plan'],
+           fmt(row['Days']), allowance(row['Plan'], row.get('GB')),
+           fmt(row['CurrentPrice'],2)+' '+currency, 'Current price book', '—']) + '</tr>'
+    offers = row.get('ComparableOffers', [])
+    offers = offers if isinstance(offers, list) else []
+    for offer in offers:
+        actual = fmt(offer['price'],2)+' '+currency
+        body += '<tr>'+''.join(cell(v) for v in [offer['provider'], offer['plan'] or 'Not supplied',
+                fmt(offer['days']), allowance('Unlimited' if offer['unlimited'] else '',offer['gb']),
+                actual, offer['observed'] or 'Not supplied',
+                fmt(offer['equivalent'],2)+' '+currency if offer.get('equivalent') is not None else '—'])+'</tr>'
+    if not offers:
+        body += '<tr><td colspan="7">Exact offer evidence unavailable; regenerate with v26.</td></tr>'
+    html = '<div style="overflow-x:auto"><table class="offer-evidence"><thead><tr>'+''.join('<th>'+v+'</th>' for v in [
+        'Provider','Pack','Days','Allowance','Actual pack price','Snapshot','Equivalent at our GB'])+'</tr></thead><tbody>'+body+'</tbody></table></div>'
+    html += '<p class="note">Prices use the stored EUR/USD column for the origin market; the row’s base currency does not override it. No FX conversion is performed here. Same duration; capped packs use 0.5–2× our allowance. One retained offer per provider. The equivalent column scales price per GB to our allowance; it is not a purchasable pack. Unlimited fair-use limits may differ.</p>'
+    move = row.get('CountryMovement', {})
+    move = move if isinstance(move, dict) else {}
+    if move:
+        html += '<p><b>Country price movement · 28-day comparison:</b> ' + _campaign_movement_badge(move.get('change'))
+        html += (fmt(move['change']*100,1)+'% provider-balanced change. ' if move.get('change') is not None
+                 else 'Too few providers for a corroborated country trend. ')
+        html += str(move['increases'])+' matched offers increased; '+str(move['decreases'])+' decreased, across '+str(move['offers'])+' observed offers / '+str(move['providers'])+' providers. '
+        html += 'Providers with at least one increase: '+escape(', '.join(move['raised']) or 'none in observed history')+'. '
+        html += 'Decreases: '+escape(', '.join(move['lowered']) or 'none in observed history')+'. '
+        html += 'Increase/decrease counts use a '+fmt(MIN_MATERIAL_CHANGE_PCT*100,1)+'% material-change threshold. '
+        html += 'Snapshots: '+escape(move.get('previous_date') or 'unavailable')+' → '+escape(move.get('current_date') or 'unavailable')+'.</p>'
+    else:
+        html += '<p><b>Country price movement · 28-day comparison:</b> ' + _campaign_movement_badge(None) + 'No verified price change detected.</p><details><summary>Evidence limitation</summary><p>No same-currency historical pair passed the 28-day, quality and freshness checks for this country. This does not confirm stable prices.</p></details>'
+    pack_move = _campaign_number(row.get('CompetitorMovement28d'))
+    html += '<p><b>Comparable pack movement:</b> '+_campaign_movement_badge(pack_move)+(fmt(pack_move*100,1)+'%; providers with increases: '+escape(_text(row.get('RaisedProviders')) or 'none in observed history')
+             if pack_move is not None else 'No verified price change detected from a corroborated multi-provider comparison.')+'</p>'
+    for label,evidence in [('Country',move),('Comparable pack',row.get('PackMovementEvidence',{}))]:
+        if not isinstance(evidence,dict) or not evidence.get('pairs'):
+            continue
+        lines=''
+        for pair in evidence['pairs']:
+            lines+='<tr>'+''.join(cell(v) for v in [pair['provider'],fmt(pair['days'])+' days',
+                fmt(pair['PreviousPrice'],2)+' '+pair['currency'],fmt(pair['CurrentPrice'],2)+' '+pair['currency'],
+                fmt((pair['PctChange'] or 0)*100,1)+'%',pair['PreviousDate']+' → '+pair['CurrentDate'],
+                pair['PreviousPriceSource']+' → '+pair['CurrentPriceSource']])+'</tr>'
+        html+='<details><summary>'+label+' matched-history evidence · '+str(evidence['offers'])+' pairs / '+str(evidence['providers'])+' providers</summary><p>Up to 10 largest absolute changes shown. Both prices use the same currency. Fewer than two providers means individual evidence only, not a corroborated aggregate.</p><div style="overflow-x:auto"><table><thead><tr>'+''.join('<th>'+v+'</th>' for v in ['Provider','Duration','Previous','Current','Change','Actual dates','Stored columns'])+'</tr></thead><tbody>'+lines+'</tbody></table></div></details>'
+    return html
+
+
+def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None):
+    """Keep the eligible pool available; display only the filtered top twenty cards."""
+    as_of = as_of or datetime.now().date()
+    def fmt(value, digits=0):
+        n = _campaign_number(value)
+        return 'Not available' if n is None else f'{n:,.{digits}f}'.replace(',','~').replace('.',',').replace('~','.')
+    def text(value):
+        return escape(_text(value))
+    cards, briefs = [], {}
+    coverage = coverage or {}
+    for rank,row in enumerate(campaigns.to_dict('records') if not campaigns.empty else [],1):
+        ident = f'campaign-{rank}'
+        route = f'{row.get("OriginName",row["Origin"])} ({row["Origin"]}) → {row["Country"]} ({row["DestinationISO"]})'
+        country_brief = coverage.get(row["DestinationISO"], {})
+        coverage_panel = briefing_html(country_brief)
+        coverage_export = briefing_text(country_brief)
+        campaign_start, campaign_end, timing_basis, events = _campaign_timing(row.get('EventDetails'), as_of)
+        planning_month = row.get("PlanningMonth", as_of.strftime("%Y-%m"))
+        planning_label = row.get("PlanningLabel", as_of.strftime("%B %Y"))
+        if row.get("PlanningStart"):
+            travel_start = _campaign_date(row["PlanningStart"])
+            travel_end = _campaign_date(row["PlanningEnd"])
+            if not events:
+                campaign_start = max(as_of, travel_start-timedelta(days=14))
+                campaign_end = travel_end
+                timing_basis = "Proposed promotion starts up to two weeks before the planning window; validate budget and booking lead time."
+            else:
+                campaign_end = min(campaign_end,travel_end)
+        planning_notes = '<ul>'+''.join('<li>'+text(x)+'</li>' for x in row.get('PlanningNotes',[]))+'</ul>'
+        segments = '; '.join(dict.fromkeys(e.get('segment','') for e in events if e.get('segment')))
+        interests = '; '.join(dict.fromkeys(e.get('interests','') for e in events if e.get('interests')))
+        segment_basis = 'Event catalogue' if segments else 'Proposed targeting hypothesis'
+        coverage_topics = country_brief.get('topics', [])
+        if coverage_topics:
+            segments = '; '.join(t['segment'] for t in coverage_topics[:3])
+            interests = '; '.join(t['interest'] for t in coverage_topics[:3])
+            segment_basis = 'Audience hypotheses from destination coverage; not origin-specific measurements' 
+        segments = segments or f'Travellers from {row.get("OriginName",row["Origin"])} visiting {row["Country"]}; test the {row["Days"]}-day connectivity pack'
+        interests = interests or 'Destination travel intent; no supported lifestyle interests available.'
+        page = next((e.get('landing') for e in events if e.get('landing')),f'Existing {row["Country"]} destination page; highlight {row["ProductCandidate"]}.')
+        angle = f'{row["Country"]} connectivity for your {row["Days"]}-day trip.'
+        if coverage_topics:
+            angle = f'Test {row["Country"]} travel messaging around '+', '.join(t['interest'].lower() for t in coverage_topics[:2])+'.'
+            page = f'Existing {row["Country"]} destination page; test useful modules for '+', '.join(t['interest'].lower() for t in coverage_topics[:3])+'.'
+        elif events:
+            angle = f'Stay connected during {events[0]["title"]} in {row["Country"]}.'
+        price = row['ProposedPrice']
+        ccy = row['Currency']
+        decision = ('Keep existing promo; no further discount' if row.get('ExistingPromo') else 'No new promo needed') if row['DiscountPct']==0 else f'Test {fmt(row["DiscountPct"]*100,1)}% off current net price'
+        why = '<ul>'+''.join('<li>'+text(x)+'</li>' for x in row['Why'])+'</ul>'
+        event_html = ''
+        for ev in events[:4]:
+            url = ev.get('source','')
+            link = f'<a href="{escape(url,quote=True)}" target="_blank" rel="noopener noreferrer">Event source</a>' if re.match(r'^https?://',url,re.I) else 'Source URL unavailable'
+            event_html += '<div class="campaign-event"><b>'+text(ev['title'])+'</b><br>'+text(ev.get('destination') or row['Country'])+' · '+text(ev['start'])+' → '+text(ev.get('end') or ev['start'])+'<br>'+link
+            if ev.get('audience'):
+                event_html += '<br><small>Catalogue event-wide audience estimate: '+text(ev['audience'])+'; not a corridor forecast.</small>'
+            event_html += '</div>'
+        event_html = event_html or '<p>No concrete matched event in the current or next month. Use destination-led messaging.</p>'
+        brief = (f'{route}\nPlanning month: {planning_label}\nProduct: {row["ProductCandidate"]}\nCampaign: {campaign_start} to {campaign_end}\n'
+                 f'Proposed customer price: {price:.2f} {ccy}\nPrice decision: {decision}\n'
+                 f'Target segment ({segment_basis}): {segments}\nInterests: {interests}\n'
+                 f'Landing page: {page}\nMessage angle: {angle}\n'
+                 f'Why: '+ ' '.join(row['Why'])+'\nEvents: '+('; '.join(f'{e["title"]} ({e["start"]} to {e.get("end") or e["start"]}) {e.get("source","")}' for e in events) or 'No concrete event matched')+'\n'+coverage_export+'\nProposal requires campaign approval.')
+        brief += '\nMonthly planning evidence: '+' '.join(row.get('PlanningNotes',[]))
+        offers = row.get('ComparableOffers', [])
+        offers = offers if isinstance(offers, list) else []
+        if offers:
+            brief += '\nObserved comparable offers (same duration):\n' + '\n'.join(
+                f"{x['provider']}: {x['plan']}, {x['days']:g} days, "
+                + ('Unlimited; fair-use terms unverified' if x['unlimited'] else f"{x['gb']:g} GB")
+                + f"; {x['price']:.2f} {x['currency']}; snapshot {x['observed'] or 'unavailable'}"
+                for x in offers)
+        country_move = row.get('CountryMovement', {})
+        if isinstance(country_move, dict) and country_move:
+            brief += f"\nCountry competitor history: {country_move['increases']} matched offers increased, {country_move['decreases']} decreased, out of {country_move['offers']} observed offers in the 28-day comparison."
+        briefs[ident] = brief
+        price_evidence = _campaign_price_evidence_html(row, fmt)
+        profile_scores = row.get('ProfileScores', {k:row['CampaignPriorityScore'] for k in CAMPAIGN_PROFILE_WEIGHTS})
+        score_data = escape(json.dumps(profile_scores), quote=True)
+        signals = row.get('PrioritySignals', {})
+        signal_rows = ''.join('<tr data-signal="'+key+'" data-value="'+str(signals.get(key,0))+'"><td>'+key.title()+'</td><td>'+fmt(signals.get(key,0),1)+'</td><td class="signal-weight"></td><td class="signal-contribution"></td></tr>' for key in CAMPAIGN_PROFILE_WEIGHTS['balanced'])
+        score_breakdown = '<details><summary>Priority calculation · selected profile</summary><table><thead><tr><th>Signal</th><th>Score / 100</th><th>Weight</th><th>Points</th></tr></thead><tbody>'+signal_rows+'</tbody></table><small>Missing signals contribute zero. Final SIM relevance multiplier: '+fmt(row.get('SimFactor',1),2)+'. Points may differ slightly from the final score due to rounding.</small></details>'
+        cards.append(f'''<article hidden class="campaign-card" id="{ident}" data-month="{planning_month}" data-scores="{score_data}" data-units="{row['SalesUnits']}" data-start="{campaign_start}" data-end="{campaign_end}" data-origin="{text(row['Origin'])}" data-destination="{text(row['DestinationISO'])}">
+<div class="campaign-head"><label><input type="checkbox" class="campaign-pick" value="{ident}" checked> <b><span class="campaign-rank">{rank}</span>. {text(route)}</b></label><span class="campaign-score"><span class="campaign-score-value">{fmt(row['CampaignPriorityScore'],1)}</span><small>priority / 100</small></span></div>
+<div class="campaign-product">{text(row['ProductCandidate'])} · {fmt(price,2)} {ccy} <span class="pill">{text(decision)}</span></div>
+<details class="campaign-body"><summary>View campaign details</summary>
+<p><b>Planning month:</b> {text(planning_label)} · monthly scenario, not a sales forecast</p>{planning_notes}
+<p><b>Campaign:</b> {campaign_start} → {campaign_end} · {'Start now' if campaign_start<=as_of else 'Prepare for '+str(campaign_start)}<br><small>{text(timing_basis)}</small></p>
+<section class="campaign-price"><h3>Product and price</h3><p>Current net: <b>{fmt(row['CurrentPrice'],2)} {ccy}</b> → proposed <b>{fmt(price,2)} {ccy}</b><br>Comparable benchmark: {fmt(row['BenchmarkPrice'],2)} {ccy} ({text(row['BenchmarkMethod'])})<br>Internal cost floor: {fmt(row['CostFloor'],2)} {ccy}<br>Room above floor: {fmt(row['PriceRoomPct']*100,1)}% now → {fmt(row['ProposedRoomPct']*100,1)}% proposed<br><small>Price minus floor as a share of price; not accounting margin.</small></p><p>{fmt(row['SkuSalesUnits'])} units match this route, pack and duration; {fmt(row['DestinationSkuUnits'])} across all origins. Selection basis: {text(row['ProductSalesBasis'])}.</p><h4>Comparable offers and recent price moves</h4>{price_evidence}</section>
+<section class="campaign-audience"><h3>Audience and creative</h3><p><b>{text(segment_basis)}:</b> {text(segments)}</p><p><b>Interests:</b> {text(interests)}</p><p><b>Page:</b> {text(page)}</p><p><b>Message:</b> {text(angle)}</p></section>
+{score_breakdown}<details open><summary>Why this route and product</summary>{why}<p class="note">Intelligence score {fmt(row.get('IntelligenceScore'),1)} · evidence coverage {fmt(row.get('Coverage'),1)}% · score snapshot {text(row.get('ScoreDate')) or 'unavailable'} · sales export {text(row.get('SalesAsOf')) or 'unavailable'}. Planning priority, not a sales forecast.</p></details>
+<details open><summary>Destination coverage · last 60 days</summary>{coverage_panel}</details>
+<details><summary>Concrete events and sources ({len(events)})</summary>{event_html}</details><button type="button" onclick="copyCampaignBrief('{ident}')">Copy agency brief</button></details></article>''')
+    payload = json.dumps(briefs,ensure_ascii=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
+    result = '''<section class="campaign-section"><h2>Next campaigns</h2><p>Up to 20 routes with demand evidence, a specific product and a feasible price. Proposals require commercial approval.</p>
+<div class="campaign-controls"><label>Ranking profile <select id="campaign-profile"><option value="conservative">Conservative · sales-led</option><option value="balanced" selected>Balanced</option><option value="exploratory">Higher risk · demand-led</option></select></label><label>Planning month <select id="campaign-period"><option value="current">Current month</option><option value="next">Next month</option></select></label><label>Origin <select id="campaign-origin"><option value="">All origins</option></select></label><label>Destination <select id="campaign-destination"><option value="">All destinations</option></select></label><button type="button" onclick="downloadCampaignBriefs()">Download selected agency briefs</button><span id="campaign-visible"></span></div>'''
+    result += '<p class="note">'+escape(note)+'</p>'
+    result += '<p class="note">Planning month selects the travel opportunity window. Rankings use month-specific seasonality, origin holidays, matched events and available historical Ads seasonality. Sales, Trends and prices are the latest observations, not future forecasts. Advertising can start before the planning month.</p><p id="campaign-profile-note"></p><div id="campaign-cards">'+''.join(cards)+'</div><p id="campaign-empty" hidden>No eligible campaigns meet the priority threshold for this planning month and these filters.</p>'
+    result += '''<details class="campaign-method"><summary>Ranking and promotion rules</summary><p>At least 5 completed route units in 60 days, or Ads baseline ≥40 plus Intelligence score ≥45 and coverage ≥50. Origin weight ≥50 when the input is available. Domestic and intra-EU routes excluded throughout the pipeline. Sales, score and competitor snapshots must be no more than 14 days old. Missing evidence contributes zero, never extra weight.</p><p>Ranking profiles use independent 0–100 signals, avoiding double-counting sales through the Intelligence score. Missing signals contribute zero; weights are never redistributed. Minimum priority 35. No additional demand-scale multiplier is applied. The intra-EEA SIM factor remains 0.75 for permitted routes.</p><table><thead><tr><th>Profile</th><th>Sales</th><th>Ads</th><th>Trends</th><th>Context</th><th>Competitiveness</th><th>Pack movement</th><th>Floor room</th></tr></thead><tbody><tr><td>Conservative</td><td>45%</td><td>10%</td><td>5%</td><td>10%</td><td>20%</td><td>5%</td><td>5%</td></tr><tr><td>Balanced</td><td>30%</td><td>20%</td><td>10%</td><td>10%</td><td>20%</td><td>5%</td><td>5%</td></tr><tr><td>Higher risk</td><td>15%</td><td>30%</td><td>20%</td><td>5%</td><td>20%</td><td>5%</td><td>5%</td></tr></tbody></table><p>Sales strength = log(1 + route units) relative to the largest observed route. Context is the fixed average of seasonality, holiday timing and event score; absent values count as zero. Country-wide moves are supporting context; matched pack movement enters the score. These are planning weights, not calibrated probabilities. Higher risk does not relax demand eligibility, freshness, comparability or floor safeguards. Profile selection changes route ranking, not the chosen product or price. The separate Intelligence score is displayed for reference.</p><p>Product choice favours observed route pack/duration sales, then destination product sales, competitiveness, competitor movement and a 7/10-day planning preference. A missing SKU match is labelled a hypothesis. Promo target is within 5% of the trusted benchmark; rounded down to 0.05, above cost floor +10%, within any lower guardrail and at most 30% below current net price. If infeasible, the product is excluded. Thresholds are editable planning defaults. EU origins use EUR; all other origins use USD. Competitor prices come from the corresponding stored eur_price/usd_price column, with the base price used only when its currency matches. Rows containing both currencies remain eligible regardless of their base currency label.</p><p>Planning months select travel windows, independently of advertising launch dates. Ads monthly adjustment uses a complete 12-month keyword history: historical month divided by annual mean, capped to 0.5–2, applied on the existing logarithmic baseline scale. Missing history leaves the baseline unchanged. Holiday timing uses 35 plus 15 per distinct public-holiday date, capped at 70, when the origin calendar is fresh; otherwise it contributes zero. Only events overlapping the remaining month contribute. Destination seasonality uses that month’s configured model; neutral fallback is labelled. These heuristics are monthly planning scenarios, not calibrated forecasts. Event audiences are catalogue estimates for the whole event. Suggested messages and timing require review. Agency exports omit internal cost floors.</p></details></section>'''
+    result += '<script type="application/json" id="campaign-profile-weights">'+json.dumps(CAMPAIGN_PROFILE_WEIGHTS)+'</script>'
+    result += '<script type="application/json" id="campaign-briefs">'+payload+'</script>'
+    result += '''<script>
+const campaignBriefs=JSON.parse(document.getElementById('campaign-briefs').textContent);
+const campaignWeights=JSON.parse(document.getElementById('campaign-profile-weights').textContent);
+function selectedCampaignBrief(id){return 'Ranking profile: '+document.getElementById('campaign-profile').selectedOptions[0].text+'\\n'+campaignBriefs[id]}
+async function copyCampaignBrief(id){const value=selectedCampaignBrief(id);try{await navigator.clipboard.writeText(value)}catch(e){const a=document.createElement('textarea');a.value=value;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}}
+function downloadCampaignBriefs(){const chosen=[...document.querySelectorAll('.campaign-pick:checked')].filter(x=>!x.closest('article').hidden).map(x=>selectedCampaignBrief(x.value));if(!chosen.length){alert('Select at least one visible campaign.');return}const blob=new Blob([chosen.join('\\n\\n--------------------\\n\\n')],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='T-Travel-agency-campaign-briefs.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+(function(){
+ const cards=[...document.querySelectorAll('.campaign-card')], container=document.getElementById('campaign-cards');
+ const o=document.getElementById('campaign-origin'), d=document.getElementById('campaign-destination'),
+ p=document.getElementById('campaign-period'), profile=document.getElementById('campaign-profile');
+ cards.forEach(c=>{c.profileScores=JSON.parse(c.dataset.scores); c.remove()});
+ for(const [el,key] of [[o,'origin'],[d,'destination']]){
+   [...new Set(cards.map(c=>c.dataset[key]))].sort().forEach(v=>{const x=document.createElement('option');x.value=v;x.textContent=v;el.appendChild(x)})
+ }
+ const today=new Date('''+json.dumps(as_of.isoformat()+'T12:00:00')+''');
+ p.options[0].textContent=today.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+ p.options[1].textContent=new Date(today.getFullYear(),today.getMonth()+1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+ function render(){
+   const offset=p.value==='next'?1:0;
+   const monthDate=new Date(today.getFullYear(),today.getMonth()+offset,1);
+   const monthKey=monthDate.getFullYear()+'-'+String(monthDate.getMonth()+1).padStart(2,'0');
+   const selected=cards.filter(c=>{
+     return (!o.value||o.value===c.dataset.origin)&&(!d.value||d.value===c.dataset.destination)&&
+       c.profileScores[profile.value]>=35 && c.dataset.month===monthKey;
+   }).sort((a,b)=>b.profileScores[profile.value]-a.profileScores[profile.value] || Number(b.dataset.units)-Number(a.dataset.units) || (a.dataset.origin+a.dataset.destination).localeCompare(b.dataset.origin+b.dataset.destination));
+   container.replaceChildren();
+   selected.slice(0,20).forEach((c,i)=>{c.hidden=false;c.querySelector('.campaign-rank').textContent=i+1;
+     c.querySelector('.campaign-score-value').textContent=c.profileScores[profile.value].toLocaleString('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1});c.querySelectorAll('[data-signal]').forEach(r=>{const w=campaignWeights[profile.value][r.dataset.signal];r.querySelector('.signal-weight').textContent=w+'%';r.querySelector('.signal-contribution').textContent=(Number(r.dataset.value)*w/100).toLocaleString('de-DE',{maximumFractionDigits:1})});container.appendChild(c)});
+   document.getElementById('campaign-empty').hidden=selected.length>0;
+   document.getElementById('campaign-visible').textContent=Math.min(20,selected.length)+' shown · '+selected.length+' eligible for these filters';
+   const notes={conservative:'Sales 45% · Ads 10% · Trends 5%. Favours demonstrated route sales.',balanced:'Sales 30% · Ads 20% · Trends 10%. Balances observed sales and search signals.',exploratory:'Sales 15% · Ads 30% · Trends 20%. Favours search-led opportunities; search interest does not prove travel demand.'};
+   document.getElementById('campaign-profile-note').textContent=notes[profile.value]+' Product selection and price safeguards stay unchanged. All eligible routes are re-ranked before selecting the top 20.';
+ }
+ [o,d,p,profile].forEach(x=>x.addEventListener('change',render));render();
+})();
+</script>'''
+    return result
+
+
+
+def _destination_pricing_html(recommendations, market, country_names=None, as_of=None):
+    """Destination SKU explorer; independent of campaign demand eligibility."""
+    as_of = as_of or datetime.now().date()
+    names = country_names or {}
+    fresh = market.copy()
+    if not fresh.empty:
+        if 'observed_date' in fresh:
+            fresh = fresh.loc[fresh['observed_date'].map(lambda v: (d := _campaign_date(v)) is not None and 0 <= (as_of-d).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS)]
+        else:
+            fresh = fresh.iloc[:0]
+    index = _index_market_offers(fresh) if not fresh.empty else {}
+    anchors = {}
+    for r in recommendations.to_dict('records'):
+        iso = _text(r.get('PricingUnitIdUsed')).upper()
+        if len(iso)!=2 or not iso.isalpha():
+            iso = _text(r.get('ISO')).upper()
+        plan = _campaign_plan(r.get('Plan'))
+        days, price, gb = (_campaign_number(r.get(k)) for k in ('Days','CurrentNetPrice','GB'))
+        cur = _text(r.get('Currency')).upper()
+        if len(iso)!=2 or not iso.isalpha() or not plan or not days or price is None or price<=0 or cur not in ('EUR','USD'):
+            continue
+        anchors.setdefault((iso,plan,days,cur), []).append(r)
+    rows = []
+    money = lambda x: '—' if x is None else f'{x:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+    for (iso,plan,days,cur), copies in sorted(anchors.items()):
+        r=copies[0]
+        price, floor, gb = (_campaign_number(r.get(k)) for k in ('CurrentNetPrice','CostFloor','GB'))
+        conflict = any(any(_campaign_number(c.get(k)) != _campaign_number(r.get(k)) for k in ('CurrentNetPrice','CostFloor','GB')) for c in copies[1:])
+        ref = None if conflict else _best_market_reference_for_country(fresh, iso=iso, days=days, gb=gb or 0, unlimited=plan=='Unlimited', currency=cur, market_index=index, include_offers=True)
+        gap = price/ref['BestBenchmarkPrice']-1 if ref else None
+        below = floor is not None and price<floor
+        status = 'unknown' if ref is None else 'competitive' if gap<=.05+1e-9 else 'attention'
+        if below or conflict:
+            status='attention'
+        label={'unknown':'Insufficient evidence','competitive':'Competitive','attention':'Needs attention'}[status]
+        action='Collect fresh comparable offers'
+        if conflict:
+            action='Resolve conflicting price-book rows'
+        elif below:
+            action='Below cost floor — review price' + (' (override enabled)' if _boolish(r.get('AllowBelowCost')) else '')
+        elif ref:
+            if floor is None:
+                action='Verify cost floor before proposing a price change'
+            elif gap<=.05+1e-9:
+                action='Keep existing promo; no further discount' if _boolish(r.get('HasActivePromo')) else 'Keep price; no new promo needed'
+            else:
+                proposal=_campaign_price(price,floor,ref['BestBenchmarkPrice'],_campaign_number(r.get('GuardrailLower')))
+                action=('Consider '+money(proposal['price'])+' '+cur+'; '+money(proposal['discount']*100)+'% off current net') if proposal else 'No safe promo under current floor/guardrails; review costs or pack'
+        offers=[]
+        for o in (ref or {}).get('ComparableOffers',[]):
+            allowance='Unlimited · FUP may differ' if o['unlimited'] else money(o['gb'])+' GB'
+            offers.append(' · '.join([o['provider'], str(o['days'])+' days',allowance,money(o['price'])+' '+cur, o['observed'] or 'Date unavailable']))
+        benchmark=(money(ref['BestBenchmarkPrice'])+' '+cur+' · '+ref['BenchmarkMethod']) if ref else 'Unavailable'
+        allowance='Unlimited · check FUP' if plan=='Unlimited' else money(gb)+' GB'
+        room=(price-floor)/price*100 if floor is not None else None
+        rows.append(dict(iso=iso,country=names.get(iso) or _text(r.get('Country')) or iso,currency=cur,plan=plan,days=days,status=status,label=label,
+            product=plan+' · '+f'{days:g}'+' days · '+allowance,price=money(price)+' '+cur,benchmark=benchmark,gap=('—' if gap is None else f'{gap*100:+.1f}%'),floor=money(floor)+' '+cur,room=('—' if room is None else money(room)+'%'),action=action,offers=offers))
+    data=json.dumps(rows,ensure_ascii=False,allow_nan=False).replace('<','\\u003c')
+    return r'''<section class="card" id="destination-pricing"><h2>Pricing by destination</h2>
+<p>Select the country where the eSIM is used. This is a product pricing view, independent of campaign route eligibility.</p>
+<div class="campaign-controls"><label>Destination<select id="pricing-country"></select></label><label>Currency<select id="pricing-currency"><option>EUR</option><option>USD</option></select></label><label>Position<select id="pricing-status"><option value="all">All products</option><option value="competitive">Competitive</option><option value="attention">Needs attention</option><option value="unknown">Insufficient evidence</option></select></label><label>Product<select id="pricing-plan"><option value="all">All products</option></select></label></div>
+<p id="pricing-summary" role="status"></p><div class="table-wrap"><table><thead><tr><th>Our product</th><th>Current net</th><th>Benchmark</th><th>Gap</th><th>Position</th><th>Cost floor</th><th>Room above floor</th><th>Suggested action &amp; exact offers</th></tr></thead><tbody id="pricing-body"></tbody></table></div>
+<p class="note">Available price-book anchors only; no inferred prices between durations. Competitive = at or below 105% of the benchmark. Below-floor prices and conflicting rows always need attention. Missing evidence never means competitive. Benchmarks require at least two fresh trusted providers, exact duration and 0.5–2× allowance for capped packs. A price/GB equivalent is calculated, not a purchasable competitor pack. Stored EUR/USD columns are used without new FX conversion. Room above floor is not accounting margin. Actions require commercial review and do not change prices.</p></section>
+<script type="application/json" id="pricing-data">''' + data + r'''</script>
+<script>
+(()=>{const data=JSON.parse(document.getElementById('pricing-data').textContent), country=document.getElementById('pricing-country'),currency=document.getElementById('pricing-currency'),status=document.getElementById('pricing-status'),plan=document.getElementById('pricing-plan');
+const countries=new Map(data.map(r=>[r.iso,r.country]));[...countries].sort((a,b)=>a[1].localeCompare(b[1])).forEach(([iso,name])=>country.add(new Option(name+' ('+iso+')',iso)));if(countries.has('DE'))country.value='DE';[...new Set(data.map(r=>r.plan))].sort().forEach(p=>plan.add(new Option(p,p)));
+function render(){const pool=data.filter(r=>r.iso===country.value&&r.currency===currency.value&&(plan.value==='all'||r.plan===plan.value));const rows=pool.filter(r=>status.value==='all'||r.status===status.value);document.getElementById('pricing-summary').textContent=pool.length+' products · '+pool.filter(r=>r.status==='competitive').length+' competitive · '+pool.filter(r=>r.status==='attention').length+' need attention · '+pool.filter(r=>r.status==='unknown').length+' insufficient evidence. Showing '+rows.length+'.';const body=document.getElementById('pricing-body');body.replaceChildren();rows.forEach(r=>{const tr=document.createElement('tr');['product','price','benchmark','gap','label','floor','room'].forEach(k=>{const td=document.createElement('td');td.textContent=r[k];if(k==='label')td.className=r.status==='competitive'?'up':r.status==='attention'?'down':'neutral';tr.append(td)});const td=document.createElement('td');const action=document.createElement('div');action.textContent=r.action;td.append(action);if(r.offers.length){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Compare '+r.offers.length+' exact offers';details.append(summary);r.offers.forEach(o=>{const p=document.createElement('p');p.textContent=o;details.append(p)});td.append(details)}tr.append(td);body.append(tr)});if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=8;td.textContent='No products available for these filters.';tr.append(td);body.append(tr)}}
+[country,currency,status,plan].forEach(e=>e.addEventListener('change',render));render();})();
+</script>'''
 
 def collect_market_changes(paths: PipelineFiles = FILES) -> pd.DataFrame:
     """Return the latest two observations per stable competitor product."""
@@ -1152,6 +1963,18 @@ def _row_country_codes(row: pd.Series) -> list[str]:
     return sorted(codes)
 
 
+def _index_market_offers(market: pd.DataFrame) -> dict[tuple[str, float], pd.DataFrame]:
+    """Index one competitor snapshot by ISO-2 destination and exact duration."""
+    if market.empty:
+        return {}
+    indexed: dict[tuple[str, float], pd.DataFrame] = {}
+    for (iso, days), group in market.groupby(["iso", "days"], sort=False, dropna=False):
+        if pd.isna(days):
+            continue
+        indexed[(str(iso).upper(), float(days))] = group
+    return indexed
+
+
 def _best_market_reference_for_country(
     market: pd.DataFrame,
     *,
@@ -1160,6 +1983,8 @@ def _best_market_reference_for_country(
     gb: float,
     unlimited: bool,
     currency: str,
+    market_index: dict[tuple[str, float], pd.DataFrame] | None = None,
+    include_offers: bool = False,
 ) -> dict[str, Any] | None:
     """Build a best-credible benchmark for one T-Travel anchor in one country.
 
@@ -1175,10 +2000,17 @@ def _best_market_reference_for_country(
     """
     if market.empty or not iso or not math.isfinite(days) or days <= 0:
         return None
-    cand = market[market["iso"].eq(str(iso).upper())].copy()
+    if market_index is None:
+        cand = market[market["iso"].eq(str(iso).upper())].copy()
+    else:
+        cand = market_index.get((str(iso).upper(), float(days)))
+        if cand is None:
+            return None
+        cand = cand.copy()
     if cand.empty:
         return None
-    cand = cand[pd.to_numeric(cand["days"], errors="coerce").sub(float(days)).abs().le(1e-9)].copy()
+    if market_index is None:
+        cand = cand[pd.to_numeric(cand["days"], errors="coerce").sub(float(days)).abs().le(1e-9)].copy()
     if unlimited:
         cand = cand[cand["plan_type"].eq("unlimited")].copy()
     else:
@@ -1210,7 +2042,7 @@ def _best_market_reference_for_country(
         ratios = pd.to_numeric(cand["gb"], errors="coerce") / float(gb)
         cand["_distance"] = ratios.map(lambda x: abs(math.log(max(float(x), 1e-12))) if pd.notna(x) and x > 0 else math.inf)
     cand = cand.sort_values(["provider", "_distance", "_price"], ascending=[True, True, True])
-    cand = cand.groupby("provider", as_index=False, sort=False).first()
+    cand = cand.drop_duplicates("provider", keep="first")
     cand = cand.sort_values(["_distance", "provider"], ascending=[True, True]).head(BEST_MARKET_MAX_PROVIDERS)
     providers = int(cand["provider"].nunique())
     if providers < BEST_MARKET_MIN_PROVIDERS:
@@ -1241,6 +2073,15 @@ def _best_market_reference_for_country(
         "BenchmarkMethod": method,
         "ProviderCount": providers,
         "Providers": ", ".join(sorted(cand["provider"].astype(str).unique())),
+        "ComparableOffers": [{
+            "provider": _text(r.get("provider")), "plan": _text(r.get("plan")),
+            "days": _campaign_number(r.get("days")), "gb": _campaign_number(r.get("gb")),
+            "unlimited": _text(r.get("plan_type")) == "unlimited",
+            "price": float(r["_price"]), "currency": cur,
+            "original_price": _campaign_number(r.get("price")), "original_currency": _text(r.get("currency")),
+            "observed": _text(r.get("observed_date")),
+            "equivalent": float(r["_price"])*gb/float(r["gb"]) if not unlimited and _campaign_number(r.get("gb")) else None,
+        } for r in cand.to_dict('records')] if include_offers else [],
     }
 
 
@@ -1272,6 +2113,7 @@ def _competitiveness_by_country(
     if rec.empty:
         return pd.DataFrame(columns=cols)
 
+    market_index = _index_market_offers(market)
     expanded: list[dict[str, Any]] = []
     for _, row in rec.iterrows():
         days = _num(row.get("Days"))
@@ -1291,6 +2133,7 @@ def _competitiveness_by_country(
                 gb=gb,
                 unlimited=unlimited,
                 currency=currency,
+                market_index=market_index,
             )
             if not ref:
                 continue
@@ -1667,6 +2510,7 @@ def market_insights_is_stale(
     *,
     recommendations_path: str | Path | None = None,
     output_path: str | Path | None = None,
+    intelligence_database_path: str | Path | None = None,
 ) -> bool:
     rec_dir = paths.work_dir / "pricing_recommendations"
     recommendations_path = Path(recommendations_path or (rec_dir / "recommendations_latest.csv"))
@@ -1685,7 +2529,8 @@ def market_insights_is_stale(
         return True
 
     output_mtime = output_path.stat().st_mtime
-    for source in (Path(__file__), recommendations_path, paths.market_history_db, paths.market_outlier_audit):
+    intelligence_path = Path(intelligence_database_path or INTELLIGENCE_DATABASE)
+    for source in (Path(__file__), recommendations_path, paths.market_history_db, paths.market_outlier_audit, intelligence_path):
         if source.exists() and source.stat().st_mtime > output_mtime:
             return True
     return False
@@ -1696,6 +2541,7 @@ def generate_market_insights(
     *,
     recommendations_path: str | Path | None = None,
     output_path: str | Path | None = None,
+    intelligence_database_path: str | Path | None = None,
 ) -> Path:
     rec_dir = paths.work_dir / "pricing_recommendations"
     recommendations_path = Path(recommendations_path or (rec_dir / "recommendations_latest.csv"))
@@ -1761,11 +2607,62 @@ def generate_market_insights(
         competitiveness_countries,
         recommendations=recs,
     )
+    intelligence_routes, intelligence_note = _load_intelligence_route_priorities(
+        intelligence_database_path
+    )
+    if not intelligence_routes.empty:
+        intelligence_routes = intelligence_routes.copy()
+        intelligence_routes["Country"] = intelligence_routes["DestinationISO"].map(country_name_map).fillna(intelligence_routes["DestinationISO"])
+        intelligence_routes["Route"] = intelligence_routes["Origin"] + " → " + intelligence_routes["DestinationISO"] + " " + intelligence_routes["Country"]
+        intelligence_routes = intelligence_routes.sort_values(
+            ["IntelligenceScore", "Momentum", "Change7d"],
+            ascending=[False, False, False], na_position="last",
+        )
+        intelligence_priority_table = _table_html(
+            intelligence_routes,
+            [
+                ("Route", "Preferred route", "text"),
+                ("IntelligenceScore", "Route opportunity", "dec"),
+                ("Momentum", "Trends momentum", "dec"),
+                ("Baseline", "Ads baseline", "dec"),
+                ("IntelSalesUnits", "Sales units (60d)", "num"),
+                ("EventsScore", "Events score", "dec"),
+                ("MatchedEvents", "Matched event and date", "text"),
+                ("EventSegments", "Event traveller segments", "text"),
+                ("EventInterests", "Event interests", "text"),
+                ("EventAudience", "Event addressable audience", "text"),
+                ("EventSources", "Event sources", "text"),
+                ("Coverage", "Evidence coverage %", "dec"),
+                ("Change7d", "Score change 7d", "dec"),
+                ("ScoreDate", "Score snapshot", "date"),
+            ],
+            "intelligence_priorities", 250,
+        )
+    else:
+        intelligence_priority_table = '<div class="empty">No Intelligence route scores available. ' + escape(intelligence_note) + '</div>'
+    campaign_history = _apply_current_quality_to_window(
+        _campaign_currency_history(paths.market_history_db,days_back=28),
+        quality=quality,current_outlier_keys=current_outlier_keys,latest_market_date=latest_market_date,
+    )
+    history_counts = campaign_history.groupby('currency').size().to_dict() if not campaign_history.empty else {}
+    print('CAMPAIGN HISTORY: stored-price 28-day pairs: '+str(history_counts)+'; existing quality/freshness checks still apply')
     campaign_products, campaign_products_note = _campaign_product_matrix(
         competitiveness_countries,
         recs,
         trusted_market,
+        competitiveness_trends,
+        intelligence_routes=intelligence_routes,
+        competitor_changes=campaign_history,
+        defer_priority=True,
     )
+    from campaign_monthly import plan_rows
+    campaign_products = plan_rows(campaign_products,
+        intelligence_database_path or INTELLIGENCE_DATABASE,
+        Path(__file__).resolve().parent/'intelligence'/'inputs'/'travel_demand',
+        datetime.now().date(), _campaign_profile_scores)
+    coverage = destination_briefings(intelligence_database_path or INTELLIGENCE_DATABASE)
+    campaign_briefs_html = _campaign_briefs_html(campaign_products, campaign_products_note, coverage=coverage)
+    campaign_briefs_html += '<details class="card"><summary>Destination coverage overview · 60 days</summary>'+overview_html(coverage,country_name_map)+'</details>'
 
     actionable = recs[recs.get("Actionable", False).map(_boolish)].copy() if not recs.empty and "Actionable" in recs.columns else pd.DataFrame()
     rec_up = int((actionable.get("Direction", pd.Series(dtype=str)).astype(str).str.upper() == "UP").sum()) if not actionable.empty else 0
@@ -1844,16 +2741,21 @@ def generate_market_insights(
             campaign_products,
             [
                 ("Route", "Route", "text"),
+                ("IntelligenceScore", "Intelligence score", "dec"),
+                ("Momentum", "Trends momentum", "dec"),
+                ("MatchedEvents", "Matched event", "text"),
                 ("SalesUnits", "Sales 60d", "num"),
+                ("CampaignPriorityScore", "Campaign priority", "dec"),
                 ("ProductCandidate", "Product candidate", "text"),
                 ("CurrentPrice", "Current price", "dec"),
                 ("BenchmarkPrice", "Best benchmark", "dec"),
                 ("GapPct", "Gap vs best", "pct"),
+                ("CompetitorMovement28d", "Competitor price change 28d", "pct"),
                 ("CompetitiveScore", "Competitiveness", "dec"),
                 ("PriceRoomPct", "Room above floor", "pct"),
                 ("CampaignAction", "Campaign decision", "text"),
             ],
-            "campaign_products", 250,
+            "campaign_products", 1000,
         )
     else:
         campaign_products_table = '<div class="empty">No product-level campaign candidates available yet.</div>'
@@ -1865,6 +2767,7 @@ def generate_market_insights(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>T-Travel Market Insights</title>
 <style>
+.report-tabs{display:flex;gap:10px;margin:0 0 24px;flex-wrap:wrap}.report-tabs button{padding:14px 24px;border:1px solid #d8dee4;border-radius:10px;background:white;font:600 16px Segoe UI;cursor:pointer}.report-tabs button[aria-pressed="true"]{background:#e20074;color:white;border-color:#e20074}.report-tabs button:focus-visible{outline:3px solid #222;outline-offset:3px}#pricing-panel select{min-width:150px;padding:10px;border:1px solid #ccd2d9;border-radius:8px;background:white}#pricing-body td{vertical-align:top}#pricing-body summary{cursor:pointer;margin-top:8px}
 :root{--magenta:#e20074;--bg:#f4f6f8;--card:#fff;--text:#1f2933;--muted:#66727f;--green:#177a3f;--red:#b42318;--orange:#b54708;--line:#d8dee4;--dark:#20242a;}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Segoe UI,Arial,sans-serif}
 header{background:var(--dark);color:#fff;padding:20px 28px;border-bottom:5px solid var(--magenta)} header h1{margin:0;font-size:25px} header .sub{margin-top:4px;color:#cbd2d9}.version{display:inline-block;margin-left:8px;padding:2px 7px;border:1px solid #65707b;border-radius:999px;font-size:11px;color:#e8edf2;vertical-align:2px}
@@ -1877,11 +2780,28 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 .competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.evolution-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.evolution-chart{min-height:285px}.evo-row{display:grid;grid-template-columns:minmax(110px,180px) 1fr 72px;gap:8px;align-items:center;margin:7px 0}.evo-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.evo-fill{position:absolute;left:0;top:3px;bottom:3px;border-radius:5px}.evo-gain{background:var(--green)}.evo-loss{background:var(--red)}.evo-value{text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.evo-controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.evo-controls button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}.evo-controls button.active{background:#111827;color:#fff;border-color:#111827}@media(max-width:900px){.evolution-grid{grid-template-columns:1fr}}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
 .decision-card{border-top:4px solid var(--magenta)}.decision-legend{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 12px}.decision-legend .pill{color:var(--text);background:#f7f8fa}.decision-card table td:last-child{white-space:normal;min-width:240px}
 @media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}.three,.chart-grid{grid-template-columns:1fr}}@media(max-width:750px){.grid,.two,.three,.chart-grid{grid-template-columns:1fr}}
+
+.campaign-body>summary{color:#e20074}.campaign-body[open]>summary{border-bottom:1px solid #eee;margin-bottom:12px}.campaign-price,.campaign-audience{border-top:1px solid #eee;padding-top:8px;margin-top:18px}.campaign-price h4{margin:20px 0 10px}.movement-badge{display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:2px 8px;font-size:13px;font-weight:600;background:#f0f2f4;color:#45515d}.movement-up{background:#e8f2fc;color:#19578a}.movement-down{background:#fff1df;color:#865500}.movement-unknown{background:#f2f2f2;color:#666}.offer-evidence{width:100%}.offer-evidence tbody tr:first-child{background:#fff0f7;font-weight:600}
+[hidden]{display:none!important}.campaign-section{max-width:1280px;margin:auto}.campaign-controls{display:flex;gap:15px;align-items:end;flex-wrap:wrap;padding:18px;background:white;border-radius:12px}.campaign-controls label{display:grid;gap:6px}.campaign-card{background:white;border:1px solid #ddd;border-top:4px solid #e20074;border-radius:12px;padding:24px;margin:22px 0}.campaign-head{display:flex;justify-content:space-between;gap:20px;font-size:22px}.campaign-score{color:#e20074;font-size:30px;font-weight:700;text-align:right}.campaign-score small{display:block;font-size:11px;color:#667}.campaign-product{font-size:20px;margin:18px 0}.campaign-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px}.campaign-card p,.campaign-card li{line-height:1.6}.campaign-card summary,.market-diagnostics>summary,.campaign-method>summary{cursor:pointer;font-weight:600;padding:15px 0}.campaign-event{padding:12px;border-bottom:1px solid #eee}.campaign-card button,.campaign-controls button{padding:10px 16px;border-radius:7px;border:1px solid #e20074;background:white;cursor:pointer}.market-diagnostics{margin-top:32px}.campaign-method{background:#f8f1f5;padding:10px 20px;border-radius:12px}@media(max-width:750px){.campaign-grid{grid-template-columns:1fr}.campaign-head{font-size:18px}}
+
+.campaign-controls{border:1px solid #e7dfe4;box-shadow:0 4px 18px #29102108;gap:14px;padding:20px}
+.campaign-controls label{font-size:12px;font-weight:650;color:#666;letter-spacing:.02em;flex:1 1 165px}
+.campaign-controls select{appearance:none;-webkit-appearance:none;width:100%;min-height:44px;border:1px solid #d7d0d5;border-radius:9px;padding:10px 36px 10px 13px;background-color:#fff;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23e20074' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;font:500 14px system-ui,sans-serif;color:#25212a;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.campaign-controls select:hover{border-color:#e20074;background-color:#fff8fc}
+.campaign-controls select:focus-visible{outline:2px solid #e20074;outline-offset:2px;box-shadow:0 0 0 4px #e2007414}
+.campaign-controls select#campaign-profile{border-color:#e20074;background-color:#fff4fa;font-weight:650}
+.campaign-controls option{background:white;color:#222}
+
 </style>
 </head>
 <body>
 <header><h1>T-Travel Market Insights <span class="version">$dashboard_version</span></h1><div class="sub">Generated $generated · trusted SQLite market history + current pricing recommendations</div></header>
 <main>
+<nav class="report-tabs" aria-label="Report sections"><button type="button" id="campaign-tab" aria-controls="campaign-panel" aria-pressed="true">Campaign opportunities</button><button type="button" id="pricing-tab" aria-controls="pricing-panel" aria-pressed="false">Pricing &amp; competitiveness</button></nav>
+<section id="campaign-panel" aria-labelledby="campaign-tab">$campaign_briefs_html</section>
+<section id="pricing-panel" aria-labelledby="pricing-tab" hidden>
+$destination_pricing_html
+<h2>Market overview and price movements</h2>
 <div class="toolbar card"><label for="windowSelect">Market trend window</label><select id="windowSelect"></select><span class="pill">Overall = 10% trimmed mean of ALL trusted matched offers (stable included)</span><span class="pill">Changes are always measured against the latest available price</span><span class="note" style="margin:0">Use longer windows to separate a one-week shock from a sustained market move.</span></div>
 <div class="grid">
  <div class="card kpi"><div class="label" id="directionLabel">Selected overall market</div><div class="value $direction_cls" id="directionValue">$default_trimmed_mean</div><div class="note" id="directionNote">10% trimmed mean across all trusted matched offers (stable included) · $direction_word · median $default_median</div></div>
@@ -1892,15 +2812,18 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 </div>
 
 <section class="card decision-card">
- <div class="chart-titleline"><div><h2>Where should we campaign next?</h2><div class="chart-sub">T-Travel sales joined to destination competitiveness; this is a prioritisation view, not a pricing forecast.</div></div></div>
+ <div class="chart-titleline"><div><h2>Supporting route and product evidence</h2><div class="chart-sub">Intelligence route demand is joined to current sales, product competitiveness, competitor price movement, and room above cost floor.</div></div></div>
+ <h3>Intelligence route priorities</h3>
+ $intelligence_priority_table
+ <div class="note">$intelligence_note. Intelligence's route score uses baseline demand (18%), Trends momentum (18%), observed sales (25%), seasonality (10%), events (15%), holiday timing (9%), and distance (5%). The route table uses the latest sufficiently complete score snapshot; event names, audience details and source URLs come from the matched events in the Intelligence database.</div>
  <div class="decision-legend"><span class="pill">High sales / competitive = scale</span><span class="pill">High sales / weak competitiveness = fix price, then scale</span><span class="pill">Low sales / competitive = test demand</span><span class="pill">Low sales / weak competitiveness = deprioritise</span></div>
  <h3>Route-level campaign priority</h3>
  $sales_competitiveness_table
  <div class="note">$sales_competitiveness_note. Sales are completed T-Travel transactions in the latest 60-day window. Competitiveness is destination-level and uses the latest trusted comparable price anchors.</div>
  <h3 style="margin-top:18px">Product and promotion decision</h3>
- <div class="note">The product below is the best current campaign candidate for the destination, selected from exact-duration pricing anchors. Sales are route-level, not SKU-level; the product is therefore a commercial recommendation, not an attribution of historical sales to that SKU.</div>
+ <div class="note">The campaign rules above govern the shortlist. The table below is supporting evidence, not an additional campaign ranking.</div>
  $campaign_products_table
- <div class="note">$campaign_products_note. “Room above floor” is the percentage distance between current net price and cost floor. A promotion is recommended only where the product is not competitive and there is sufficient floor room.</div>
+ <div class="note">$campaign_products_note</div>
 </section>
 
 <section class="card">
@@ -1965,9 +2888,11 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 <section class="card"><h2>Provider coverage & freshness</h2>$coverage_table<div class="note">Freshness is measured against the newest observation date in the DB: current ≤7 days, watch 8–14 days, stale &gt;14 days. Coverage deltas can reveal partial/failed scrapes.</div></section>
 <section class="card"><h2>Pricing units with the most signals</h2>$units_table<div class="note">Recommendation signals use the current quality-filtered market and are separate from the historical trend window selected above.</div></section>
 <section class="card"><h2>History database</h2><div class="note">Local SQLite DB: $history_db<br>Coverage: $history_min to $history_max · $history_providers providers · $history_countries countries · $history_products comparable product series.<br>Current cross-sectional outlier audit: $audit_rows row(s). On this refresh, $imported source file(s) were new/changed and $skipped were already indexed.</div></section>
+</section>
 </main>
 <script id="dashboardData" type="application/json">$dashboard_json</script>
 <script>
+document.querySelectorAll('.report-tabs button').forEach(b=>b.addEventListener('click',()=>{const pricing=b.id==='pricing-tab';document.getElementById('campaign-panel').hidden=pricing;document.getElementById('pricing-panel').hidden=!pricing;document.getElementById('campaign-tab').setAttribute('aria-pressed',String(!pricing));document.getElementById('pricing-tab').setAttribute('aria-pressed',String(pricing));}));
 const dashboard=JSON.parse(document.getElementById('dashboardData').textContent);const windows=dashboard.windows||{};const selector=document.getElementById('windowSelect');
 function pct(v,d=1){if(v===null||v===undefined||!isFinite(Number(v)))return '—';return (Number(v)*100).toFixed(d)+'%'}function n(v){if(v===null||v===undefined||v==='')return '—';const x=Number(v);return isFinite(x)?x.toLocaleString(undefined,{maximumFractionDigits:2}):String(v)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 Object.entries(windows).forEach(([key,w])=>{const o=document.createElement('option');o.value=key;o.textContent=w.label;selector.appendChild(o)});selector.value='$default_key';
@@ -2013,6 +2938,8 @@ function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' 
 </body></html>''')
 
     html = template.safe_substitute(
+        destination_pricing_html=_destination_pricing_html(recs, trusted_market, country_name_map),
+        campaign_briefs_html=campaign_briefs_html,
         generated=escape(generated), dashboard_version=escape(DASHBOARD_VERSION), direction_cls=direction_cls,
         direction_word=escape(direction_word.title()), default_trimmed_mean=_fmt_pct(default_trimmed_mean), default_median=_fmt_pct(default_median),
         default_mover_trimmed_mean=_fmt_pct(default_mover_trimmed_mean), default_mover_median=_fmt_pct(default_mover_median), mover_cls=mover_cls,
@@ -2028,6 +2955,8 @@ function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' 
         sales_competitiveness_note=escape(sales_competitiveness_note),
         campaign_products_table=campaign_products_table,
         campaign_products_note=escape(campaign_products_note),
+        intelligence_priority_table=intelligence_priority_table,
+        intelligence_note=escape(intelligence_note),
         history_db=escape(str(paths.market_history_db)), history_providers=f"{int(history.get('providers', 0)):,}", history_countries=f"{int(history.get('countries', 0)):,}",
         audit_rows=f"{len(current_outlier_audit):,}", imported=history_stats.imported_files, skipped=history_stats.skipped_files,
         dashboard_json=dashboard_json, default_key=default_key,
