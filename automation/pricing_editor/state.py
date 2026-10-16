@@ -1125,6 +1125,8 @@ class EditorState:
                     ),
                     "is_new_entry": False,
                     "allow_below_cost": _boolish(row.get("AllowBelowCost", False)),
+                    "promo_planner_stack": "" if pd.isna(row.get("_PromoPlannerPromoStack", "")) else str(row.get("_PromoPlannerPromoStack", "")),
+                    "promo_planner_owner": "" if pd.isna(row.get("_PromoPlannerPromoOwner", "")) else str(row.get("_PromoPlannerPromoOwner", "")),
                 }
                 points.append(pt)
                 self.row_index[pt["row_id"]] = pt
@@ -2743,6 +2745,8 @@ class EditorState:
                 "USD_IsBelowCostFloor": bool(below_by_currency.get("USD", False)),
                 "EUR_IsBelowCostFloor": bool(below_by_currency.get("EUR", False)),
                 "AllowBelowCost": allow_below_cost,
+                "_PromoPlannerPromoStack": point.get("promo_planner_stack", ""),
+                "_PromoPlannerPromoOwner": point.get("promo_planner_owner", ""),
             })
 
         return pd.DataFrame(rows)

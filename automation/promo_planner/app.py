@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import csv
+import json
 from pathlib import Path
+import subprocess
 import shutil
+import sys
 
-from PySide6.QtCore import QDate, Qt, Signal, QRect
+from PySide6.QtCore import QDate, Qt, Signal, Slot, QRect, QThread
 from PySide6.QtGui import QColor, QBrush, QFont, QPen, QDesktopServices, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,9 +19,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
+    QFileDialog,
     QGraphicsScene,
     QGraphicsView,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -25,6 +31,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -41,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from .engine import PromoOption, preview_campaign, preview_batch, execute_batch, read_catalogue, restore_workbook_backup
+from .calendar_export import generate_promotion_calendar
 from .management_calendar import generate_management_calendar
 from .outlook_sync import delete_campaign_events, sync_campaign_events
 from .paths import find_manual_prices, planner_output_dir, project_root
@@ -62,6 +70,58 @@ AMBER = "#8A5A00"
 BLUE_SOFT = "#EAF2FF"
 BLUE = "#315EA8"
 GREY_SOFT = "#EFF1F4"
+
+
+class BatchApplyWorker(QThread):
+    progress = Signal(str, int, int)
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, workbook, actions, backup_dir, execution_date, floor_choices, conflict_choices, campaigns=None, row_index=None, workbook_signature=None, parent=None):
+        super().__init__(parent)
+        self.workbook = Path(workbook)
+        self.actions = list(actions)
+        self.backup_dir = Path(backup_dir)
+        self.execution_date = execution_date
+        self.floor_choices = dict(floor_choices)
+        self.conflict_choices = dict(conflict_choices)
+        self.campaigns = list(campaigns or [])
+        self.row_index = row_index
+        self.workbook_signature = workbook_signature
+
+    def run(self):
+        try:
+            result = execute_batch(
+                self.workbook,
+                self.actions,
+                self.backup_dir,
+                self.execution_date,
+                cost_floor_choices=self.floor_choices,
+                conflict_choices=self.conflict_choices,
+                campaigns=self.campaigns,
+                row_index=self.row_index,
+                row_index_signature=self.workbook_signature,
+                progress_callback=lambda text, value, maximum: self.progress.emit(text, value, maximum),
+            )
+            self.succeeded.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class ApplyProgressDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.can_close = False
+
+    def reject(self):
+        if self.can_close:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self.can_close:
+            event.accept()
+        else:
+            event.ignore()
 
 
 class CleanCheckBox(QCheckBox):
@@ -196,6 +256,15 @@ class PromoPlanner(QMainWindow):
         self._promo_by_display: dict[str, PromoOption] = {}
         self._last_day_clicked: int | None = None
         self._last_execution_key_date: str | None = None
+        self._pending_cost_floor_choices = {}
+        self._pending_conflict_choices = {}
+        self._pending_conflict_contexts = {}
+        self._apply_worker = None
+        self._apply_progress_dialog = None
+        self._apply_progress_label = None
+        self._apply_progress_bar = None
+        self._active_apply_date = None
+        self._apply_actions = None
 
         self._apply_style()
         self._build_ui()
@@ -459,9 +528,6 @@ class PromoPlanner(QMainWindow):
         form.addWidget(duration_panel)
         self._refresh_day_summary()
 
-        self.allow_below = CleanCheckBox("Allow prices below cost floor for this campaign")
-        self.allow_below.setObjectName("optionCheck")
-        form.addWidget(self.allow_below)
         notes_label = QLabel("Notes")
         notes_label.setStyleSheet("background:transparent;font-weight:600;")
         form.addWidget(notes_label)
@@ -611,8 +677,12 @@ class PromoPlanner(QMainWindow):
         html = QPushButton("Open management HTML")
         html.setObjectName("primary")
         html.clicked.connect(self._open_management_calendar)
+        export = QPushButton("Export promotion calendar")
+        export.setObjectName("soft")
+        export.clicked.connect(self._export_promotion_calendar)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self._refresh_campaigns)
+        top.addWidget(export)
         top.addWidget(html)
         top.addWidget(refresh)
         root.addLayout(top)
@@ -659,10 +729,11 @@ class PromoPlanner(QMainWindow):
         left_layout.addWidget(card, 1)
         split.addWidget(left)
 
-        exec_card, el = self._card("Selected key date", "END actions are applied before START actions when both happen on the same date.")
+        exec_card, el = self._card("Midnight changes", "Review the state before and after midnight on the selected key date.")
         exec_card.setMinimumWidth(285)
         exec_card.setMaximumWidth(430)
         self.execution_date_title = QLabel("No key date selected")
+        self.execution_date_title.setWordWrap(True)
         self.execution_date_title.setStyleSheet("font-size:14pt;font-weight:750;")
         el.addWidget(self.execution_date_title)
 
@@ -683,14 +754,9 @@ class PromoPlanner(QMainWindow):
         summary_scroll.setWidget(summary_inner)
         el.addWidget(summary_scroll, 1)
 
-        self.include_next_day_starts = CleanCheckBox("Include next-day starts in this batch")
-        self.include_next_day_starts.setToolTip(
-            "Keep the campaigns' real start date, but publish starts scheduled for the following day "
-            "together with this date's changes so one partner price pack can cover the transition."
-        )
-        self.include_next_day_starts.toggled.connect(lambda _checked: self._refresh_execution_date())
-        self.include_next_day_starts.setVisible(False)
-        el.addWidget(self.include_next_day_starts)
+        self.midnight_changes_note = QLabel("Ending campaigns are removed before starting campaigns are published.")
+        self.midnight_changes_note.setToolTip("All changes on this key date are applied together at midnight.")
+        el.addWidget(self.midnight_changes_note)
 
         self.preview_date_btn = QPushButton("Preview changes")
         self.preview_date_btn.clicked.connect(self._preview_execution_date)
@@ -749,8 +815,9 @@ class PromoPlanner(QMainWindow):
 
         for kd in self._key_dates():
             dd = self._parse_iso(kd)
-            if first <= dd <= last:
-                x = left + (dd - first).days * day_w
+            boundary = dd + timedelta(days=1)
+            if first <= boundary <= last:
+                x = left + (boundary - first).days * day_w
                 self.timeline_scene.addLine(x, 28, x, height, QPen(QColor("#F2B7D4"), 1, Qt.DashLine))
                 self.timeline_scene.addEllipse(x - 4, 27, 8, 8, QPen(Qt.NoPen), QBrush(QColor(MAGENTA)))
 
@@ -974,7 +1041,8 @@ class PromoPlanner(QMainWindow):
             destinations=list(self.selected_destinations),
             plans=plans,
             days=days,
-            allow_below_cost=self.allow_below.isChecked(),
+            # Below-floor approval is always collected per row at each key date.
+            allow_below_cost=False,
             notes=self.notes_edit.toPlainText().strip(),
             status="ACTIVE_IMPORTED" if existing_active else "PLANNED",
         )
@@ -1006,7 +1074,6 @@ class PromoPlanner(QMainWindow):
                         (c.destinations, old.destinations, "destinations"),
                         (c.plans, old.plans, "plans"),
                         (c.days, old.days, "durations"),
-                        (c.allow_below_cost, old.allow_below_cost, "cost-floor override"),
                     ]
                     for new_value, old_value, label in checks:
                         if new_value != old_value:
@@ -1144,7 +1211,6 @@ class PromoPlanner(QMainWindow):
             cb.setEnabled(not enabled)
         for btn in self.day_buttons.values():
             btn.setEnabled(not enabled)
-        self.allow_below.setEnabled(not enabled)
         if hasattr(self, "available_list"):
             self.available_list.setEnabled(not enabled)
         if hasattr(self, "selected_list"):
@@ -1166,7 +1232,6 @@ class PromoPlanner(QMainWindow):
             self.end_date[1].setDate(QDate.fromString(c.end_date, "yyyy-MM-dd"))
         else:
             self.end_date[1].setDate(QDate.currentDate())
-        self.allow_below.setChecked(c.allow_below_cost)
         self.selected_destinations = list(c.destinations)
         self._render_selected()
         for plan, cb in self.plan_checks.items():
@@ -1195,7 +1260,6 @@ class PromoPlanner(QMainWindow):
         self.selected_destinations = []
         self._render_selected()
         self.notes_edit.clear()
-        self.allow_below.setChecked(False)
         if self.promo_combo.count():
             self.promo_combo.setCurrentIndex(0)
         for cb in self.plan_checks.values():
@@ -1259,18 +1323,20 @@ class PromoPlanner(QMainWindow):
 
     # ---------- Key dates / batch execution ----------
     def _key_dates(self) -> list[str]:
+        """Return midnight boundaries: an end date and the prior date for a start."""
         dates = set()
         for c in self.store.list_campaigns():
             if c.start_date:
-                dates.add(c.start_date)
+                dates.add((self._parse_iso(c.start_date) - timedelta(days=1)).isoformat())
             if c.end_date:
                 dates.add(c.end_date)
         return sorted(dates)
 
     def _key_date_counts(self, key_date: str) -> tuple[int, int]:
         campaigns = self.store.list_campaigns()
+        next_day = (self._parse_iso(key_date) + timedelta(days=1)).isoformat()
         return (
-            sum(1 for c in campaigns if c.start_date == key_date),
+            sum(1 for c in campaigns if c.start_date == next_day),
             sum(1 for c in campaigns if c.end_date == key_date),
         )
 
@@ -1335,18 +1401,12 @@ class PromoPlanner(QMainWindow):
                 line.setStyleSheet(f"border:0;border-top:1px solid {BORDER};background:transparent;")
                 self.key_date_row.addWidget(line, 0, Qt.AlignVCenter)
 
-            starts, ends = self._key_date_counts(kd)
             dd = self._parse_iso(kd)
-            parts = [dd.strftime("%d"), dd.strftime("%b").upper()]
-            counts = []
-            if starts:
-                counts.append(f"+{starts}")
-            if ends:
-                counts.append(f"−{ends}")
-            if counts:
-                parts.append(" / ".join(counts))
-            b = QPushButton("  ".join(parts))
-            b.setFixedSize(92, 42)
+            next_day = dd + timedelta(days=1)
+            b = QPushButton(
+                f"{dd.strftime('%d %b').upper()} 24:00\n→ {next_day.strftime('%d %b').upper()} 00:00"
+            )
+            b.setFixedSize(126, 48)
             b.setCursor(Qt.PointingHandCursor)
             if kd == selected:
                 b.setStyleSheet(
@@ -1359,42 +1419,52 @@ class PromoPlanner(QMainWindow):
                     "border-radius:9px; padding:3px 6px; font-size:7.5pt; font-weight:600; }} "
                     f"QPushButton:hover {{ border-color:{MAGENTA}; color:{MAGENTA_DARK}; }}"
                 )
-            b.setToolTip(f"{dd.strftime('%d %B %Y')} · {starts} starting · {ends} ending")
+            starts, ends = self._key_date_counts(kd)
+            b.setToolTip(
+                f"Midnight boundary · {dd.strftime('%d %B')} 24:00 → {next_day.strftime('%d %B %Y')} 00:00\n"
+                f"{ends} campaign(s) ending · {starts} campaign(s) starting"
+            )
             b.clicked.connect(lambda _checked=False, d=kd: self._jump_to_execution_date(d))
             self.key_date_row.addWidget(b)
         self.key_date_row.addStretch(1)
 
     def _on_execution_date_changed(self, _date: QDate):
-        # A next-day inclusion is an operational choice for one selected key date only.
-        # Never carry it silently when the user navigates to another date.
-        if hasattr(self, "include_next_day_starts"):
-            self.include_next_day_starts.blockSignals(True)
-            self.include_next_day_starts.setChecked(True)
-            self.include_next_day_starts.blockSignals(False)
         self._refresh_execution_date()
 
-    def _next_day_start_actions(self, execution_date: str):
+    def _actions_for_execution_date(self, execution_date: str):
+        actions = []
         next_day = (self._parse_iso(execution_date) + timedelta(days=1)).isoformat()
-        actions = []
-        for c in self.store.list_campaigns():
-            imported = c.status == "ACTIVE_IMPORTED"
-            started = self.store.has_execution(c.id, "START")
-            if (not imported) and c.start_date == next_day and not started:
-                actions.append((c, "START"))
-        return actions
-
-    def _actions_for_execution_date(self, execution_date: str, include_next_day_starts: bool = False):
-        actions = []
         for c in self.store.list_campaigns():
             started = self.store.has_execution(c.id, "START")
             ended = self.store.has_execution(c.id, "END")
             imported = c.status == "ACTIVE_IMPORTED"
             if c.end_date and c.end_date == execution_date and (started or imported) and not ended:
                 actions.append((c, "END"))
-            if (not imported) and c.start_date and c.start_date == execution_date and not started:
+            if (not imported) and c.start_date and c.start_date == next_day and not started:
                 actions.append((c, "START"))
-        if include_next_day_starts:
-            actions.extend(self._next_day_start_actions(execution_date))
+        return actions
+
+    def _actions_through_execution_date(self, execution_date: str):
+        """Project from today's workbook through the selected midnight boundary."""
+        boundary = self._parse_iso(execution_date) + timedelta(days=1)
+        actions = []
+        for campaign in self.store.list_campaigns():
+            started = self.store.has_execution(campaign.id, "START")
+            ended = self.store.has_execution(campaign.id, "END")
+            imported = campaign.status == "ACTIVE_IMPORTED"
+            starts_by_boundary = bool(
+                not started and not imported and campaign.start_date
+                and self._parse_iso(campaign.start_date) <= boundary
+            )
+            if starts_by_boundary:
+                actions.append((campaign, "START"))
+            ends_by_boundary = bool(
+                not ended and campaign.end_date
+                and self._parse_iso(campaign.end_date) < boundary
+                and (started or imported or starts_by_boundary)
+            )
+            if ends_by_boundary:
+                actions.append((campaign, "END"))
         return actions
 
     def _refresh_execution_date(self):
@@ -1402,61 +1472,33 @@ class PromoPlanner(QMainWindow):
             return
         self._render_key_date_strip()
         d = self._qdate_iso(self.execution_date.date())
+        self._load_issue_choices(d)
         if hasattr(self, "execution_date_title"):
             try:
-                pretty = self._parse_iso(d).strftime("%d %B %Y")
+                key_date = self._parse_iso(d)
+                next_day = key_date + timedelta(days=1)
+                pretty = (
+                    f"Midnight boundary · {key_date.strftime('%d %b')} 24:00 → "
+                    f"{next_day.strftime('%d %b %Y')} 00:00"
+                )
             except Exception:
                 pretty = d
             self.execution_date_title.setText(pretty)
 
-        if self._last_execution_key_date != d:
-            self._last_execution_key_date = d
-            if hasattr(self, "include_next_day_starts"):
-                self.include_next_day_starts.blockSignals(True)
-                self.include_next_day_starts.setChecked(True)
-                self.include_next_day_starts.blockSignals(False)
+        self._last_execution_key_date = d
+        actions = self._actions_for_execution_date(d)
 
-        today_actions = self._actions_for_execution_date(d, include_next_day_starts=False)
-        next_day_actions = self._next_day_start_actions(d)
-        include_next = bool(
-            hasattr(self, "include_next_day_starts")
-            and self.include_next_day_starts.isChecked()
-            and next_day_actions
-        )
-        actions = self._actions_for_execution_date(d, include_next_day_starts=include_next)
-
-        next_day = self._parse_iso(d) + timedelta(days=1)
-        if hasattr(self, "include_next_day_starts"):
-            self.include_next_day_starts.setVisible(bool(next_day_actions))
-            self.include_next_day_starts.setEnabled(bool(next_day_actions) and not bool(self.store.get_active_batch_for_date(d)))
-            self.include_next_day_starts.setText(
-                f"Include {len(next_day_actions)} start{'s' if len(next_day_actions) != 1 else ''} scheduled for "
-                f"{next_day.strftime('%d %b')} in this batch"
-            )
-
-        ending = [c.name for c, a in today_actions if a == "END"]
-        starting_today = [c.name for c, a in today_actions if a == "START"]
-        starting_next = [c.name for c, _a in next_day_actions] if include_next else []
+        ending = [c.name for c, a in actions if a == "END" and c.end_date == d]
+        next_day = (self._parse_iso(d) + timedelta(days=1)).isoformat()
+        starting_next_day = [c.name for c, a in actions if a == "START" and c.start_date == next_day]
         batch = self.store.get_active_batch_for_date(d)
         parts = []
         if ending:
-            parts.append("ENDING TODAY\n• " + "\n• ".join(ending))
-        if starting_today:
-            parts.append("STARTING TODAY\n• " + "\n• ".join(starting_today))
-        if starting_next:
-            parts.append(
-                f"STARTING {next_day.strftime('%d %b').upper()} · INCLUDED IN THIS BATCH\n• "
-                + "\n• ".join(starting_next)
-            )
-        elif next_day_actions:
-            parts.append(
-                f"OPTIONAL NEXT-DAY STARTS · {next_day.strftime('%d %b').upper()}\n"
-                f"{len(next_day_actions)} campaign{'s' if len(next_day_actions) != 1 else ''} can be included using the option below."
-            )
-        if not today_actions and not next_day_actions:
-            parts.append("No unapplied campaign changes are scheduled for this key date or the following day's start.")
-        elif not today_actions and next_day_actions and not include_next:
-            parts.insert(0, "No unapplied changes are scheduled for this date itself.")
+            parts.append(f"ENDING {self._parse_iso(d).strftime('%d %b').upper()} AT 24:00\n• " + "\n• ".join(ending))
+        if starting_next_day:
+            parts.append(f"STARTING {self._parse_iso(next_day).strftime('%d %b').upper()} AT 00:00\n• " + "\n• ".join(starting_next_day))
+        if not actions:
+            parts.append("No unapplied campaign changes are scheduled for this key date.")
         if batch:
             parts.append(f"EXECUTED\nBatch #{batch['id']} · {batch['executed_at']}")
         self.execution_summary.setText("\n\n".join(parts))
@@ -1464,14 +1506,16 @@ class PromoPlanner(QMainWindow):
         has_actions = bool(actions)
         self.preview_date_btn.setEnabled(has_actions)
         self.apply_date_btn.setEnabled(has_actions and not bool(batch))
-        self.apply_date_btn.setText(f"APPLY CHANGES FOR {self._parse_iso(d).strftime('%d %b').upper()}")
+        self.apply_date_btn.setText(
+            f"APPLY {self._parse_iso(d).strftime('%d %b').upper()} MIDNIGHT CHANGES"
+        )
         self.undo_btn.setVisible(bool(batch))
         self.undo_btn.setEnabled(bool(batch))
         self.undo_btn.setText(f"Undo changes for {self._parse_iso(d).strftime('%d %b')}")
 
     def _earliest_outstanding_key_date(self) -> str | None:
         for kd in self._key_dates():
-            if self._actions_for_execution_date(kd, include_next_day_starts=False):
+            if self._actions_for_execution_date(kd):
                 return kd
         return None
 
@@ -1485,18 +1529,16 @@ class PromoPlanner(QMainWindow):
         msg.setIcon(QMessageBox.Warning)
         msg.setText(f"Changes planned for {earliest} have not yet been executed.")
         msg.setInformativeText(
-            f"Executing {selected_date} first can make current prices diverge from the planned sequence.\n\n"
-            "Next-day START actions included from the selected date are allowed and are not treated as skipped dates."
+            f"Apply {earliest} first so promo layers and temporary price changes follow their scheduled order."
         )
         go_btn = msg.addButton(f"Go to {earliest}", QMessageBox.AcceptRole)
-        execute_btn = msg.addButton("Execute anyway", QMessageBox.DestructiveRole)
         msg.addButton(QMessageBox.Cancel)
         msg.exec()
         clicked = msg.clickedButton()
         if clicked is go_btn:
             self._jump_to_execution_date(earliest)
             return False
-        return clicked is execute_btn
+        return False
 
     @staticmethod
     def _fmt_price(value) -> str:
@@ -1505,12 +1547,17 @@ class PromoPlanner(QMainWindow):
     def _batch_preview_dialog(self, preview, *, approval: bool = False) -> bool:
         dlg = QDialog(self)
         dlg.setWindowTitle("Approve pricing changes" if approval else "Pricing change preview")
-        dlg.resize(1380, 680)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            dlg.resize(int(available.width() * 0.96), int(available.height() * 0.88))
+        else:
+            dlg.resize(1600, 850)
         layout = QVBoxLayout(dlg)
 
         title = QLabel(
             ("Review every affected pricing row before writing to current prices." if approval else
-             "Preview of every affected pricing row. Nothing will be written.")
+             "Projected from today’s manual current prices through this key date. Nothing will be written.")
         )
         title.setStyleSheet("font-size:11pt;font-weight:700;")
         layout.addWidget(title)
@@ -1521,11 +1568,28 @@ class PromoPlanner(QMainWindow):
         sub.setStyleSheet(f"color:{MID};")
         layout.addWidget(sub)
 
+        campaigns_by_id = {int(c.id or 0): c for c in self.store.list_campaigns()}
+        action_lines = []
+        for item in preview.items:
+            campaign = campaigns_by_id.get(item.campaign_id)
+            scheduled_date = (
+                campaign.end_date if item.action == "END" else campaign.start_date
+            ) if campaign else ""
+            date_label = f" ({scheduled_date})" if scheduled_date else ""
+            action_lines.append(
+                f"{item.action}: {item.campaign_name}{date_label}  ·  "
+                f"matched {item.matched_rows}, would change {item.changed_rows}"
+            )
+        actions_label = QLabel("Included campaign actions\n" + "\n".join(action_lines))
+        actions_label.setWordWrap(True)
+        actions_label.setStyleSheet(f"color:{MID};background:#F7F8FA;border:1px solid {BORDER};border-radius:6px;padding:7px;")
+        layout.addWidget(actions_label)
+
         columns = [
             "Destination", "Plan", "Days", "Change",
-            "Promo before", "Promo after",
-            "List EUR before", "List EUR after", "Net EUR before", "Net EUR after",
-            "List USD before", "List USD after", "Net USD before", "Net USD after",
+            "Promo\nbefore", "Promo\nafter", "Below-floor approval\nbefore", "Below-floor approval\nafter",
+            "List EUR\nbefore", "List EUR\nafter", "Net EUR\nbefore", "Net EUR\nafter",
+            "List USD\nbefore", "List USD\nafter", "Net USD\nbefore", "Net USD\nafter",
         ]
         table = QTableWidget(len(preview.price_changes), len(columns))
         table.setHorizontalHeaderLabels(columns)
@@ -1533,11 +1597,18 @@ class PromoPlanner(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        header.setMinimumHeight(48)
+        header.setDefaultAlignment(Qt.AlignCenter)
+        header.setTextElideMode(Qt.ElideNone)
+        header.setSectionResizeMode(QHeaderView.Stretch)
         for r, ch in enumerate(preview.price_changes):
             vals = [
                 f"{ch.country} ({ch.iso})" if ch.country and ch.country != ch.iso else ch.iso,
                 ch.plan, str(ch.days), ch.change,
                 ch.promo_before, ch.promo_after,
+                "TRUE" if ch.allow_below_cost_before else "FALSE",
+                "TRUE" if ch.allow_below_cost_after else "FALSE",
                 self._fmt_price(ch.list_eur_before), self._fmt_price(ch.list_eur_after),
                 self._fmt_price(ch.net_eur_before), self._fmt_price(ch.net_eur_after),
                 self._fmt_price(ch.list_usd_before), self._fmt_price(ch.list_usd_after),
@@ -1545,49 +1616,433 @@ class PromoPlanner(QMainWindow):
             ]
             for col, value in enumerate(vals):
                 item = QTableWidgetItem(value)
-                if col in (5, 7, 9, 11, 13):
+                if col in (5, 7, 9, 11, 13, 15):
                     item.setBackground(QBrush(QColor(MAGENTA_SOFT)))
                 table.setItem(r, col, item)
-        table.resizeColumnsToContents()
-        table.setColumnWidth(0, min(max(table.columnWidth(0), 150), 230))
-        table.setColumnWidth(3, min(max(table.columnWidth(3), 190), 320))
+        table.resizeRowsToContents()
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         layout.addWidget(table, 1)
+
+        if preview.collisions:
+            collision_text = (
+                "Preview found overlapping promos. Choose temporary override to put the new promo on top "
+                "and resume the earlier promo when it ends if that promo is still scheduled, or keep the current promo:\n"
+                + "\n".join(preview.collisions[:20])
+            )
+            if len(preview.collisions) > 20:
+                collision_text += f"\n...and {len(preview.collisions) - 20} more"
+            collisions_label = QLabel(collision_text)
+            collisions_label.setWordWrap(True)
+            collisions_label.setStyleSheet(f"background:{AMBER_SOFT};color:{AMBER};border:1px solid #E7C46B;border-radius:6px;padding:7px;")
+            layout.addWidget(collisions_label)
 
         if preview.cost_floor_issues:
             warn = QLabel(
-                f"Cost-floor control: {len(preview.cost_floor_issues)} currency price(s) were detected below floor in the initial simulation. "
-                "Any approved list-price adjustment is already reflected in the AFTER columns above."
+                f"Cost-floor review: {len(preview.cost_floor_issues)} currency price(s) need a decision. "
+                "Saved choices are reflected in the AFTER columns. Open the issue list to review or change them."
             )
             warn.setWordWrap(True)
             warn.setStyleSheet(f"background:{AMBER_SOFT};color:{AMBER};border:1px solid #E7C46B;border-radius:6px;padding:7px;")
             layout.addWidget(warn)
+        if preview.cost_floor_issues or preview.collision_issues:
+            item_count = len(preview.cost_floor_issues) + len(preview.collision_issues)
+            issues_button = QPushButton(f"Review {item_count} issue decisions")
+            issues_button.setToolTip("Unresolved rows are red. Saved decisions are green.")
+            issues_button.clicked.connect(
+                lambda _checked=False, p=preview, editable=not approval:
+                self._batch_issue_choices_dialog(
+                    p,
+                    editable=editable,
+                    on_saved=lambda: self.statusBar().showMessage(
+                        "Choices saved. Reopen Preview changes to see the updated results.", 8000
+                    ),
+                )
+            )
+            layout.addWidget(issues_button)
 
         buttons = QDialogButtonBox()
-        if approval:
-            approve_btn = buttons.addButton("Approve & execute", QDialogButtonBox.AcceptRole)
-            approve_btn.setObjectName("primary")
-            cancel_btn = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
-            approve_btn.clicked.connect(dlg.accept)
-            cancel_btn.clicked.connect(dlg.reject)
-        else:
-            close_btn = buttons.addButton("Close", QDialogButtonBox.RejectRole)
-            close_btn.clicked.connect(dlg.reject)
+        export_btn = buttons.addButton("Export CSV…", QDialogButtonBox.ActionRole)
+        export_btn.clicked.connect(lambda _checked=False, p=preview: self._export_batch_preview_csv(p))
+        close_btn = buttons.addButton("Close", QDialogButtonBox.RejectRole)
+        close_btn.clicked.connect(dlg.reject)
         layout.addWidget(buttons)
-        return dlg.exec() == QDialog.Accepted
+        dlg.exec()
+        return False
+
+    def _export_batch_preview_csv(self, preview):
+        suggested = self.out_dir / f"promo_preview_{preview.execution_date}.csv"
+        path, _ = QFileDialog.getSaveFileName(self, "Export preview to CSV", str(suggested), "CSV files (*.csv)")
+        if not path:
+            return
+        columns = [
+            "Destination", "ISO", "Plan", "Days", "Change", "Promo before", "Promo after",
+            "Below-floor approval before", "Below-floor approval after",
+            "List EUR before", "List EUR after", "Net EUR before", "Net EUR after",
+            "List USD before", "List USD after", "Net USD before", "Net USD after",
+        ]
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(columns)
+                for change in preview.price_changes:
+                    writer.writerow([
+                        change.country, change.iso, change.plan, change.days, change.change,
+                        change.promo_before, change.promo_after,
+                        change.allow_below_cost_before, change.allow_below_cost_after, change.list_eur_before,
+                        change.list_eur_after, change.net_eur_before, change.net_eur_after,
+                        change.list_usd_before, change.list_usd_after, change.net_usd_before,
+                        change.net_usd_after,
+                    ])
+            self.statusBar().showMessage(f"Preview CSV exported: {path}", 8000)
+        except Exception as exc:
+            self._error("Export preview", str(exc))
+
+    def _issue_choices_path(self, execution_date: str) -> Path:
+        return self.out_dir / "issue_choices" / f"{execution_date}.json"
+
+    def _load_issue_choices(self, execution_date: str):
+        self._pending_cost_floor_choices = {}
+        self._pending_conflict_choices = {}
+        self._pending_conflict_contexts = {}
+        path = self._issue_choices_path(execution_date)
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self._pending_cost_floor_choices = {
+                (int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper()): str(choice)
+                for cid, iso, plan, days, currency, choice in data.get("cost_floor", [])
+            }
+            self._pending_conflict_choices = {}
+            self._pending_conflict_contexts = {}
+            for record in data.get("conflicts", []):
+                if len(record) != 6:
+                    continue
+                cid, iso, plan, days, current_code, choice = record
+                key = (int(cid), str(iso).upper(), str(plan), int(days))
+                self._pending_conflict_choices[key] = str(choice)
+                self._pending_conflict_contexts[key] = str(current_code)
+        except Exception as exc:
+            self._warn("Saved issue choices", f"Could not read saved choices for {execution_date}: {exc}")
+
+    def _save_issue_choices(self, execution_date: str):
+        path = self._issue_choices_path(execution_date)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "execution_date": execution_date,
+            "cost_floor": [list(key) + [choice] for key, choice in self._pending_cost_floor_choices.items()],
+            "conflicts": [
+                list(key) + [self._pending_conflict_contexts.get(key, ""), choice]
+                for key, choice in self._pending_conflict_choices.items()
+            ],
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        temp = path.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temp.replace(path)
+
+    def _simulate_with_saved_choices(self, execution_date: str, actions):
+        preview = preview_batch(
+            self.workbook, actions, execution_date,
+            cost_floor_choices=self._pending_cost_floor_choices,
+            conflict_choices=self._pending_conflict_choices,
+            campaigns=self.store.list_campaigns(),
+            row_index=self.catalogue.row_index,
+            row_index_signature=self.catalogue.workbook_signature,
+        )
+        for _ in range(3):
+            current_floors = {
+                (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+                for issue in preview.cost_floor_issues
+            }
+            current_conflicts = {
+                (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days): issue.current_promo_code
+                for issue in preview.collision_issues
+            }
+            stale_floors = set(self._pending_cost_floor_choices) - current_floors
+            stale_conflicts = set(self._pending_conflict_choices) - set(current_conflicts)
+            stale_conflicts.update(
+                key for key, promo_code in current_conflicts.items()
+                if key in self._pending_conflict_choices
+                and promo_code != self._pending_conflict_contexts.get(key, "")
+            )
+            if not stale_floors and not stale_conflicts:
+                break
+            for key in stale_floors:
+                self._pending_cost_floor_choices.pop(key, None)
+            for key in stale_conflicts:
+                self._pending_conflict_choices.pop(key, None)
+                self._pending_conflict_contexts.pop(key, None)
+            self._save_issue_choices(execution_date)
+            preview = preview_batch(
+                self.workbook, actions, execution_date,
+                cost_floor_choices=self._pending_cost_floor_choices,
+                conflict_choices=self._pending_conflict_choices,
+                campaigns=self.store.list_campaigns(),
+                row_index=self.catalogue.row_index,
+                row_index_signature=self.catalogue.workbook_signature,
+            )
+        return preview
+
+    def _set_cost_floor_issue_row_state(self, table, row, resolved):
+        background = QColor("#DFF2E1" if resolved else "#FDE8E7")
+        foreground = QColor("#1B5E20" if resolved else "#9B1C1C")
+        for col in range(table.columnCount()):
+            item = table.item(row, col)
+            if item is None:
+                continue
+            font = item.font()
+            font.setBold(not resolved)
+            item.setFont(font)
+            item.setBackground(background)
+            item.setForeground(foreground)
+        combo = table.cellWidget(row, table.columnCount() - 1)
+        if combo is not None:
+            combo.setStyleSheet(
+                "QComboBox { background: #DFF2E1; color: #1B5E20; }"
+                if resolved else
+                "QComboBox { background: #FDE8E7; color: #9B1C1C; font-weight: 700; }"
+            )
+
+    def _show_cost_floor_issues(self, issues, *, editable=True, on_saved=None):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Cost-floor issues")
+        dlg.resize(1180, 600)
+        layout = QVBoxLayout(dlg)
+        intro = QLabel(
+            f"{len(issues)} currency prices would have a promo net price below the cost floor. "
+            "This is a preview; no prices have been changed."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        columns = [
+            "Campaign", "Destination", "Plan", "Days", "Currency",
+            "List now", "Promo net", "Cost floor", "Target net (+10%)", "Required list",
+        ]
+        if editable:
+            columns.append("Decision")
+        table = QTableWidget(len(issues), len(columns))
+        table.setHorizontalHeaderLabels(columns)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setStyleSheet(
+            "QTableWidget::item:selected { background: #B9BDC3; color: #202124; }"
+        )
+        choices = []
+        saved = getattr(self, "_pending_cost_floor_choices", {})
+        for row, issue in enumerate(issues):
+            values = [
+                issue.campaign_name, issue.iso, issue.plan, str(issue.days), issue.currency,
+                self._fmt_price(issue.current_list_price), self._fmt_price(issue.promo_net_price),
+                self._fmt_price(issue.cost_floor), self._fmt_price(issue.target_net_price),
+                self._fmt_price(issue.required_list_price),
+            ]
+            for col, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+            if editable:
+                combo = QComboBox()
+                combo.addItem("Select action", None)
+                combo.addItem("Raise list price to floor + 10%", "raise")
+                combo.addItem("Override cost floor", "override")
+                key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+                existing = saved.get(key)
+                if existing:
+                    combo.setCurrentIndex(combo.findData(existing))
+                table.setCellWidget(row, len(columns) - 1, combo)
+                choices.append((key, combo))
+                self._set_cost_floor_issue_row_state(table, row, combo.currentData() in {"raise", "override"})
+
+                def update_row_state(_index=None, r=row, c=combo):
+                    self._set_cost_floor_issue_row_state(table, r, c.currentData() in {"raise", "override"})
+
+                combo.currentIndexChanged.connect(update_row_state)
+            else:
+                key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+                self._set_cost_floor_issue_row_state(table, row, saved.get(key) in {"raise", "override"})
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox()
+        if editable:
+            cancel = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+            save = buttons.addButton("Save choices & close", QDialogButtonBox.AcceptRole)
+            save.setEnabled(bool(choices) and all(combo.currentData() in {"raise", "override"} for _key, combo in choices))
+            cancel.clicked.connect(dlg.reject)
+
+            def refresh_save(_index=None):
+                save.setEnabled(all(combo.currentData() in {"raise", "override"} for _key, combo in choices))
+
+            for _key, combo in choices:
+                combo.currentIndexChanged.connect(refresh_save)
+            save.clicked.connect(dlg.accept)
+        else:
+            close = buttons.addButton("Close", QDialogButtonBox.RejectRole)
+            close.clicked.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if editable and dlg.exec() == QDialog.Accepted:
+            self._pending_cost_floor_choices = {
+                **saved,
+                **{key: combo.currentData() for key, combo in choices},
+            }
+            if on_saved:
+                on_saved()
+        elif not editable:
+            dlg.exec()
 
     def _preview_execution_date(self):
         d = self._qdate_iso(self.execution_date.date())
-        include_next = bool(getattr(self, "include_next_day_starts", None) and self.include_next_day_starts.isChecked())
-        actions = self._actions_for_execution_date(d, include_next_day_starts=include_next)
+        actions = self._actions_through_execution_date(d)
         if not actions:
-            return self._info("Date preview", f"No unapplied changes are scheduled for {d}.")
+            return self._info("Date preview", f"No scheduled campaign changes are projected through {d}.")
         try:
-            p = preview_batch(self.workbook, actions, d)
+            self._load_issue_choices(d)
+            p = self._simulate_with_saved_choices(d, actions)
         except Exception as exc:
             return self._error("Date preview", str(exc))
-        if p.collisions:
-            return self._error("Preview blocked", "Collisions were found:\n\n" + "\n".join(p.collisions[:20]))
         self._batch_preview_dialog(p, approval=False)
+
+    def _batch_issue_choices_dialog(self, preview, *, editable=True, on_saved=None):
+        """Show cost-floor and promo-conflict rows together and collect their decisions."""
+        floor_issues = list(preview.cost_floor_issues or [])
+        conflict_issues = list(preview.collision_issues or [])
+        if not floor_issues and not conflict_issues:
+            return ({}, {}) if editable else None
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Items to fix before applying")
+        dialog.resize(1450, 720)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            f"Review {len(floor_issues)} cost-floor prices and {len(conflict_issues)} promo conflicts. "
+            "Unresolved rows are red and bold; saved decisions are green."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        note = QLabel(
+            "At each key date, prior below-floor approvals are cleared. For every active promo below floor, "
+            "raise the list price to reach floor + 10% or explicitly override the floor. "
+            "A promo conflict can temporarily override the current promo; the previous promo resumes at the end "
+            "if it is still scheduled."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        columns = [
+            "Issue", "Campaign", "Destination", "Plan", "Days", "Current promo",
+            "List now", "Promo net", "Cost floor", "Target net (+10%)", "Required list", "Resolution",
+        ]
+        table = QTableWidget(len(floor_issues) + len(conflict_issues), len(columns))
+        table.setHorizontalHeaderLabels(columns)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setStyleSheet("QTableWidget::item:selected { background: #B9BDC3; color: #202124; }")
+
+        saved_floors = getattr(self, "_pending_cost_floor_choices", {})
+        saved_conflicts = getattr(self, "_pending_conflict_choices", {})
+        saved_conflict_contexts = getattr(self, "_pending_conflict_contexts", {})
+        floor_rows = []
+        conflict_rows = []
+        conflict_contexts = {}
+        row = 0
+        for issue in floor_issues:
+            key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+            values = [
+                "Cost floor", issue.campaign_name, issue.iso, issue.plan, str(issue.days), "",
+                self._fmt_price(issue.current_list_price), self._fmt_price(issue.promo_net_price),
+                self._fmt_price(issue.cost_floor), self._fmt_price(issue.target_net_price),
+                self._fmt_price(issue.required_list_price),
+            ]
+            for col, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+            combo = QComboBox()
+            combo.addItem("Select action", None)
+            combo.addItem("Raise list price to floor + 10%", "raise")
+            combo.addItem("Override cost floor", "override")
+            if saved_floors.get(key):
+                combo.setCurrentIndex(combo.findData(saved_floors[key]))
+            table.setCellWidget(row, len(columns) - 1, combo)
+            floor_rows.append((key, combo))
+            self._set_cost_floor_issue_row_state(table, row, combo.currentData() in {"raise", "override"})
+            combo.currentIndexChanged.connect(
+                lambda _index=None, r=row, c=combo:
+                self._set_cost_floor_issue_row_state(table, r, c.currentData() in {"raise", "override"})
+            )
+            row += 1
+
+        for issue in conflict_issues:
+            key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days)
+            conflict_contexts[key] = issue.current_promo_code
+            values = [
+                "Promo conflict", issue.campaign_name, issue.iso, issue.plan, str(issue.days),
+                issue.current_promo_name or issue.current_promo_code, "", "", "", "", "",
+            ]
+            for col, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+            combo = QComboBox()
+            combo.addItem("Select action", None)
+            combo.addItem("Temporarily override; resume if still active", "overwrite")
+            combo.addItem("Keep current promo", "keep")
+            if saved_conflicts.get(key):
+                combo.setCurrentIndex(combo.findData(saved_conflicts[key]))
+            table.setCellWidget(row, len(columns) - 1, combo)
+            conflict_rows.append((key, combo))
+            self._set_cost_floor_issue_row_state(table, row, combo.currentData() in {"overwrite", "keep"})
+            combo.currentIndexChanged.connect(
+                lambda _index=None, r=row, c=combo:
+                self._set_cost_floor_issue_row_state(table, r, c.currentData() in {"overwrite", "keep"})
+            )
+            row += 1
+        layout.addWidget(table, 1)
+
+        buttons = QDialogButtonBox()
+        if editable:
+            cancel = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+            save = buttons.addButton("Save choices & close", QDialogButtonBox.AcceptRole)
+            cancel.clicked.connect(dialog.reject)
+
+            def refresh_save(_index=None):
+                complete_floors = all(combo.currentData() in {"raise", "override"} for _key, combo in floor_rows)
+                complete_conflicts = all(combo.currentData() in {"overwrite", "keep"} for _key, combo in conflict_rows)
+                save.setEnabled(complete_floors and complete_conflicts)
+
+            for _key, combo in floor_rows + conflict_rows:
+                combo.currentIndexChanged.connect(refresh_save)
+            save.clicked.connect(dialog.accept)
+            refresh_save()
+        else:
+            close = buttons.addButton("Close", QDialogButtonBox.RejectRole)
+            close.clicked.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if editable and dialog.exec() == QDialog.Accepted:
+            floor_choices = {key: combo.currentData() for key, combo in floor_rows}
+            conflict_choices = {key: combo.currentData() for key, combo in conflict_rows}
+            self._pending_cost_floor_choices = {**saved_floors, **floor_choices}
+            self._pending_conflict_choices = {**saved_conflicts, **conflict_choices}
+            self._pending_conflict_contexts = {**saved_conflict_contexts, **conflict_contexts}
+            try:
+                self._save_issue_choices(self._qdate_iso(self.execution_date.date()))
+            except Exception as exc:
+                self._pending_cost_floor_choices = saved_floors
+                self._pending_conflict_choices = saved_conflicts
+                self._pending_conflict_contexts = saved_conflict_contexts
+                self._error("Choices not saved", f"Your decisions were not saved, so they will not be used for Apply.\n\n{exc}")
+                return None
+            if on_saved:
+                on_saved()
+            return floor_choices, conflict_choices
+        if not editable:
+            dialog.exec()
+            return None
+        return None
 
     def _cost_floor_resolution_dialog(self, preview, actions) -> str:
         """Return 'adjust', 'keep', or 'cancel' for below-cost START rows."""
@@ -1664,45 +2119,191 @@ class PromoPlanner(QMainWindow):
             return "cancel"
         return result["choice"]
 
+    def _cost_floor_choices_dialog(self, preview):
+        """Collect an explicit raise-or-override choice for every below-floor currency price."""
+        issues = list(getattr(preview, "cost_floor_issues", []) or [])
+        if not issues:
+            return {}
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose cost-floor actions")
+        dialog.resize(1320, 720)
+        layout = QVBoxLayout(dialog)
+        title = QLabel(f"Choose what to do for each of the {len(issues)} affected currency prices.")
+        title.setWordWrap(True)
+        title.setStyleSheet("font-size: 14px; font-weight: 700; color: #202124;")
+        layout.addWidget(title)
+        note = QLabel(
+            "Raise list price sets the promo net price to at least cost floor + 10%, rounded up to the next 0.05. "
+            "Override keeps the current list price and allows this promo price below cost floor for that pricing row."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        columns = [
+            "Campaign", "Destination", "Plan", "Days", "Currency", "List now",
+            "Promo net", "Cost floor", "Target net (+10%)", "Required list", "Decision",
+        ]
+        table = QTableWidget(len(issues), len(columns))
+        table.setHorizontalHeaderLabels(columns)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setStyleSheet(
+            "QTableWidget::item:selected { background: #B9BDC3; color: #202124; }"
+        )
+        choices = []
+        saved = getattr(self, "_pending_cost_floor_choices", {})
+        for row, issue in enumerate(issues):
+            values = [
+                issue.campaign_name, issue.iso, issue.plan, str(issue.days), issue.currency,
+                self._fmt_price(issue.current_list_price), self._fmt_price(issue.promo_net_price),
+                self._fmt_price(issue.cost_floor), self._fmt_price(issue.target_net_price),
+                self._fmt_price(issue.required_list_price),
+            ]
+            for col, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+            combo = QComboBox()
+            combo.addItem("Select action", None)
+            combo.addItem("Raise list price to floor + 10%", "raise")
+            combo.addItem("Override cost floor", "override")
+            key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+            existing = saved.get(key)
+            if existing:
+                combo.setCurrentIndex(combo.findData(existing))
+            table.setCellWidget(row, len(columns) - 1, combo)
+            choices.append((issue, key, combo))
+            self._set_cost_floor_issue_row_state(table, row, combo.currentData() in {"raise", "override"})
+
+            def update_row_state(_index=None, r=row, c=combo):
+                self._set_cost_floor_issue_row_state(table, r, c.currentData() in {"raise", "override"})
+
+            combo.currentIndexChanged.connect(update_row_state)
+        layout.addWidget(table, 1)
+
+        buttons = QDialogButtonBox()
+        cancel = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+        proceed = buttons.addButton("Save choices & continue", QDialogButtonBox.AcceptRole)
+        proceed.setEnabled(False)
+        cancel.clicked.connect(dialog.reject)
+        proceed.clicked.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        def refresh_proceed(_index=None):
+            proceed.setEnabled(all(combo.currentData() in {"raise", "override"} for _issue, _key, combo in choices))
+
+        for _issue, _key, combo in choices:
+            combo.currentIndexChanged.connect(refresh_proceed)
+        refresh_proceed()
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        result = {key: combo.currentData() for _issue, key, combo in choices}
+        self._pending_cost_floor_choices = {**saved, **result}
+        return result
+
     def _apply_execution_date(self):
+        if self._apply_worker is not None and self._apply_worker.isRunning():
+            return
         d = self._qdate_iso(self.execution_date.date())
         if self.store.get_active_batch_for_date(d):
             return self._info("Already executed", f"An active execution batch already exists for {d}. Undo it first if it was wrong.")
-        include_next = bool(getattr(self, "include_next_day_starts", None) and self.include_next_day_starts.isChecked())
-        actions = self._actions_for_execution_date(d, include_next_day_starts=include_next)
+        actions = self._actions_for_execution_date(d)
         if not actions:
             return self._info("Execute date", f"No unapplied changes are scheduled for {d}.")
         if not self._confirm_sequence_override(d):
             return
+        self._load_issue_choices(d)
         try:
-            p = preview_batch(self.workbook, actions, d)
+            p = self._simulate_with_saved_choices(d, actions)
         except Exception as exc:
             return self._error("Execute date", str(exc))
-        if p.collisions:
-            return self._error("Execution blocked", "Collisions were found:\n\n" + "\n".join(p.collisions[:20]))
-
-        floor_choice = self._cost_floor_resolution_dialog(p, actions) if p.cost_floor_issues else "none"
-        if floor_choice == "cancel":
+        floor_keys = {
+            (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper())
+            for issue in p.cost_floor_issues
+        }
+        missing_floor = {
+            key for key in floor_keys
+            if self._pending_cost_floor_choices.get(key) not in {"raise", "override"}
+        }
+        conflict_keys = {
+            (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days)
+            for issue in p.collision_issues
+        }
+        missing_conflicts = {
+            key for key in conflict_keys
+            if self._pending_conflict_choices.get(key) not in {"overwrite", "keep"}
+        }
+        if missing_floor or missing_conflicts:
+            self._batch_issue_choices_dialog(p)
+            self.statusBar().showMessage("Save every issue decision, then click Apply changes again.", 8000)
             return
-        adjust_floor_prices = floor_choice == "adjust"
+        floor_choices = {key: self._pending_cost_floor_choices[key] for key in floor_keys}
+        # Include saved resolutions as well as currently unresolved keys. A saved
+        # overwrite/keep makes the corresponding collision disappear from preview.
+        conflict_choices = dict(self._pending_conflict_choices)
 
-        # Re-run the simulation with the chosen floor resolution so the AFTER
-        # columns are exactly what will be written if the user approves.
-        try:
-            final_preview = preview_batch(
-                self.workbook, actions, d,
-                adjust_below_floor_to_margin=adjust_floor_prices,
-            )
-        except Exception as exc:
-            return self._error("Execution preview", str(exc))
-        if not self._batch_preview_dialog(final_preview, approval=True):
-            return
+        self.apply_date_btn.setEnabled(False)
+        self.preview_date_btn.setEnabled(False)
+        self.undo_btn.setEnabled(False)
+        dialog = ApplyProgressDialog(self)
+        dialog.setWindowTitle("Applying promo handover")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(460)
+        layout = QVBoxLayout(dialog)
+        label = QLabel("Starting safe price update…")
+        label.setWordWrap(True)
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        layout.addWidget(label)
+        layout.addWidget(bar)
+        dialog.setWindowFlag(Qt.WindowCloseButtonHint, False)
+        self._apply_progress_dialog = dialog
+        self._apply_progress_label = label
+        self._apply_progress_bar = bar
+        self._apply_worker = BatchApplyWorker(
+            self.workbook, actions, self.out_dir / "backups", d,
+            floor_choices, conflict_choices,
+            self.store.list_campaigns(),
+            self.catalogue.row_index, self.catalogue.workbook_signature, self,
+        )
+        self._active_apply_date = d
+        self._apply_actions = list(actions)
+        self._apply_worker.progress.connect(self._handle_apply_progress)
+        self._apply_worker.succeeded.connect(self._finish_apply_worker)
+        self._apply_worker.failed.connect(self._fail_apply_batch)
+        self._apply_worker.finished.connect(self._restore_apply_controls)
+        dialog.show()
+        self._apply_worker.start()
 
+    @staticmethod
+    def _update_apply_progress(label, bar, message, value, maximum):
+        label.setText(message)
+        bar.setRange(0, maximum)
+        if maximum:
+            bar.setValue(value)
+
+    @Slot(str, int, int)
+    def _handle_apply_progress(self, message, value, maximum):
+        self._update_apply_progress(
+            self._apply_progress_label, self._apply_progress_bar,
+            message, value, maximum,
+        )
+
+    @Slot(object)
+    def _finish_apply_worker(self, result):
+        self._finish_apply_batch(self._active_apply_date, self._apply_actions, result)
+
+    def _finish_apply_batch(self, execution_date, actions, result):
+        backup, changed_map, adjusted_cells = result
+        self._update_apply_progress(
+            self._apply_progress_label, self._apply_progress_bar,
+            "Recording the saved workbook and history snapshot…", 0, 0,
+        )
+        history_snapshot = None
         try:
-            backup, changed_map, adjusted_cells = execute_batch(
-                self.workbook, actions, self.out_dir / "backups", d,
-                adjust_below_floor_to_margin=adjust_floor_prices,
-            )
             details = [
                 {
                     "campaign_id": int(c.id),
@@ -1713,20 +2314,102 @@ class PromoPlanner(QMainWindow):
                 }
                 for c, action in actions
             ]
-            batch_id = self.store.create_batch(d, self.workbook, backup, details)
-            for c, action in actions:
-                changed = changed_map.get((int(c.id), action), 0)
-                scheduled_date = c.end_date if action == "END" else c.start_date
-                detail_text = f"Date batch {d}"
-                if scheduled_date and scheduled_date != d:
-                    detail_text += f"; campaign action scheduled for {scheduled_date}"
-                self.store.record_execution(c.id, action, self.workbook, backup, changed, details=detail_text, batch_id=batch_id)
             history_snapshot = self._save_manual_price_history_snapshot()
+            executions = []
+            for c, action in actions:
+                scheduled_date = c.end_date if action == "END" else c.start_date
+                detail = f"Date batch {execution_date}"
+                if scheduled_date and scheduled_date != execution_date:
+                    detail += f"; campaign action scheduled for {scheduled_date}"
+                executions.append((int(c.id), action, changed_map.get((int(c.id), action), 0), detail))
+            batch_id = self.store.create_batch_with_executions(
+                execution_date, self.workbook, backup, details, executions
+            )
         except Exception as exc:
-            return self._error("Execution blocked", str(exc))
+            try:
+                restore_workbook_backup(self.workbook, backup)
+                if history_snapshot and history_snapshot.exists():
+                    history_snapshot.unlink()
+            except Exception as rollback_exc:
+                self._dismiss_apply_progress()
+                return self._error(
+                    "Apply needs recovery",
+                    f"Bookkeeping failed: {exc}\nAutomatic restore failed: {rollback_exc}\nRecovery copy: {backup}",
+                )
+            self._dismiss_apply_progress()
+            return self._error("Apply rolled back", f"The workbook was restored from its recovery copy because saving the batch record failed.\n\n{exc}")
+
+        self._pending_cost_floor_choices = {}
+        self._pending_conflict_choices = {}
+        saved_choices = self._issue_choices_path(execution_date)
+        if saved_choices.exists():
+            saved_choices.unlink()
         self._refresh_campaigns()
-        extra = f"\nList-price cells adjusted for cost floor +10%: {adjusted_cells}" if adjusted_cells else ""
-        self._info("Date executed", f"All scheduled changes for {d} were applied.\n\nRows changed: {sum(changed_map.values())}{extra}\nBackup: {backup.name}\nHistory: {history_snapshot.name}\nBatch: #{batch_id}")
+        self._update_apply_progress(
+            self._apply_progress_label, self._apply_progress_bar,
+            "Saved successfully. Opening Pricing Editor…", 100, 100,
+        )
+        self._dismiss_apply_progress()
+        editor_started = self._launch_pricing_editor()
+        extra = f"\nList prices raised to floor +10%: {adjusted_cells}" if adjusted_cells else ""
+        editor_message = (
+            "Pricing Editor launch started so you can create the partner pack."
+            if editor_started else
+            "The apply is saved. Open Pricing Editor manually to create the partner pack."
+        )
+        self._info(
+            "Changes applied",
+            f"The handover for {execution_date} is saved in manual prices.\n\n"
+            f"Rows changed: {sum(changed_map.values())}{extra}\n"
+            f"Recovery backup: {backup.name}\nHistory snapshot: {history_snapshot.name}\nBatch: #{batch_id}\n\n"
+            + editor_message,
+        )
+
+    @Slot(str)
+    def _fail_apply_batch(self, message):
+        self._dismiss_apply_progress()
+        self._error("Apply failed", f"The price workbook was not successfully saved.\n\n{message}")
+
+    @Slot()
+    def _restore_apply_controls(self):
+        self._dismiss_apply_progress()
+        self._refresh_execution_date()
+        self._apply_worker = None
+        self._active_apply_date = None
+        self._apply_actions = None
+
+    def _dismiss_apply_progress(self):
+        if self._apply_progress_dialog:
+            self._apply_progress_dialog.can_close = True
+            self._apply_progress_dialog.close()
+            self._apply_progress_dialog.deleteLater()
+            self._apply_progress_dialog = None
+        self._apply_progress_label = None
+        self._apply_progress_bar = None
+        self._active_apply_date = None
+        self._apply_actions = None
+
+    def closeEvent(self, event):
+        if self._apply_worker is not None and self._apply_worker.isRunning():
+            event.ignore()
+            self.statusBar().showMessage("Please wait for the workbook save to finish before closing the planner.")
+            return
+        super().closeEvent(event)
+
+    def _launch_pricing_editor(self):
+        launcher = self.root_dir / "START_HERE" / "2_open_pricing_editor.py"
+        if not launcher.exists():
+            self.statusBar().showMessage(f"Pricing Editor launcher was not found: {launcher}", 12000)
+            return False
+        try:
+            args = {"cwd": str(self.root_dir), "stdin": subprocess.DEVNULL}
+            if sys.platform == "win32":
+                args["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen([sys.executable, str(launcher)], **args)
+            return True
+        except Exception as exc:
+            self.statusBar().showMessage(f"Pricing Editor could not be started: {exc}", 12000)
+            return False
 
     def _undo_execution_date(self):
         d = self._qdate_iso(self.execution_date.date())
@@ -1767,6 +2450,29 @@ class PromoPlanner(QMainWindow):
         except Exception as exc:
             return self._error("Management calendar", str(exc))
         self._info("Management calendar", f"Management timeline created:\n{path}")
+
+    def _export_promotion_calendar(self):
+        suggested = self.root_dir / "outputs" / "promo_planner" / "promotion_calendar.html"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export promotion calendar",
+            str(suggested),
+            "HTML files (*.html *.htm)",
+        )
+        if not path:
+            return
+        out_path = Path(path)
+        if out_path.suffix.lower() not in {".html", ".htm"}:
+            out_path = out_path.with_suffix(".html")
+        try:
+            generate_promotion_calendar(self.store, out_path, self.workbook)
+        except Exception as exc:
+            return self._error("Export promotion calendar", str(exc))
+        QMessageBox.information(
+            self,
+            "Promotion calendar exported",
+            f"Standalone calendar created:\n{out_path}\n\nIt contains a read-only snapshot and can be opened offline in a browser.",
+        )
 
     # ---------- helpers ----------
     @staticmethod

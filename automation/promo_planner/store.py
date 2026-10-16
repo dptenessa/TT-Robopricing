@@ -262,6 +262,35 @@ class PromoStore:
             )
             return int(cur.lastrowid)
 
+    def create_batch_with_executions(
+        self,
+        execution_date: str,
+        workbook: Path,
+        backup: Path,
+        details: list[dict],
+        executions: list[tuple[int, str, int, str]],
+    ) -> int:
+        """Commit a date batch and all its campaign audit rows atomically."""
+        with self._connect() as con:
+            cur = con.execute(
+                """INSERT INTO execution_batches
+                (execution_date,executed_at,workbook_path,backup_path,details_json,undone_at)
+                VALUES (?,?,?,?,?,'')""",
+                (execution_date, datetime.now().isoformat(timespec="seconds"), str(workbook), str(backup), json.dumps(details, ensure_ascii=False)),
+            )
+            batch_id = int(cur.lastrowid)
+            executed_at = datetime.now().isoformat(timespec="seconds")
+            con.executemany(
+                """INSERT OR REPLACE INTO executions
+                (campaign_id,action,executed_at,workbook_path,backup_path,affected_rows,details,batch_id)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                [
+                    (campaign_id, action.upper(), executed_at, str(workbook), str(backup), affected, detail, batch_id)
+                    for campaign_id, action, affected, detail in executions
+                ],
+            )
+            return batch_id
+
     def get_active_batch_for_date(self, execution_date: str):
         with self._connect() as con:
             return con.execute(
