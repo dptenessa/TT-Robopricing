@@ -49,6 +49,9 @@ PRICING_COLUMNS = [
     # Promo Planner's suspended-promo stack survives regular editor saves.
     "_PromoPlannerPromoStack",
     "_PromoPlannerPromoOwner",
+    "_PromoPlannerOriginalPrice_EUR",
+    "_PromoPlannerOriginalPrice_USD",
+    "_PromoPlannerPriceOwner",
 ]
 
 HIDDEN_COLUMNS = {
@@ -65,6 +68,9 @@ HIDDEN_COLUMNS = {
     "PromoBasePrice",
     "_PromoPlannerPromoStack",
     "_PromoPlannerPromoOwner",
+    "_PromoPlannerOriginalPrice_EUR",
+    "_PromoPlannerOriginalPrice_USD",
+    "_PromoPlannerPriceOwner",
 }
 
 INPUT_COLUMNS = {"Price_EUR", "Price_USD", "PromoCode", "AllowBelowCost"}

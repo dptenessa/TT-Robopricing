@@ -327,6 +327,7 @@ class BatchPreview:
     cost_floor_issues: list[CostFloorIssue]
     collision_issues: list[PromoCollisionIssue]
     price_changes: list[PriceChange]
+    projected_rows: list[dict]
 
     @property
     def total_changed_rows(self) -> int:
@@ -429,6 +430,7 @@ def preview_batch(
     adjust_below_floor_to_margin: bool = False,
     cost_floor_choices: dict[tuple[int, str, str, int, str], str] | None = None,
     conflict_choices: dict[tuple[int, str, str, int], str] | None = None,
+    date_price_changes: list[dict] | None = None,
     campaigns: list[Campaign] | None = None,
     row_index: dict[tuple[str, str, int], list[int]] | None = None,
     row_index_signature: tuple[int, int] | None = None,
@@ -466,6 +468,21 @@ def preview_batch(
             (int(cid), str(iso).upper(), str(plan), int(days)): str(choice).lower()
             for (cid, iso, plan, days), choice in (conflict_choices or {}).items()
         }
+        normalized_date_prices = {}
+        for change in date_price_changes or []:
+            row_key = change.get("row", change)
+            try:
+                campaign_id = int(change.get("campaign_id") or 0)
+                iso = str(row_key.get("iso", "")).upper()
+                plan = str(row_key.get("plan", ""))
+                days = int(row_key.get("days") or 0)
+                unit = str(row_key.get("pricing_unit_id", ""))
+            except (TypeError, ValueError):
+                continue
+            for currency in ("EUR", "USD"):
+                value = _num(change.get(f"price_{currency.lower()}"))
+                if value is not None:
+                    normalized_date_prices[(campaign_id, iso, plan, days, unit, currency)] = float(value)
         collision_issues: list[PromoCollisionIssue] = []
 
         def floor_choice(campaign_id, iso, plan, days, currency):
@@ -647,6 +664,30 @@ def preview_batch(
                     raise ValueError(f"Unsupported batch action: {action}")
             items.append(BatchPreviewItem(int(c.id or 0), c.name, action, matched, changed, below, collisions[:100]))
 
+        # Saved editor changes are temporary list-price overrides attached to
+        # the promo layer active on this midnight boundary.
+        for values, state in zip(rows, states):
+            iso = _text(row_value(values, "ISO")).upper()
+            plan = _text(row_value(values, "Plan"))
+            day = int(_num(row_value(values, "Days")) or 0)
+            unit = _text(row_value(values, "PricingUnitIdUsed"))
+            try:
+                owner = int(state.get("promo_owner") or 0)
+            except (TypeError, ValueError):
+                owner = 0
+            for currency in ("EUR", "USD"):
+                scheduled = normalized_date_prices.get((owner, iso, plan, day, unit, currency))
+                if scheduled is None:
+                    continue
+                list_key = "list_eur" if currency == "EUR" else "list_usd"
+                original_key = "original_list_eur" if currency == "EUR" else "original_list_usd"
+                if state.get(original_key) is None and state.get("promo_code"):
+                    state[original_key] = state.get(list_key)
+                if state.get("promo_code"):
+                    state["price_owner"] = state["promo_code"]
+                state[list_key] = scheduled
+                state["events"].append(f"SCHEDULED PRICE EDIT ({currency})")
+
         # Ask for a fresh per-row decision for every active promo below its
         # floor at this key date, including a promo restored from the stack.
         floor_issues = []
@@ -665,6 +706,8 @@ def preview_batch(
             if active_campaign is None:
                 resulting_date = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat() if execution_date else execution_date
                 active_campaign = _infer_campaign_owner(campaigns, code, values, h, resulting_date)
+                if active_campaign is not None:
+                    state["promo_owner"] = str(int(active_campaign.id or 0))
             campaign_id = int(active_campaign.id or 0) if active_campaign else 0
             campaign_name = active_campaign.name if active_campaign else (state["promo_label"] or code)
             for currency in ("EUR", "USD"):
@@ -736,7 +779,30 @@ def preview_batch(
                 allow_below_cost_after=bool(after["allow_below_cost"]),
             ))
 
-        return BatchPreview(execution_date, items, floor_issues, collision_issues, changes)
+        projected_rows = []
+        for values, state in zip(rows, states):
+            projected = {
+                name: values[index - 1] if index - 1 < len(values) else None
+                for name, index in h.items()
+            }
+            projected.update({
+                "PromoCode": state["promo_code"],
+                "PromoType": state["promo_type"],
+                "PromoValue": state["promo_value"],
+                "PromoLabel": state["promo_label"],
+                "PromoName": state["promo_label"],
+                "Price_EUR": state["list_eur"],
+                "Price_USD": state["list_usd"],
+                "AllowBelowCost": bool(state["allow_below_cost"]),
+                ORIGINAL_PRICE_EUR_COLUMN: state["original_list_eur"],
+                ORIGINAL_PRICE_USD_COLUMN: state["original_list_usd"],
+                PRICE_OWNER_COLUMN: state["price_owner"],
+                PROMO_OWNER_COLUMN: state["promo_owner"],
+                PROMO_STACK_COLUMN: json.dumps(state["promo_stack"], ensure_ascii=False) if state["promo_stack"] else "",
+            })
+            projected_rows.append(projected)
+
+        return BatchPreview(execution_date, items, floor_issues, collision_issues, changes, projected_rows)
     finally:
         wb.close()
 
@@ -750,6 +816,7 @@ def execute_batch(
     adjust_below_floor_to_margin: bool = False,
     cost_floor_choices: dict[tuple[int, str, str, int, str], str] | None = None,
     conflict_choices: dict[tuple[int, str, str, int], str] | None = None,
+    date_price_changes: list[dict] | None = None,
     campaigns: list[Campaign] | None = None,
     row_index: dict[tuple[str, str, int], list[int]] | None = None,
     row_index_signature: tuple[int, int] | None = None,
@@ -766,6 +833,7 @@ def execute_batch(
         adjust_below_floor_to_margin=adjust_below_floor_to_margin,
         cost_floor_choices=cost_floor_choices,
         conflict_choices=conflict_choices,
+        date_price_changes=date_price_changes,
         campaigns=campaigns,
         row_index=row_index,
         row_index_signature=row_index_signature,
@@ -787,6 +855,21 @@ def execute_batch(
         (int(cid), str(iso).upper(), str(plan), int(days)): str(choice).lower()
         for (cid, iso, plan, days), choice in (conflict_choices or {}).items()
     }
+    normalized_date_prices = {}
+    for change in date_price_changes or []:
+        row_key = change.get("row", change)
+        try:
+            campaign_id = int(change.get("campaign_id") or 0)
+            iso = str(row_key.get("iso", "")).upper()
+            plan = str(row_key.get("plan", ""))
+            days = int(row_key.get("days") or 0)
+            unit = str(row_key.get("pricing_unit_id", ""))
+        except (TypeError, ValueError):
+            continue
+        for currency in ("EUR", "USD"):
+            value = _num(change.get(f"price_{currency.lower()}"))
+            if value is not None:
+                normalized_date_prices[(campaign_id, iso, plan, days, unit, currency)] = float(value)
     if conflict_choices is not None:
         unresolved_collisions = [
             issue for issue in preview.collision_issues
@@ -1025,6 +1108,30 @@ def execute_batch(
                             ws.cell(r, h["AllowBelowCost"]).value = False
             owner_cell.value = promo_owner or None
             stack_cell.value = json.dumps(promo_stack, ensure_ascii=False) if promo_stack else None
+        if normalized_date_prices:
+            for r in range(2, ws.max_row + 1):
+                try:
+                    iso = _text(ws.cell(r, h["ISO"]).value).upper()
+                    plan = _text(ws.cell(r, h["Plan"]).value)
+                    day = int(_num(ws.cell(r, h["Days"]).value) or 0)
+                    unit = _text(ws.cell(r, h["PricingUnitIdUsed"]).value) if "PricingUnitIdUsed" in h else ""
+                    owner = int(_text(ws.cell(r, h[PROMO_OWNER_COLUMN]).value) or 0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                code = _text(ws.cell(r, h["PromoCode"]).value)
+                for currency in ("EUR", "USD"):
+                    scheduled = normalized_date_prices.get((owner, iso, plan, day, unit, currency))
+                    price_col = f"Price_{currency}"
+                    if scheduled is None or price_col not in h or not code:
+                        continue
+                    original_col = ORIGINAL_PRICE_EUR_COLUMN if currency == "EUR" else ORIGINAL_PRICE_USD_COLUMN
+                    original_cell = ws.cell(r, h[original_col])
+                    current_price = _num(ws.cell(r, h[price_col]).value)
+                    if _num(original_cell.value) is None and current_price is not None:
+                        original_cell.value = current_price
+                    ws.cell(r, h[PRICE_OWNER_COLUMN]).value = code
+                    ws.cell(r, h[price_col]).value = scheduled
+                    adjusted_cells += 1
         if "AllowBelowCost" in h:
             for row_number in range(2, ws.max_row + 1):
                 ws.cell(row_number, h["AllowBelowCost"]).value = False

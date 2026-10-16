@@ -2,11 +2,14 @@ import pdfplumber
 import csv
 import os
 import re
-import pycountry
 from datetime import date
 # from openpyxl import load_workbook
 import pandas as pd
 from playwright.sync_api import sync_playwright
+try:
+    from country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
+except ImportError:
+    from automation.country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
 
 # --- CONFIGURATION ---
 INPUT_PDF = "inputs/Charges.pdf"
@@ -17,69 +20,19 @@ WHITELIST_XLSX = "inputs/WS_PPG.csv"
 FORCE_TEST = False
 
 def get_iso_details(name):
-    # Remove numbers/dots and normalize whitespace to fix issues like "15773.5 BURUNDI"
-    clean_name = " ".join(re.sub(r'[\d\.]+', '', name).split()).upper()
-
-    mapping = {
-        "AFGANISTAN": "AF",
-        "BOSNIA AND HERZEGOWINA": "BA",
-        "BR VIRGIN ISLANDS": "VG",
-        "TURKIYE": "TR",
-        "TURKEY": "TR",
-        "SIERRA LEON": "SL",
-        "KOREA REPUBLIC OF": "KR",
-        "CONGO THE DEMOCRATIC REPUBLIC": "CD",
-        "TANZANIA UNITED REPUBLIC OF": "TZ",
-        "USA": "US",
-        "UK": "GB",
-        "BURUNDI": "BI",
-        "CAPE VERDE": "CV",
-        "COTE D IVOIRE": "CI",
-        "CUBA": "CU",
-        "IRAN ISLAMIC REPUBLIC OF": "IR",
-        "LAO PEOPLES DEMOCRATIC REPUBLIC": "LA",
-        "LIBYAN ARAB JAMAHIRIYA": "LY",
-        "MACAU": "MO",
-        "MOLDOVA REPUBLIC OF": "MD",
-        "NETHERLANDS ANTILLES": "BQ",
-        "MACEDONIA THE FORMER YUGOSLAV REPUBLIC OF": "MK",
-        "PALESTINIAN TERRITOR": "PS",
-        "REPUBLIC OF CONGO": "CG",
-        "SAO TOME AND PRINCIPE": "ST",
-        "SLOVAKIA SLOVAK REPUBLIC": "SK"
-    }
-    
-    iso2 = mapping.get(clean_name)
-    if not iso2:
-        try:
-            results = pycountry.countries.search_fuzzy(clean_name.title())
-            if results: iso2 = results[0].alpha_2
-        except: pass
-
-    if iso2:
-        country_obj = pycountry.countries.get(alpha_2=iso2)
-        return iso2, country_obj.alpha_3, country_obj.name
-    return None, None, name.title()
+    # Strip embedded PDF price/reference numbers before resolving the label.
+    clean_name = " ".join(re.sub(r"[\d.]+", " ", str(name or "")).split())
+    identity = resolve_country(clean_name, WHITELIST_XLSX)
+    if identity:
+        return identity["iso2"], identity["iso3"], identity["country"]
+    return None, None, str(name or "").title()
 
 import os
 import pandas as pd
 
 def load_allowed_iso3(filepath):
     """Loads allowed ISO3 codes from the whitelist CSV file."""
-    
-    if not os.path.exists(filepath):
-        print(f"Warning: Whitelist file '{filepath}' not found. Returning empty whitelist.")
-        return set()
-
-    df = pd.read_csv(filepath)
-    allowed = set()
-
-    # Assumes second column contains the ISO3 codes
-    for value in df.iloc[:, 1]:
-        if pd.notna(value):
-            allowed.add(str(value).strip().upper())
-
-    return allowed
+    return ppg_allowed_iso3(filepath)
 
 def get_latest_csv_date(filepath):
     """Reads the last PriceDate from the existing CSV file."""

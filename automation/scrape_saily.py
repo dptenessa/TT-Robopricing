@@ -14,9 +14,9 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests
 
 try:
-    import pycountry
+    from country_identity import normalize_country_key as canonical_country_key, resolve_country
 except ImportError:
-    pycountry = None
+    from automation.country_identity import normalize_country_key as canonical_country_key, resolve_country
 
 try:
     from playwright.sync_api import sync_playwright
@@ -87,7 +87,7 @@ def polite_sleep(min_s: float = 0.8, max_s: float = 1.8) -> None:
 
 
 def normalize_country_key(value: str) -> str:
-    return str(value).strip().lower().replace("&", "and").replace(" ", "-")
+    return canonical_country_key(value)
 
 
 def safe_str(v):
@@ -107,39 +107,8 @@ def get_iso2_from_row(row) -> str:
 
 
 def get_iso2_from_country_name(country_name: str) -> str:
-    if not pycountry:
-        return ""
-
-    manual_map = {
-        "United States": "US",
-        "United Kingdom": "GB",
-        "South Korea": "KR",
-        "North Korea": "KP",
-        "Vietnam": "VN",
-        "Russia": "RU",
-        "Moldova": "MD",
-        "Bolivia": "BO",
-        "Venezuela": "VE",
-        "Iran": "IR",
-        "Laos": "LA",
-        "Tanzania": "TZ",
-        "Syria": "SY",
-        "Taiwan": "TW",
-        "Brunei": "BN",
-        "Czech Republic": "CZ",
-        "Palestine": "PS",
-        "Kosovo": "XK",
-        "Turkey": "TR",
-    }
-
-    if country_name in manual_map:
-        return manual_map[country_name]
-
-    try:
-        match = pycountry.countries.lookup(country_name)
-        return getattr(match, "alpha_2", "") or ""
-    except Exception:
-        return ""
+    identity = resolve_country(country_name, WHITELIST_XLSX)
+    return identity["iso2"] if identity else ""
 
 
 def load_country_mapping(csv_path: str):
@@ -167,6 +136,7 @@ def load_country_mapping(csv_path: str):
             "iso3": iso3,
             "iso2": iso2,
         }
+        mapping[iso3] = mapping[key]
 
     return mapping
 
@@ -290,8 +260,11 @@ def get_country_links(html: str, country_mapping: dict) -> list[dict]:
             continue
 
         target_name = manual_overrides.get(slug, slug)
-        country_info = country_mapping.get(target_name)
+        identity = resolve_country(target_name, WHITELIST_XLSX)
+        country_info = country_mapping.get(identity["iso3"]) if identity else None
         if not country_info:
+            if not identity:
+                print(f"[country-map] No PPG country match for Saily destination slug: {slug}")
             continue
 
         full_url = f"https://saily.com/esim-{slug}/"

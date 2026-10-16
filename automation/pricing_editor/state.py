@@ -274,6 +274,9 @@ def load_table(
         "FinalPriceAfterPromo_USD", "FinalPriceAfterPromo_EUR", "CalculatedCostFloor",
         "CostFloor_USD", "CostFloor_EUR", "USD_IsBelowCostFloor", "EUR_IsBelowCostFloor",
         "AllowBelowCost", "IsPartnerExportBlocked", "PartnerExportBlockReason",
+        "_PromoPlannerPromoStack", "_PromoPlannerPromoOwner",
+        "_PromoPlannerOriginalPrice_EUR", "_PromoPlannerOriginalPrice_USD",
+        "_PromoPlannerPriceOwner",
     ]
     if "IsBelowCostFloor" not in df.columns:
         if "IsBelowCalculatedCostFloor" in df.columns:
@@ -968,7 +971,9 @@ class EditorState:
         self.country_info_map = {}
         self.country_iso_map = {}
         self.points_by_country = {}
-        self.competitors_by_country = {}
+        # Competitor market data is independent of the selected price-book
+        # view. Keep its ISO-indexed cache while rebuilding current/key-date
+        # price points so date navigation does not make competitors vanish.
         self.row_index = {}
         self.scope_to_row_ids = {}
         self.sales_key_to_row_ids = {}
@@ -1127,6 +1132,15 @@ class EditorState:
                     "allow_below_cost": _boolish(row.get("AllowBelowCost", False)),
                     "promo_planner_stack": "" if pd.isna(row.get("_PromoPlannerPromoStack", "")) else str(row.get("_PromoPlannerPromoStack", "")),
                     "promo_planner_owner": "" if pd.isna(row.get("_PromoPlannerPromoOwner", "")) else str(row.get("_PromoPlannerPromoOwner", "")),
+                    "promo_planner_original_price_eur": (
+                        None if pd.isna(pd.to_numeric(row.get("_PromoPlannerOriginalPrice_EUR", None), errors="coerce"))
+                        else float(pd.to_numeric(row.get("_PromoPlannerOriginalPrice_EUR", None), errors="coerce"))
+                    ),
+                    "promo_planner_original_price_usd": (
+                        None if pd.isna(pd.to_numeric(row.get("_PromoPlannerOriginalPrice_USD", None), errors="coerce"))
+                        else float(pd.to_numeric(row.get("_PromoPlannerOriginalPrice_USD", None), errors="coerce"))
+                    ),
+                    "promo_planner_price_owner": "" if pd.isna(row.get("_PromoPlannerPriceOwner", "")) else str(row.get("_PromoPlannerPriceOwner", "")),
                 }
                 points.append(pt)
                 self.row_index[pt["row_id"]] = pt
@@ -2747,6 +2761,9 @@ class EditorState:
                 "AllowBelowCost": allow_below_cost,
                 "_PromoPlannerPromoStack": point.get("promo_planner_stack", ""),
                 "_PromoPlannerPromoOwner": point.get("promo_planner_owner", ""),
+                "_PromoPlannerOriginalPrice_EUR": point.get("promo_planner_original_price_eur", ""),
+                "_PromoPlannerOriginalPrice_USD": point.get("promo_planner_original_price_usd", ""),
+                "_PromoPlannerPriceOwner": point.get("promo_planner_price_owner", ""),
             })
 
         return pd.DataFrame(rows)

@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 from .engine import PromoOption, preview_campaign, preview_batch, execute_batch, read_catalogue, restore_workbook_backup
 from .calendar_export import generate_promotion_calendar
 from .management_calendar import generate_management_calendar
+from .date_price_changes import active_changes, changes_for_key_date
 from .outlook_sync import delete_campaign_events, sync_campaign_events
 from .paths import find_manual_prices, planner_output_dir, project_root
 from .store import Campaign, PromoStore
@@ -77,7 +78,7 @@ class BatchApplyWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, workbook, actions, backup_dir, execution_date, floor_choices, conflict_choices, campaigns=None, row_index=None, workbook_signature=None, parent=None):
+    def __init__(self, workbook, actions, backup_dir, execution_date, floor_choices, conflict_choices, date_price_changes=None, campaigns=None, row_index=None, workbook_signature=None, parent=None):
         super().__init__(parent)
         self.workbook = Path(workbook)
         self.actions = list(actions)
@@ -85,6 +86,7 @@ class BatchApplyWorker(QThread):
         self.execution_date = execution_date
         self.floor_choices = dict(floor_choices)
         self.conflict_choices = dict(conflict_choices)
+        self.date_price_changes = list(date_price_changes or [])
         self.campaigns = list(campaigns or [])
         self.row_index = row_index
         self.workbook_signature = workbook_signature
@@ -98,6 +100,7 @@ class BatchApplyWorker(QThread):
                 self.execution_date,
                 cost_floor_choices=self.floor_choices,
                 conflict_choices=self.conflict_choices,
+                date_price_changes=self.date_price_changes,
                 campaigns=self.campaigns,
                 row_index=self.row_index,
                 row_index_signature=self.workbook_signature,
@@ -1747,6 +1750,10 @@ class PromoPlanner(QMainWindow):
             self.workbook, actions, execution_date,
             cost_floor_choices=self._pending_cost_floor_choices,
             conflict_choices=self._pending_conflict_choices,
+            date_price_changes=active_changes(
+                self.root_dir,
+                (self._parse_iso(execution_date) + timedelta(days=1)).isoformat(),
+            ),
             campaigns=self.store.list_campaigns(),
             row_index=self.catalogue.row_index,
             row_index_signature=self.catalogue.workbook_signature,
@@ -1779,6 +1786,10 @@ class PromoPlanner(QMainWindow):
                 self.workbook, actions, execution_date,
                 cost_floor_choices=self._pending_cost_floor_choices,
                 conflict_choices=self._pending_conflict_choices,
+                date_price_changes=active_changes(
+                    self.root_dir,
+                    (self._parse_iso(execution_date) + timedelta(days=1)).isoformat(),
+                ),
                 campaigns=self.store.list_campaigns(),
                 row_index=self.catalogue.row_index,
                 row_index_signature=self.catalogue.workbook_signature,
@@ -2265,7 +2276,7 @@ class PromoPlanner(QMainWindow):
         self._apply_progress_bar = bar
         self._apply_worker = BatchApplyWorker(
             self.workbook, actions, self.out_dir / "backups", d,
-            floor_choices, conflict_choices,
+            floor_choices, conflict_choices, changes_for_key_date(self.root_dir, d),
             self.store.list_campaigns(),
             self.catalogue.row_index, self.catalogue.workbook_signature, self,
         )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -22,10 +22,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QScrollArea,
     QTabWidget,
+    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -33,6 +35,24 @@ from PySide6.QtWidgets import (
 
 from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
+try:
+    from automation.promo_planner.date_price_changes import (
+        key_dates as scheduled_key_dates,
+        project_dataframe as project_pricebook_for_key_date,
+        save_key_date_changes,
+    )
+    from automation.promo_planner.store import PromoStore
+except ModuleNotFoundError as exc:
+    # The START_HERE launcher runs the editor with automation/ as sys.path[0].
+    # In that context, Promo Planner is imported as a top-level package.
+    if exc.name not in {"automation", "automation.promo_planner"}:
+        raise
+    from promo_planner.date_price_changes import (
+        key_dates as scheduled_key_dates,
+        project_dataframe as project_pricebook_for_key_date,
+        save_key_date_changes,
+    )
+    from promo_planner.store import PromoStore
 try:
     from partner_export_pack import build_partner_price_pack
 except ImportError:
@@ -92,6 +112,12 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
         self.autosave_dirty = False
         self.autosave_in_progress = False
+        self._manual_pricebook_df = pd.DataFrame()
+        self._manual_pricebook_path: Path | None = None
+        self._active_key_date: str | None = None
+        self._date_view_baseline_df = pd.DataFrame()
+        self._switching_price_view = False
+        self._using_history_snapshot = False
         self.selected_promo_code_for_range: str | None = None
         self._promo_range_context_key: tuple[str, str] | None = None
         self._build_ui()
@@ -191,6 +217,51 @@ class MainWindow(QMainWindow):
         load_grid.addWidget(QLabel("Previous export"), 0, 0)
         load_grid.addWidget(self.saved_state_combo, 0, 1)
         load_grid.addWidget(self.load_sales_btn, 1, 0, 1, 2)
+
+        self.key_date_combo = QComboBox()
+        self.key_date_combo.addItem("Current manual prices", "")
+        self.key_date_combo.setEnabled(False)
+        self.key_date_combo.setMinimumWidth(300)
+        self.key_date_combo.setToolTip("Choose current manual prices or a planned promo midnight boundary.")
+        self.key_date_combo.setStyleSheet(
+            "QComboBox { background:#3D424A; color:#FFFFFF; border:1px solid #FFFFFF; border-radius:5px; "
+            "padding:5px 8px; min-height:24px; }"
+            "QComboBox:hover { background:#4A5059; }"
+            "QComboBox::drop-down { border:0; width:24px; }"
+            "QComboBox QAbstractItemView { background:#3D424A; color:#FFFFFF; "
+            "selection-color:#FFFFFF; selection-background-color:#59616B; }"
+        )
+        self.key_date_combo.currentIndexChanged.connect(self.on_key_date_view_changed)
+        self.date_prev_btn = QPushButton("‹ Previous")
+        self.date_prev_btn.setToolTip("Show the previous price view.")
+        self.date_prev_btn.clicked.connect(lambda: self._step_key_date_view(-1))
+        self.date_next_btn = QPushButton("Next ›")
+        self.date_next_btn.setToolTip("Show the next price view.")
+        self.date_next_btn.clicked.connect(lambda: self._step_key_date_view(1))
+        self.date_position_label = QLabel("Current prices")
+        self.date_position_label.setMinimumWidth(110)
+        self.date_toolbar = QToolBar("Price date navigation", self)
+        self.date_toolbar.setMovable(False)
+        self.date_toolbar.setFloatable(False)
+        self.date_toolbar.addWidget(QLabel("Price view"))
+        self.date_toolbar.addSeparator()
+        self.date_toolbar.addWidget(self.date_prev_btn)
+        self.date_toolbar.addWidget(self.key_date_combo)
+        self.date_toolbar.addWidget(self.date_next_btn)
+        self.date_toolbar.addSeparator()
+        self.date_toolbar.addWidget(self.date_position_label)
+        self.addToolBar(Qt.TopToolBarArea, self.date_toolbar)
+        self.key_date_status = QLabel("Load current prices to browse scheduled dates.")
+        self.key_date_status.setWordWrap(True)
+        self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
+        self.country_combo.setStyleSheet(
+            "QComboBox { background:#3D424A; color:#FFFFFF; border:1px solid #FFFFFF; border-radius:5px; "
+            "padding:5px 8px; min-height:24px; }"
+            "QComboBox:hover { background:#4A5059; }"
+            "QComboBox::drop-down { border:0; width:24px; }"
+            "QComboBox QAbstractItemView { background:#3D424A; color:#FFFFFF; "
+            "selection-color:#FFFFFF; selection-background-color:#59616B; }"
+        )
 
         self.currency_combo = QComboBox()
         self.currency_combo.addItems(list(CURRENCIES))
@@ -319,8 +390,8 @@ class MainWindow(QMainWindow):
         reset_grid.addWidget(reset_plan_btn, 0, 0)
         reset_grid.addWidget(reset_unit_btn, 0, 1)
 
-        export_btn = QPushButton("💾 Save pricing")
-        export_btn.clicked.connect(self.export_prices)
+        self.export_btn = QPushButton("💾 Save pricing")
+        self.export_btn.clicked.connect(self.export_prices)
 
         export_pdf_btn = QPushButton("📄 Export PDF report")
         export_pdf_btn.clicked.connect(self.export_all_charts_pdf)
@@ -438,6 +509,13 @@ class MainWindow(QMainWindow):
 
         # Two compact working modes: normal price modelling vs promos/setup.
         self.side_tabs = QTabWidget()
+        self.side_tabs.setStyleSheet(
+            "QTabBar::tab { background:#3D424A; color:#FFFFFF; border:1px solid #FFFFFF; "
+            "padding:7px 15px; margin-right:3px; border-top-left-radius:5px; border-top-right-radius:5px; }"
+            "QTabBar::tab:selected { background:#59616B; color:#FFFFFF; font-weight:600; }"
+            "QTabBar::tab:hover:!selected { background:#4A5059; }"
+            "QTabWidget::pane { border:1px solid #FFFFFF; border-radius:4px; top:-1px; }"
+        )
 
         model_tab = QWidget()
         model_layout = QVBoxLayout(model_tab)
@@ -478,7 +556,7 @@ class MainWindow(QMainWindow):
         # and leaves each tab focused on the work that is specific to it.
         global_actions = QHBoxLayout()
         global_actions.setSpacing(6)
-        global_actions.addWidget(export_btn)
+        global_actions.addWidget(self.export_btn)
         global_actions.addWidget(export_pdf_btn)
 
         side_layout.addWidget(QLabel("Destination"))
@@ -487,6 +565,7 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(QLabel("Currency & data"))
         side_layout.addLayout(currency_grid)
         side_layout.addWidget(self.currency_mode_banner)
+        side_layout.addWidget(self.key_date_status)
         side_layout.addLayout(load_grid)
         side_layout.addLayout(global_actions)
         side_layout.addWidget(self.side_tabs, 1)
@@ -742,6 +821,216 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
         return True
 
+    def _promo_store(self) -> PromoStore:
+        return PromoStore(FILES.work_dir / "promo_planner" / "promo_schedule.db")
+
+    def _refresh_key_date_views(self, selected: str | None = None) -> None:
+        if not hasattr(self, "key_date_combo"):
+            return
+        store = self._promo_store()
+        campaigns = store.list_campaigns()
+        dates = scheduled_key_dates(campaigns, store=store)
+        combo = self.key_date_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Current manual prices", "")
+        for key_date in dates:
+            boundary = date.fromisoformat(key_date)
+            next_day = boundary + timedelta(days=1)
+            combo.addItem(
+                f"{boundary.strftime('%d %b %Y')} 24:00  →  {next_day.strftime('%d %b %Y')} 00:00",
+                key_date,
+            )
+        wanted = selected or self._active_key_date or ""
+        index = combo.findData(wanted)
+        combo.setCurrentIndex(max(0, index))
+        combo.setEnabled(not self._manual_pricebook_df.empty and not self._using_history_snapshot)
+        combo.blockSignals(False)
+        self._update_price_view_controls()
+
+    def _step_key_date_view(self, step: int) -> None:
+        index = self.key_date_combo.currentIndex()
+        target = max(0, min(self.key_date_combo.count() - 1, index + step))
+        if target != index:
+            self.key_date_combo.setCurrentIndex(target)
+
+    def _update_key_date_navigation(self) -> None:
+        combo = self.key_date_combo
+        index = combo.currentIndex()
+        last = combo.count() - 1
+        can_navigate = combo.isEnabled()
+        self.date_prev_btn.setEnabled(can_navigate and index > 0)
+        self.date_next_btn.setEnabled(can_navigate and index < last)
+        if index <= 0:
+            self.date_position_label.setText("Current manual prices")
+        else:
+            self.date_position_label.setText(f"Promo date {index} of {last}")
+
+    def _update_price_view_controls(self) -> None:
+        if self._active_key_date:
+            self.key_date_status.setText(
+                f"Projected midnight view. Save writes dated changes to promo_planner/date_price_changes.json; "
+                "manual_prices_current stays unchanged."
+            )
+            self.key_date_status.setStyleSheet("color:#8a4b08; font-weight:600; padding:3px 0;")
+        elif self._using_history_snapshot:
+            self.key_date_status.setText("A historical saved snapshot is loaded. Reload current prices to browse planned dates.")
+            self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
+        elif not self._manual_pricebook_df.empty:
+            self.key_date_status.setText("Current manual prices. Normal saves update manual_prices_current.")
+            self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
+        else:
+            self.key_date_status.setText("Load current prices to browse scheduled dates.")
+            self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
+        if hasattr(self, "export_btn"):
+            self.export_btn.setText("Save key-date prices" if self._active_key_date else "Save pricing")
+        if hasattr(self, "saved_state_combo"):
+            self.saved_state_combo.setEnabled(not bool(self._active_key_date) and self.saved_state_combo.count() > 0)
+        if hasattr(self, "side_tabs"):
+            self.side_tabs.setTabEnabled(1, not bool(self._active_key_date))
+        if hasattr(self, "date_prev_btn"):
+            self._update_key_date_navigation()
+
+    def _refresh_manual_baseline(self) -> None:
+        path = FILES.editor_exports_dir / "manual_prices_current.xlsx"
+        if not path.exists():
+            return
+        df = load_table(path, currency_hint="EUR", eur_to_usd=self.state.eur_to_usd)
+        if not df.empty:
+            self._manual_pricebook_df = df
+            self._manual_pricebook_path = path
+
+    def _confirm_price_view_switch(self) -> bool:
+        if not self.autosave_dirty:
+            return True
+        if self._active_key_date:
+            self._save_key_date_prices(silent=True)
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved current prices")
+        box.setText("Save your current-price edits before switching to a scheduled date?")
+        save = box.addButton("Save current prices", QMessageBox.AcceptRole)
+        discard = box.addButton("Discard edits", QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is save:
+            self.quick_save()
+            return not self.autosave_dirty
+        if clicked is discard:
+            if not self._manual_pricebook_df.empty:
+                self.state.preload_pricebook(self._manual_pricebook_df)
+                self.state.preload_last_export(self._manual_pricebook_df)
+                self.populate_combos()
+                self.refresh_canvas()
+            self.autosave_dirty = False
+            return True
+        return False
+
+    def on_key_date_view_changed(self, index: int) -> None:
+        if self._switching_price_view or index < 0 or self._manual_pricebook_df.empty:
+            return
+        selected = str(self.key_date_combo.itemData(index) or "")
+        if selected == (self._active_key_date or ""):
+            return
+        if not self._confirm_price_view_switch():
+            self._switching_price_view = True
+            old_index = self.key_date_combo.findData(self._active_key_date or "")
+            self.key_date_combo.setCurrentIndex(max(0, old_index))
+            self._switching_price_view = False
+            return
+        try:
+            self._load_price_view(selected or None)
+        except Exception as exc:
+            QMessageBox.warning(self, "Price view", f"Could not load that key date:\n\n{exc}")
+            self._switching_price_view = True
+            old_index = self.key_date_combo.findData(self._active_key_date or "")
+            self.key_date_combo.setCurrentIndex(max(0, old_index))
+            self._switching_price_view = False
+
+    def _load_price_view(self, key_date: str | None) -> None:
+        progress = None
+        if key_date is not None:
+            progress = QProgressDialog("Loading the selected promo date…", "", 0, 0, self)
+            progress.setWindowTitle("Loading prices")
+            progress.setCancelButton(None)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.show()
+            QApplication.processEvents()
+
+        try:
+            self._load_price_view_data(key_date)
+        finally:
+            if progress is not None:
+                progress.close()
+
+    def _load_price_view_data(self, key_date: str | None) -> None:
+        if key_date is None:
+            view = self._manual_pricebook_df.copy()
+            self._date_view_baseline_df = pd.DataFrame()
+            self._active_key_date = None
+            warning_text = "Current manual prices"
+        else:
+            store = self._promo_store()
+            projected, preview = project_pricebook_for_key_date(
+                self._manual_pricebook_df,
+                self._manual_pricebook_path or (FILES.editor_exports_dir / "manual_prices_current.xlsx"),
+                store,
+                key_date,
+                FILES.base_dir,
+            )
+            baseline, _ = project_pricebook_for_key_date(
+                self._manual_pricebook_df,
+                self._manual_pricebook_path or (FILES.editor_exports_dir / "manual_prices_current.xlsx"),
+                store,
+                key_date,
+                FILES.base_dir,
+                exclude_key_date_changes=True,
+            )
+            view = projected
+            self._date_view_baseline_df = baseline
+            self._active_key_date = key_date
+            warnings = []
+            if preview.collisions:
+                warnings.append(f"{len(preview.collisions)} promo conflict(s) still need a decision in Promo Planner")
+            if preview.cost_floor_issues:
+                warnings.append(f"{len(preview.cost_floor_issues)} active price(s) need cost-floor review")
+            boundary = date.fromisoformat(key_date) + timedelta(days=1)
+            warning_text = f"After midnight: {boundary.strftime('%d %b %Y')} 00:00"
+            if warnings:
+                warning_text += " · " + " · ".join(warnings)
+        self.state.preload_pricebook(view)
+        self.state.preload_last_export(view)
+        self.populate_combos()
+        self.autosave_dirty = False
+        self._update_price_view_controls()
+        self.refresh_canvas()
+        self.statusBar().showMessage(warning_text, 12000)
+
+    def _save_key_date_prices(self, *, silent: bool = False) -> int:
+        if not self._active_key_date:
+            return 0
+        count, unlinked = save_key_date_changes(
+            FILES.base_dir,
+            self._active_key_date,
+            self.state.export_prices_dataframe(),
+            self._date_view_baseline_df,
+            self._promo_store().list_campaigns(),
+        )
+        self.autosave_dirty = False
+        message = (
+            f"Saved scheduled price changes for the midnight after {self._active_key_date}. "
+            f"{count} promo-owned row override(s) are stored in JSON; current prices were not changed."
+        )
+        if unlinked:
+            message += f" {unlinked} changed row(s) had no active scheduled promo and were not saved."
+        self.statusBar().showMessage(message, 12000)
+        if not silent:
+            QMessageBox.information(self, "Key-date prices saved", message)
+        return count
+
     def load_pricebook(self):
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -777,10 +1066,15 @@ class MainWindow(QMainWindow):
 
         # The current price book is authoritative for both the set of points and
         # their current values/promos/overrides.
+        self._manual_pricebook_df = df.copy()
+        self._manual_pricebook_path = source
+        self._using_history_snapshot = False
         self.state.preload_pricebook(df)
         self.state.preload_last_export(df)
 
         self.populate_combos()
+        self._active_key_date = None
+        self._refresh_key_date_views()
         self.refresh_canvas()
 
     def load_sales_volumes(self):
@@ -838,8 +1132,10 @@ class MainWindow(QMainWindow):
         # rows that existed then cannot be suppressed by today's price book.
         self.state.preload_pricebook(df)
         self.state.preload_last_export(df)
+        self._using_history_snapshot = True
         self.populate_combos()
         self.autosave_dirty = False
+        self._refresh_key_date_views()
         self.refresh_canvas()
         self.statusBar().showMessage(f"Loaded saved state: {selected_label}")
         return True
@@ -995,9 +1291,13 @@ class MainWindow(QMainWindow):
         return ts
 
     def quick_save(self):
+        if self._active_key_date:
+            self._save_key_date_prices()
+            return
         try:
             export_dir = FILES.editor_exports_dir
             self.save_exports_to_folder(export_dir)
+            self._refresh_manual_baseline()
             # self.refresh_pricing_intelligence(force=True, refresh=True)
             self.autosave_dirty = False
 
@@ -1014,6 +1314,10 @@ class MainWindow(QMainWindow):
 
         try:
             self.autosave_in_progress = True
+            if self._active_key_date:
+                self._save_key_date_prices(silent=True)
+                self.statusBar().showMessage("Scheduled date prices autosaved to JSON")
+                return
             export_dir = FILES.editor_autosave_dir
             self.save_exports_to_folder(export_dir, autosave=True)
             self.autosave_dirty = False
@@ -1027,6 +1331,9 @@ class MainWindow(QMainWindow):
 
 
     def export_prices(self):
+        if self._active_key_date:
+            self._save_key_date_prices()
+            return
         cursor_active = False
         try:
             official_export = self.ask_official_export()
@@ -1048,6 +1355,7 @@ class MainWindow(QMainWindow):
                 include_history=True,
                 timestamp=ts,
             )
+            self._refresh_manual_baseline()
             self.save_exports_to_folder(
                 FILES.editor_autosave_dir,
                 autosave=True,
@@ -1307,6 +1615,10 @@ class MainWindow(QMainWindow):
             status=rate.status,
         )
         self.official_cost_rate_label.setText(rate.label)
+        self.official_cost_rate_label.setToolTip(
+            f"ECB reference-rate download failed: {rate.error}\nUsing the {rate.status} rate."
+            if rate.error else "ECB euro reference rate downloaded successfully."
+        )
 
     def on_country_changed(self, country: str):
         self.state.selected_country = country
@@ -2024,6 +2336,9 @@ class MainWindow(QMainWindow):
                 progress("Preparing current price book...")
                 # The canonical current workbook defines the complete editor
                 # structure and the initial/reset state for this session.
+                self._manual_pricebook_df = df.copy()
+                self._manual_pricebook_path = current_path
+                self._using_history_snapshot = False
                 self.state.preload_pricebook(df)
                 self.state.preload_last_export(df)
         else:
@@ -2062,6 +2377,8 @@ class MainWindow(QMainWindow):
         if self.state.countries():
             progress("Drawing editor...")
             self.populate_combos()
+            self._active_key_date = None
+            self._refresh_key_date_views()
             self.refresh_canvas()
             self.statusBar().showMessage("Auto-loaded available files.")
         else:

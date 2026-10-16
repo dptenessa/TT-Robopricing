@@ -8,13 +8,26 @@ from dotenv import load_dotenv
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(ENV_FILE)
 
-API_KEY = os.getenv("FREQUENT_DESTINATIONS_API_KEY")
+API_KEY = None
+PUBLISH_URL = None
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-URL = "https://aux-tables.amdocs-dbs.com/tables/806165ce-be35-4839-a57f-16264e3872ad"
+TABLE_URLS = {
+    "uat": "https://aux-tables.amdocs-dbs.com/tables/5c17e571-9d58-4310-9f42-7ec795de8c55",
+    "production": "https://aux-tables.amdocs-dbs.com/tables/806165ce-be35-4839-a57f-16264e3872ad",
+}
+URL = None
+PUBLISH_URLS = {
+    "uat": "https://dtag-uat.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
+    "production": "https://t-travel.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
+}
+API_KEY_ENV_VARS = {
+    "uat": "FREQUENT_DESTINATIONS_UAT_API_KEY",
+    "production": "FREQUENT_DESTINATIONS_PROD_API_KEY",
+}
 
 # Small pause between requests when uploading everything.
 DELAY_BETWEEN_REQUESTS = 0.15
@@ -291,6 +304,58 @@ def api_headers(include_json=False):
     return headers
 
 
+def select_environment():
+    """Select environment and configure its key and publish endpoint."""
+    global API_KEY, PUBLISH_URL, URL
+
+    print("\nChoose environment:")
+    print("1 = UAT")
+    print("2 = Production")
+    choice = input("Enter 1 or 2: ").strip()
+
+    environment = {"1": "uat", "2": "production"}.get(choice)
+    if not environment:
+        print("Invalid option. Nothing changed.")
+        return False
+
+    key_name = API_KEY_ENV_VARS[environment]
+    API_KEY = os.getenv(key_name)
+    PUBLISH_URL = PUBLISH_URLS[environment]
+    URL = TABLE_URLS[environment]
+
+    if not API_KEY:
+        raise SystemExit(
+            f"{key_name} was not found in the .env file. "
+            f"Add the {environment.upper()} API key before continuing."
+        )
+
+    print(f"Selected environment: {environment.upper()}")
+    return True
+
+
+def publish_catalog(session):
+    """Publish the uploaded catalog to the selected environment."""
+    try:
+        response = session.post(
+            PUBLISH_URL,
+            headers=api_headers(include_json=True),
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        print(f"PUBLISH ERROR -> {exc}")
+        return False
+
+    if response.ok:
+        print(f"PUBLISH OK [HTTP {response.status_code}]")
+        if response.text.strip():
+            print(f"     Response: {response.text[:500]}")
+        return True
+
+    print(f"PUBLISH FAILED [HTTP {response.status_code}]")
+    print(f"     Response: {response.text[:500]}")
+    return False
+
+
 # ============================================================
 # API OPERATIONS
 # ============================================================
@@ -539,6 +604,10 @@ def upload_test_record(session, mapping):
     if success:
         print("\nTEST SUCCESSFUL.")
         print("Only one row was uploaded.")
+        if input("Publish the catalog now? Type PUBLISH to confirm: ").strip() == "PUBLISH":
+            publish_catalog(session)
+        else:
+            print("Publishing cancelled; uploaded row remains in the table.")
     else:
         print("\nTEST FAILED.")
         print("No other rows were attempted.")
@@ -578,6 +647,10 @@ def upload_all_records(session, mapping):
         print(", ".join(failed))
     else:
         print("\nAll countries uploaded successfully.")
+        if input("Publish the catalog now? Type PUBLISH to confirm: ").strip() == "PUBLISH":
+            publish_catalog(session)
+        else:
+            print("Publishing cancelled; uploaded rows remain in the table.")
 
 
 # ============================================================
@@ -585,10 +658,8 @@ def upload_all_records(session, mapping):
 # ============================================================
 
 def main():
-    if not API_KEY:
-        raise SystemExit(
-            "FREQUENT_DESTINATIONS_API_KEY was not found in the .env file."
-        )
+    if not select_environment():
+        return
 
     mapping = load_destination_mapping()
     validate_data()

@@ -44,7 +44,13 @@ EXPECTED_CURRENT_OUTPUTS = {
 }
 QUALITY_RULES = {
     "airalo": {"min_rows": 800, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
-    "holafly": {"min_rows": 700, "min_countries": 20, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
+    "holafly": {
+        "min_rows": 700,
+        "min_countries": 20,
+        "min_row_ratio": 0.70,
+        "min_country_ratio": 0.70,
+        "required_iso3": {"CAN", "USA"},
+    },
     "orange": {"min_rows": 1000, "min_countries": 100, "min_row_ratio": 0.85, "min_country_ratio": 0.85},
     "saily": {"min_rows": 500, "min_countries": 100, "min_row_ratio": 0.80, "min_country_ratio": 0.80},
     "vodafone": {"min_rows": 100, "min_countries": 100, "min_row_ratio": 0.70, "min_country_ratio": 0.70},
@@ -220,6 +226,13 @@ def validate_scrape_quality(result: JobResult) -> JobResult:
 
     if result.countries < int(rules["min_countries"]):
         failures.append(f"countries {result.countries} below minimum {rules['min_countries']}")
+
+    required_iso3 = {str(code).strip().upper() for code in rules.get("required_iso3", set())}
+    if required_iso3 and "ISO3" in df.columns:
+        scraped_iso3 = set(df["ISO3"].dropna().astype(str).str.strip().str.upper())
+        missing_iso3 = sorted(required_iso3 - scraped_iso3)
+        if missing_iso3:
+            failures.append(f"missing required destinations: {', '.join(missing_iso3)}")
 
     if "Price" in df.columns:
         price_numeric = pd.to_numeric(df["Price"], errors="coerce")

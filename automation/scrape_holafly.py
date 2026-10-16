@@ -10,7 +10,10 @@ from datetime import date
 from typing import Any
 import pandas as pd
 
-import pycountry
+try:
+    from country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
+except ImportError:
+    from automation.country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
 import requests
 from bs4 import BeautifulSoup
 
@@ -24,6 +27,12 @@ TEST_LIMIT = 2
 CURRENCY = "USD"  # use "USD" or "EUR"
 
 COUNTRIES_URL = "https://esim.holafly.com/shop/countries/"
+# These are part of our tracked competitor set. Holafly's country directory
+# has intermittently omitted them even though the destination pages are live.
+REQUIRED_COUNTRY_PAGES = {
+    "CAN": ("canada", "Canada"),
+    "USA": ("usa", "USA"),
+}
 
 HEADERS = {
     "User-Agent": (
@@ -99,30 +108,8 @@ def get_country_rows(
 
 
 def country_name_to_iso3(name: str) -> str | None:
-    cleaned = name.strip()
-
-    aliases = {
-        "usa": "USA",
-        "united states": "USA",
-        "uk": "GBR",
-        "united kingdom": "GBR",
-        "uae": "ARE",
-        "south korea": "KOR",
-        "north korea": "PRK",
-        "czech republic": "CZE",
-        "russia": "RUS",
-        "vietnam": "VNM",
-    }
-
-    key = cleaned.lower()
-
-    if key in aliases:
-        return aliases[key]
-
-    try:
-        return pycountry.countries.lookup(cleaned).alpha_3
-    except LookupError:
-        return None
+    identity = resolve_country(name, WHITELIST_XLSX)
+    return identity["iso3"] if identity else None
 
 
 def fetch_html(
@@ -158,43 +145,17 @@ def fetch_html(
 
 
 def iso3_to_iso2(iso3: str | None) -> str | None:
-    if not iso3:
-        return None
-    country = pycountry.countries.get(alpha_3=iso3)
-    return country.alpha_2 if country else None
+    identity = resolve_country(iso3, WHITELIST_XLSX)
+    return identity["iso2"] if identity else None
 
 
 def iso2_to_country_name(iso2: str | None) -> str | None:
-    if not iso2:
-        return None
-    country = pycountry.countries.get(alpha_2=iso2)
-    return country.name if country else None
+    identity = resolve_country(iso2, WHITELIST_XLSX)
+    return identity["country"] if identity else None
 
 
 def load_allowed_iso3(filepath: str) -> set[str]:
-    COLUMN_NAME = "ISO_Code_A3"
-
-    df = pd.read_csv(filepath, encoding="utf-8-sig")
-
-    print("Columns found:", list(df.columns))
-
-    if COLUMN_NAME not in df.columns:
-        raise ValueError(
-            f"Column '{COLUMN_NAME}' not found in columns: {list(df.columns)}"
-        )
-
-    allowed: set[str] = set()
-
-    for value in df[COLUMN_NAME]:
-        if pd.isna(value):
-            continue
-
-        code = str(value).strip().upper()
-
-        if code:
-            allowed.add(code)
-
-    return allowed
+    return ppg_allowed_iso3(filepath)
 
 
 def get_country_links(session: requests.Session) -> list[dict[str, str]]:
@@ -224,6 +185,24 @@ def get_country_links(session: requests.Session) -> list[dict[str, str]]:
             "url": f"https://esim.holafly.com{href}",
             "provider_country": provider_country,
         })
+
+    # Do not rely solely on Holafly's directory cards: country pages can remain
+    # available while their card is missing or uses an unexpected title.
+    discovered_iso3 = {
+        country_name_to_iso3(item["provider_country"])
+        or country_name_to_iso3(item["slug"].replace("-", " "))
+        for item in results
+    }
+    for iso3, (slug, provider_country) in REQUIRED_COUNTRY_PAGES.items():
+        if iso3 in discovered_iso3:
+            continue
+        if slug not in seen:
+            results.append({
+                "slug": slug,
+                "url": f"https://esim.holafly.com/esim-{slug}/",
+                "provider_country": provider_country,
+            })
+            seen.add(slug)
 
     return results
 
@@ -258,7 +237,7 @@ def extract_variants_from_text(text: str) -> list[dict[str, Any]]:
 
         variant_match = re.search(r'"variantId":\[0,"?(\d+)"?\]', block)
         name_match = re.search(r'"name":\[0,"([^"]+)"\]', block)
-        iso3_match = re.search(r'"isocode":\[0,"([A-Z]{3})"\]', block)
+        iso3_match = re.search(r'"isocode":\[0,"([A-Z]{2,3})"\]', block)
         days_match = re.search(r'"days":\[0,(\d+)\]', block)
 
         if not (variant_match and name_match and iso3_match and days_match):
@@ -277,7 +256,10 @@ def extract_variants_from_text(text: str) -> list[dict[str, Any]]:
         if not currencies:
             continue
 
-        iso3 = iso3_match.group(1)
+        identity = resolve_country(iso3_match.group(1), WHITELIST_XLSX)
+        if not identity:
+            continue
+        iso3 = identity["iso3"]
         iso2 = iso3_to_iso2(iso3)
 
         results.append({
@@ -301,7 +283,7 @@ def extract_variants_from_current_props(text: str) -> list[dict[str, Any]]:
 
     pattern = re.compile(
         r'"name":\[0,"(?P<name>[^"]+)"\],'
-        r'"isocode":\[0,"(?P<iso3>[A-Z]{3})"\],'
+        r'"isocode":\[0,"(?P<iso3>[A-Z]{2,3})"\],'
         r'"days":\[0,(?P<days>\d+)\],'
         r'"gigas":\[0,"(?P<gigas>[^"]+)"\],'
         r'"currencies":\[0,\{(?P<currencies>.*?)\}\]',
@@ -315,7 +297,10 @@ def extract_variants_from_current_props(text: str) -> list[dict[str, Any]]:
         if days > 30:
             continue
 
-        iso3 = match.group("iso3")
+        identity = resolve_country(match.group("iso3"), WHITELIST_XLSX)
+        if not identity:
+            continue
+        iso3 = identity["iso3"]
         gigas = match.group("gigas")
         dedupe_key = (iso3, days, gigas)
         if dedupe_key in seen:
@@ -490,6 +475,16 @@ def main() -> None:
             f"skipped_not_whitelisted={skipped_not_whitelisted}, "
             f"failed_countries={failed_countries}"
         )
+
+    if not TEST_MODE:
+        scraped_iso3 = {str(row.get("ISO3", "")).strip().upper() for row in all_current_rows}
+        missing_required = sorted(set(REQUIRED_COUNTRY_PAGES) - scraped_iso3)
+        if missing_required:
+            raise RuntimeError(
+                "Required Holafly destinations produced no price rows: "
+                + ", ".join(missing_required)
+                + ". Keeping the previous current CSV unchanged."
+            )
 
     rotate_and_write_csv(all_current_rows, OUTPUT_CURRENT_CSV, OUTPUT_PREVIOUS_CSV)
 

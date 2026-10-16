@@ -12,7 +12,10 @@ from typing import Optional
 from urllib.parse import urljoin
 
 import pandas as pd
-import pycountry
+try:
+    from country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
+except ImportError:
+    from automation.country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
@@ -100,88 +103,18 @@ def extract_offer_ponder(special_offer: str) -> str:
 
 
 def iso2_to_iso3(iso2: str | None) -> str | None:
-    if not iso2:
-        return None
-    country = pycountry.countries.get(alpha_2=iso2.upper())
-    return country.alpha_3 if country else None
+    identity = resolve_country(iso2, WHITELIST_XLSX)
+    return identity["iso3"] if identity else None
 
 
 def iso2_to_country_name(iso2: str | None) -> str | None:
-    if not iso2:
-        return None
-    country = pycountry.countries.get(alpha_2=iso2.upper())
-    return country.name if country else None
+    identity = resolve_country(iso2, WHITELIST_XLSX)
+    return identity["country"] if identity else None
 
 
 def country_name_to_iso2(name: str | None) -> str | None:
-    if not name:
-        return None
-
-    name = name.strip()
-
-    manual_map = {
-        "United States": "US",
-        "United Kingdom": "GB",
-        "South Korea": "KR",
-        "North Korea": "KP",
-        "Vietnam": "VN",
-        "Russia": "RU",
-        "Moldova": "MD",
-        "Bolivia": "BO",
-        "Venezuela": "VE",
-        "Iran": "IR",
-        "Laos": "LA",
-        "Tanzania": "TZ",
-        "Syria": "SY",
-        "Taiwan": "TW",
-        "Brunei": "BN",
-        "Czech Republic": "CZ",
-        "Palestine": "PS",
-        "Kosovo": "XK",
-        "Turkey": "TR",
-        "Türkiye": "TR",
-        "Ivory Coast": "CI",
-        "Cape Verde": "CV",
-        "Hong Kong": "HK",
-        "Macau": "MO",
-        "Réunion": "RE",
-        "Reunion": "RE",
-        "French Guiana": "GF",
-        "French Polynesia": "PF",
-        "Guadeloupe": "GP",
-        "Martinique": "MQ",
-        "Mayotte": "YT",
-        "New Caledonia": "NC",
-        "Saint Barthelemy": "BL",
-        "Saint Martin": "MF",
-        "Saint Pierre and Miquelon": "PM",
-        "Isle of Man": "IM",
-        "Jersey": "JE",
-        "Guernsey": "GG",
-        "Åland Islands": "AX",
-        "Aland Islands": "AX",
-        "Democratic Republic of Congo": "CD",
-        "Congo": "CG",
-        "Eswatini": "SZ",
-        "Swaziland": "SZ",
-        "Vatican": "VA",
-        "Timor-Leste": "TL",
-        "Northern Cyprus": "CY",
-        "Virgin Islands (U.S.)": "VI",
-            }
-
-    if name in manual_map:
-        return manual_map[name]
-
-    country = pycountry.countries.get(name=name)
-    if country:
-        return country.alpha_2
-
-    try:
-        country = pycountry.countries.search_fuzzy(name)[0]
-        return country.alpha_2
-    except Exception:
-        return None
+    identity = resolve_country(name, WHITELIST_XLSX)
+    return identity["iso2"] if identity else None
 
 
 def slug_to_country_name(slug: str) -> str:
@@ -219,17 +152,7 @@ def slug_to_country_name(slug: str) -> str:
 
 
 def load_allowed_iso3(filepath: str) -> set[str]:
-    column_name = "ISO_Code_A3"
-    df = pd.read_csv(filepath, encoding="utf-8-sig")
-
-    if column_name not in df.columns:
-        raise RuntimeError(f"Column '{column_name}' not found in CSV. Headers: {list(df.columns)}")
-
-    return {
-        str(value).strip().upper()
-        for value in df[column_name]
-        if pd.notna(value) and str(value).strip()
-    }
+    return ppg_allowed_iso3(filepath)
 
 
 def write_rows_to_csv(rows: list[dict], filename: str) -> None:
