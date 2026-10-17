@@ -21,7 +21,7 @@ TABLE_URLS = {
 }
 URL = None
 PUBLISH_URLS = {
-    "uat": "https://dtag-uat.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
+    "uat": 'https://productcatalog.amdocs-dbs.com/publishedCatalogDashboard/publish',#"https://dtag-uat.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
     "production": "https://t-travel.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
 }
 API_KEY_ENV_VARS = {
