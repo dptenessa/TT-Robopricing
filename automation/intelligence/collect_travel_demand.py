@@ -38,7 +38,8 @@ VERSION = "1.7.1-holiday-coverage-validation"
 
 TEST_ORIGINS = ["DE", "FR"]
 TEST_DESTINATIONS = ["JP", "TR", "ES", "MA", "US"]
-PORTFOLIO_FILE = r"C:\Users\ddeblock\OneDrive - Hrvatski Telekom\Documents\Python\TT-Robopricing\inputs\WS_PPG.csv"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PORTFOLIO_FILE = str(PROJECT_ROOT / "inputs" / "WS_PPG.csv")
 INPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "inputs",

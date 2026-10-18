@@ -65,12 +65,31 @@ HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
 DASHBOARD_VERSION = "history-charts-v29-pricing-tabs"
 SALES_LOOKBACK_DAYS = 60
-INTELLIGENCE_DATABASE = Path(
-    os.environ.get(
-        "TT_INTELLIGENCE_DATABASE",
-        str(Path(__file__).resolve().parent / "intelligence" / "events.db"),
-    )
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEV_WORKSPACE_MARKER = PROJECT_ROOT / "outputs" / ".development_workspace"
+DEFAULT_INTELLIGENCE_DATABASE = PROJECT_ROOT / "automation" / "intelligence" / "events.db"
+INTELLIGENCE_DATABASE = (
+    DEFAULT_INTELLIGENCE_DATABASE
+    if DEV_WORKSPACE_MARKER.exists()
+    else Path(os.environ.get("TT_INTELLIGENCE_DATABASE", str(DEFAULT_INTELLIGENCE_DATABASE)))
 )
+
+
+def _configured_sales_path() -> Path | None:
+    """Resolve sales input without allowing a dev workspace to reach production."""
+    if DEV_WORKSPACE_MARKER.exists():
+        return FILES.sales_master_csv
+    value = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
+    if value:
+        return Path(value)
+    try:
+        import config  # type: ignore
+        value = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
+        if value:
+            return Path(value)
+    except ImportError:
+        pass
+    return FILES.sales_master_csv
 VERY_COMPETITIVE_GAP_PCT = 0.05
 COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
@@ -167,15 +186,7 @@ def _sales_competitiveness_matrix(
     the destination has at least one credible pricing benchmark.
     """
     if sales_path is None:
-        sales_path = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
-    if sales_path is None:
-        try:
-            import config  # type: ignore
-            sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
-        except ImportError:
-            sales_path = None
-    if sales_path is None:
-        sales_path = getattr(FILES, "sales_master_csv", None)
+        sales_path = _configured_sales_path()
     if not sales_path or not Path(sales_path).exists() or competitiveness.empty:
         return pd.DataFrame(), "Sales file not configured or competitiveness unavailable"
 
@@ -702,15 +713,7 @@ def _campaign_product_matrix(competitiveness, recommendations, market,
     """One feasible SKU per eligible route; the UI ranks the full pool per profile."""
     as_of = as_of or datetime.now().date()
     if sales_path is None:
-        sales_path = os.environ.get('TT_INTELLIGENCE_SALES_FILE')
-    if sales_path is None:
-        try:
-            import config
-            sales_path = getattr(config,'T_TRAVEL_SALES_FILE',None) or getattr(config,'SALES_FILE',None)
-        except ImportError:
-            pass
-    if sales_path is None:
-        sales_path = getattr(FILES, "sales_master_csv", None)
+        sales_path = _configured_sales_path()
     names, weights = _campaign_inputs()
     country_by_name = {re.sub(r'\W+',' ',v.casefold()).strip():k for k,v in names.items()}
     def resolve(value):

@@ -79,13 +79,36 @@ CREATE TABLE IF NOT EXISTS execution_batches (
   workbook_path TEXT NOT NULL,
   backup_path TEXT NOT NULL,
   details_json TEXT NOT NULL DEFAULT '[]',
-  undone_at TEXT NOT NULL DEFAULT ''
+  undone_at TEXT NOT NULL DEFAULT '',
+  timeline_change_set_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_batch_date ON execution_batches(execution_date);
 CREATE TABLE IF NOT EXISTS groups (
   name TEXT PRIMARY KEY,
   destinations_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS key_date_price_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_date TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  expires_at TEXT NOT NULL DEFAULT '',
+  campaign_id INTEGER NOT NULL DEFAULT 0,
+  campaign_name TEXT NOT NULL DEFAULT '',
+  promo_start_date TEXT NOT NULL DEFAULT '',
+  promo_end_date TEXT NOT NULL DEFAULT '',
+  identity_key TEXT NOT NULL,
+  row_json TEXT NOT NULL,
+  price_eur REAL,
+  price_usd REAL,
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE(key_date, campaign_id, identity_key)
+);
+CREATE INDEX IF NOT EXISTS idx_key_date_price_changes_effective
+  ON key_date_price_changes(effective_from, expires_at);
+CREATE TABLE IF NOT EXISTS store_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 """
 
@@ -97,11 +120,98 @@ class PromoStore:
         with self._connect() as con:
             con.executescript(SCHEMA)
             self._migrate(con)
+            self._migrate_legacy_key_date_changes(con)
 
     def _connect(self):
         con = sqlite3.connect(self.path)
         con.row_factory = sqlite3.Row
         return con
+
+    def _migrate_legacy_key_date_changes(self, con: sqlite3.Connection) -> None:
+        """Import the old JSON schedule once, leaving the source file untouched."""
+        marker = "legacy_key_date_price_changes_imported"
+        if con.execute("SELECT 1 FROM store_metadata WHERE key=?", (marker,)).fetchone():
+            return
+        source = self.path.with_name("date_price_changes.json")
+        try:
+            payload = json.loads(source.read_text(encoding="utf-8")) if source.exists() else {}
+        except (OSError, ValueError, TypeError):
+            payload = {}
+        changes = payload.get("changes", []) if isinstance(payload, dict) else []
+        for item in changes:
+            if not isinstance(item, dict):
+                continue
+            row = item.get("row", {})
+            if not isinstance(row, dict):
+                row = {}
+            try:
+                campaign_id = int(item.get("campaign_id") or 0)
+            except (TypeError, ValueError):
+                campaign_id = 0
+            identity_key = json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            con.execute(
+                """INSERT OR IGNORE INTO key_date_price_changes
+                (key_date,effective_from,expires_at,campaign_id,campaign_name,
+                 promo_start_date,promo_end_date,identity_key,row_json,price_eur,price_usd,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    str(item.get("key_date", "")), str(item.get("effective_from", "")),
+                    str(item.get("expires_at", "") or ""), campaign_id,
+                    str(item.get("campaign_name", "") or ""),
+                    str(item.get("promo_start_date", "") or ""),
+                    str(item.get("promo_end_date", "") or ""), identity_key,
+                    json.dumps(row, ensure_ascii=False), item.get("price_eur"),
+                    item.get("price_usd"), str(item.get("updated_at", "") or ""),
+                ),
+            )
+        con.execute("INSERT INTO store_metadata(key,value) VALUES(?,?)", (marker, "1"))
+
+    def list_key_date_price_changes(self) -> list[dict]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT * FROM key_date_price_changes ORDER BY effective_from,id"
+            ).fetchall()
+        return [
+            {
+                "key_date": row["key_date"],
+                "effective_from": row["effective_from"],
+                "expires_at": row["expires_at"] or "",
+                "campaign_id": row["campaign_id"],
+                "campaign_name": row["campaign_name"],
+                "promo_start_date": row["promo_start_date"],
+                "promo_end_date": row["promo_end_date"],
+                "row": json.loads(row["row_json"]),
+                "updated_at": row["updated_at"],
+                **({"price_eur": row["price_eur"]} if row["price_eur"] is not None else {}),
+                **({"price_usd": row["price_usd"]} if row["price_usd"] is not None else {}),
+            }
+            for row in rows
+        ]
+
+    def replace_key_date_price_changes(self, key_date: str, changes: list[dict]) -> None:
+        """Atomically replace one date's price overrides, preserving every other date."""
+        with self._connect() as con:
+            con.execute("DELETE FROM key_date_price_changes WHERE key_date=?", (key_date,))
+            for item in changes:
+                row = item.get("row", {})
+                campaign_id = int(item.get("campaign_id") or 0)
+                identity_key = json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                con.execute(
+                    """INSERT INTO key_date_price_changes
+                    (key_date,effective_from,expires_at,campaign_id,campaign_name,
+                     promo_start_date,promo_end_date,identity_key,row_json,price_eur,price_usd,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        key_date, str(item.get("effective_from", "")), str(item.get("expires_at", "") or ""),
+                        campaign_id, str(item.get("campaign_name", "") or ""),
+                        str(item.get("promo_start_date", "") or ""), str(item.get("promo_end_date", "") or ""),
+                        identity_key, json.dumps(row, ensure_ascii=False), item.get("price_eur"),
+                        item.get("price_usd"), str(item.get("updated_at", "") or ""),
+                    ),
+                )
+
+    def key_date_price_changes_for_date(self, key_date: str) -> list[dict]:
+        return [item for item in self.list_key_date_price_changes() if item["key_date"] == key_date]
 
     def _migrate(self, con: sqlite3.Connection) -> None:
         cols = {r["name"] for r in con.execute("PRAGMA table_info(campaigns)").fetchall()}
@@ -144,6 +254,9 @@ class PromoStore:
         ecols = {r["name"] for r in con.execute("PRAGMA table_info(executions)").fetchall()}
         if "batch_id" not in ecols:
             con.execute("ALTER TABLE executions ADD COLUMN batch_id INTEGER")
+        bcols = {r["name"] for r in con.execute("PRAGMA table_info(execution_batches)").fetchall()}
+        if "timeline_change_set_id" not in bcols:
+            con.execute("ALTER TABLE execution_batches ADD COLUMN timeline_change_set_id INTEGER")
         con.executescript("""
         CREATE INDEX IF NOT EXISTS idx_exec_batch ON executions(batch_id);
         CREATE TABLE IF NOT EXISTS execution_batches (
@@ -269,14 +382,15 @@ class PromoStore:
         backup: Path,
         details: list[dict],
         executions: list[tuple[int, str, int, str]],
+        timeline_change_set_id: int | None = None,
     ) -> int:
         """Commit a date batch and all its campaign audit rows atomically."""
         with self._connect() as con:
             cur = con.execute(
                 """INSERT INTO execution_batches
-                (execution_date,executed_at,workbook_path,backup_path,details_json,undone_at)
-                VALUES (?,?,?,?,?,'')""",
-                (execution_date, datetime.now().isoformat(timespec="seconds"), str(workbook), str(backup), json.dumps(details, ensure_ascii=False)),
+                (execution_date,executed_at,workbook_path,backup_path,details_json,undone_at,timeline_change_set_id)
+                VALUES (?,?,?,?,?,'',?)""",
+                (execution_date, datetime.now().isoformat(timespec="seconds"), str(workbook), str(backup), json.dumps(details, ensure_ascii=False), timeline_change_set_id),
             )
             batch_id = int(cur.lastrowid)
             executed_at = datetime.now().isoformat(timespec="seconds")
@@ -306,6 +420,14 @@ class PromoStore:
 
     def undo_batch(self, batch_id: int) -> None:
         with self._connect() as con:
+            batch = con.execute(
+                "SELECT timeline_change_set_id FROM execution_batches WHERE id=?", (batch_id,)
+            ).fetchone()
+            if batch and batch["timeline_change_set_id"]:
+                con.execute(
+                    "UPDATE pricing_change_sets SET undone_at=? WHERE id=? AND undone_at=''",
+                    (datetime.now().isoformat(timespec="seconds"), int(batch["timeline_change_set_id"])),
+                )
             con.execute("DELETE FROM executions WHERE batch_id=?", (batch_id,))
             con.execute("UPDATE execution_batches SET undone_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), batch_id))
 

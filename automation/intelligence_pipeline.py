@@ -167,6 +167,9 @@ class Pipeline:
 
     @property
     def sales(self):
+        if (self.root / 'outputs' / '.development_workspace').exists():
+            # Ignore inherited settings and environment overrides in the dev copy.
+            return self.root / 'local_data' / 'T-Travel_sales_master.csv'
         value = self.settings.get('sales_file') or os.environ.get('TT_INTELLIGENCE_SALES_FILE') or os.environ.get('TTRAVEL_SALES_MASTER_CSV')
         if not value:
             value = literal_config(self.intelligence / 'config.py', 'SALES_FILE')

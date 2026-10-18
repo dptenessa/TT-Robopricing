@@ -1,12 +1,13 @@
 from __future__ import annotations
+from html import escape
 
 from datetime import date, datetime, timedelta
 import csv
 import json
 from pathlib import Path
 import subprocess
-import shutil
 import sys
+import pandas as pd
 
 from PySide6.QtCore import QDate, Qt, Signal, Slot, QRect, QThread
 from PySide6.QtGui import QColor, QBrush, QFont, QPen, QDesktopServices, QPainter, QPainterPath
@@ -47,13 +48,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .engine import PromoOption, preview_campaign, preview_batch, execute_batch, read_catalogue, restore_workbook_backup
+from .engine import PromoOption, preview_campaign, preview_batch, read_catalogue_frame
 from .calendar_export import generate_promotion_calendar
 from .management_calendar import generate_management_calendar
 from .date_price_changes import active_changes, changes_for_key_date
 from .outlook_sync import delete_campaign_events, sync_campaign_events
 from .paths import find_manual_prices, planner_output_dir, project_root
 from .store import Campaign, PromoStore
+try:
+    from automation.pricing_book import read_pricing_workbook
+    from automation.pricing_timeline import PricingTimeline
+except ModuleNotFoundError as exc:
+    if exc.name != "automation":
+        raise
+    from pricing_book import read_pricing_workbook
+    from pricing_timeline import PricingTimeline
 
 MAGENTA = "#E20074"
 MAGENTA_DARK = "#B0005A"
@@ -78,35 +87,28 @@ class BatchApplyWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, workbook, actions, backup_dir, execution_date, floor_choices, conflict_choices, date_price_changes=None, campaigns=None, row_index=None, workbook_signature=None, parent=None):
+    def __init__(self, timeline, execution_date, actions, floor_choices, conflict_choices, campaigns, parent=None):
         super().__init__(parent)
-        self.workbook = Path(workbook)
-        self.actions = list(actions)
-        self.backup_dir = Path(backup_dir)
+        self.timeline = timeline
         self.execution_date = execution_date
+        self.actions = list(actions)
         self.floor_choices = dict(floor_choices)
         self.conflict_choices = dict(conflict_choices)
-        self.date_price_changes = list(date_price_changes or [])
-        self.campaigns = list(campaigns or [])
-        self.row_index = row_index
-        self.workbook_signature = workbook_signature
+        self.campaigns = list(campaigns)
 
     def run(self):
         try:
-            result = execute_batch(
-                self.workbook,
+            self.progress.emit("Preparing the campaign timeline change…", 1, 2)
+            before = self.timeline.project(self.execution_date)
+            campaign_preview = preview_batch(
+                before,
                 self.actions,
-                self.backup_dir,
                 self.execution_date,
                 cost_floor_choices=self.floor_choices,
                 conflict_choices=self.conflict_choices,
-                date_price_changes=self.date_price_changes,
                 campaigns=self.campaigns,
-                row_index=self.row_index,
-                row_index_signature=self.workbook_signature,
-                progress_callback=lambda text, value, maximum: self.progress.emit(text, value, maximum),
             )
-            self.succeeded.emit(result)
+            self.succeeded.emit((before, campaign_preview))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -219,13 +221,13 @@ class DayButton(QPushButton):
         if checked:
             self.setStyleSheet(
                 f"QPushButton {{ background:{MAGENTA}; color:white; border:1px solid {MAGENTA}; "
-                "border-radius:6px; padding:0; font-size:8.5pt; font-weight:700; }}"
+                f"border-radius:6px; padding:0; font-size:8.5pt; font-weight:700; }}\n"
                 f"QPushButton:hover {{ background:{MAGENTA_DARK}; border-color:{MAGENTA_DARK}; }}"
             )
         else:
             self.setStyleSheet(
                 f"QPushButton {{ background:white; color:{DARK}; border:1px solid {BORDER}; "
-                "border-radius:6px; padding:0; font-size:8.5pt; font-weight:650; }}"
+                f"border-radius:6px; padding:0; font-size:8.5pt; font-weight:650; }}\n"
                 f"QPushButton:hover {{ background:{MAGENTA_SOFT}; color:{DARK}; border-color:#E9A8C8; }}"
             )
 
@@ -239,17 +241,38 @@ class DayButton(QPushButton):
 
 
 class PromoPlanner(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("T-Travel Promo Planner")
-        self.resize(1320, 820)
-        self.setMinimumSize(1060, 700)
+    campaignsChanged = Signal()
+
+    def __init__(self, parent=None, *, embedded: bool = False):
+        super().__init__(parent)
+        self.embedded = embedded
+        self.on_timeline_changed = None
+        self.before_timeline_update = None
+        self._shared_key_date: str | None = None
+        self.setWindowTitle(("DEV ? " if (project_root() / "outputs" / ".development_workspace").exists() else "") + "T-Travel Promo Planner")
+        if self.embedded:
+            self.resize(360, 760)
+            self.setMinimumSize(330, 480)
+        else:
+            self.resize(1320, 820)
+            self.setMinimumSize(1060, 700)
 
         self.root_dir = project_root()
         self.out_dir = planner_output_dir(self.root_dir)
         self.store = PromoStore(self.out_dir / "promo_schedule.db")
-        self.workbook = find_manual_prices(self.root_dir)
-        self.catalogue = read_catalogue(self.workbook)
+        self.timeline = PricingTimeline(self.store.path)
+        self.timeline.set_current_as_of(date.today().isoformat())
+        if not self.timeline.baseline_info():
+            # One-time migration only. Routine planner launches use SQLite and
+            # do not open the compatibility workbook.
+            migration_source = find_manual_prices(self.root_dir)
+            baseline = read_pricing_workbook(migration_source)
+            self.timeline.initialize_baseline(
+                baseline,
+                source_path=migration_source,
+                effective_from=date.today().isoformat(),
+            )
+        self._refresh_catalogue_from_timeline()
         self.dest_map = {code: name for code, name in self.catalogue.destinations}
 
         self.selected_destinations: list[str] = []
@@ -271,10 +294,46 @@ class PromoPlanner(QMainWindow):
 
         self._apply_style()
         self._build_ui()
+        if self.embedded:
+            self.setStyleSheet(self.styleSheet() + """
+                QWidget { font-size: 8pt; }
+                QPushButton { padding: 4px 7px; }
+                QLineEdit, QComboBox, QDateEdit, QTextEdit { padding: 3px; min-height: 20px; }
+                QCheckBox { spacing: 3px; }
+            """)
+            self.tabs.setStyleSheet(
+                "QTabBar::tab { padding: 4px 7px; margin-right: 2px; font-size: 8pt; }"
+                "QTabBar::tab:selected { padding: 5px 8px; }"
+            )
         self._load_promo_combo()
         self._refresh_destinations()
         self._refresh_groups()
         self._refresh_campaigns()
+
+    def _refresh_catalogue_from_timeline(self):
+        frame = self.timeline.project()
+        promo_path = self.root_dir / "inputs" / "promos.json"
+        promo_options = None
+        if promo_path.exists():
+            try:
+                promo_options = []
+                for item in json.loads(promo_path.read_text(encoding="utf-8")):
+                    promo_type = str(item.get("promo_type", "")).strip().lower()
+                    value = pd.to_numeric(item.get("promo_value"), errors="coerce")
+                    code = str(item.get("promo_code", "")).strip()
+                    if not code or pd.isna(value):
+                        continue
+                    if promo_type in {"percentage", "pct", "%"}:
+                        promo_type = "percent"
+                    if promo_type in {"fixed", "amount", "value"}:
+                        promo_type = "absolute"
+                    if promo_type in {"percent", "absolute"}:
+                        promo_options.append(PromoOption(
+                            code, promo_type, float(value), str(item.get("label") or code)
+                        ))
+            except (OSError, ValueError, TypeError) as exc:
+                raise RuntimeError(f"Could not load the promo catalogue from {promo_path}: {exc}") from exc
+        self.catalogue = read_catalogue_frame(frame, promo_options)
 
     # ---------- UI shell ----------
     def _apply_style(self):
@@ -322,14 +381,15 @@ class PromoPlanner(QMainWindow):
         hl = QVBoxLayout(header)
         hl.setContentsMargins(24, 14, 24, 14)
         title = QLabel("T-Travel Promo Planner", objectName="headerTitle")
-        sub = QLabel(f"Planning future promotions · Live pricing book: {self.workbook.name}", objectName="headerSub")
+        sub = QLabel("Planning future promotions · Live prices: shared database timeline", objectName="headerSub")
         hl.addWidget(title)
         hl.addWidget(sub)
         outer.addWidget(header)
+        header.setVisible(not self.embedded)
 
         body = QWidget()
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(18, 12, 18, 16)
+        bl.setContentsMargins(8 if self.embedded else 18, 8 if self.embedded else 12, 8 if self.embedded else 18, 8 if self.embedded else 16)
         self.tabs = QTabWidget()
         bl.addWidget(self.tabs)
         outer.addWidget(body, 1)
@@ -337,7 +397,7 @@ class PromoPlanner(QMainWindow):
         self.timeline_tab = QWidget()
         self.execution_tab = QWidget()
         self.create_tab = QWidget()
-        self.tabs.addTab(self.timeline_tab, "Timeline")
+        self.tabs.addTab(self.timeline_tab, "Selected date" if self.embedded else "Timeline")
         self.tabs.addTab(self.execution_tab, "Campaigns")
         self.tabs.addTab(self.create_tab, "Create / edit promotion")
         self.tabs.setCurrentWidget(self.timeline_tab)
@@ -368,29 +428,56 @@ class PromoPlanner(QMainWindow):
     # ---------- Create/edit ----------
     def _build_create_tab(self):
         root = QVBoxLayout(self.create_tab)
-        root.setContentsMargins(0, 0, 0, 0)
-        splitter = QSplitter(Qt.Horizontal)
-        root.addWidget(splitter, 1)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
 
-        # Destinations card
-        dest_card, dl = self._card("1. Destinations", "Click a destination and it is added immediately to the campaign. The panel below is the exact campaign scope. Save common selections as groups.")
-        search_row = QHBoxLayout()
+        # Search and selected destinations sit side by side; the selected
+        # campaign scope gets twice the width of the country search list.
+        dest_card, dl = self._card("1. Destinations", "Click a destination to add it to the campaign scope.")
+        destination_columns = QHBoxLayout()
+        destination_columns.setSpacing(8)
+
+        available_card, available_layout = self._card("Find", "Search or click a destination.")
         self.search_edit = QComboBox()
         self.search_edit.setEditable(True)
+        self.search_edit.setMinimumWidth(0)
         self.search_edit.lineEdit().setPlaceholderText("Search destination...")
         self.search_edit.lineEdit().textChanged.connect(self._refresh_destinations)
-        search_row.addWidget(self.search_edit, 1)
-        dl.addLayout(search_row)
+        available_layout.addWidget(self.search_edit)
 
         self.available_list = QListWidget()
         self.available_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.available_list.setMinimumHeight(105)
+        self.available_list.setMaximumHeight(160)
+        self.available_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.available_list.setDragEnabled(True)
         self.available_list.setDragDropMode(QAbstractItemView.DragOnly)
         self.available_list.itemClicked.connect(self._pick_destination)
-        dl.addWidget(self.available_list, 1)
+        available_layout.addWidget(self.available_list, 1)
+        destination_columns.addWidget(available_card, 1)
+
+        selected_card, selected_layout = self._card("Selected destinations", "This is the exact campaign scope.")
+        selected_header = QHBoxLayout()
+        selected_title = QLabel("Countries in this campaign")
+        selected_title.setStyleSheet("font-weight: 700;")
+        self.selected_count_label = QLabel("0 selected")
+        self.selected_count_label.setObjectName("muted")
+        selected_header.addWidget(selected_title)
+        selected_header.addStretch(1)
+        selected_header.addWidget(self.selected_count_label)
+        selected_layout.addLayout(selected_header)
+
+        self.selected_list = DestinationDropList()
+        self.selected_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.selected_list.setMinimumHeight(105)
+        self.selected_list.setMaximumHeight(160)
+        self.selected_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.selected_list.codesDropped.connect(self._add_destination_codes)
+        selected_layout.addWidget(self.selected_list, 1)
 
         group_row = QHBoxLayout()
         self.group_combo = QComboBox()
+        self.group_combo.setMinimumWidth(0)
         load_group = QPushButton("Load group")
         save_group = QPushButton("Save selection")
         load_group.clicked.connect(self._load_group)
@@ -398,32 +485,20 @@ class PromoPlanner(QMainWindow):
         group_row.addWidget(self.group_combo, 1)
         group_row.addWidget(load_group)
         group_row.addWidget(save_group)
-        dl.addLayout(group_row)
-
-        selected_header = QHBoxLayout()
-        selected_title = QLabel("Selected destinations")
-        selected_title.setStyleSheet("font-weight: 700;")
-        self.selected_count_label = QLabel("0 selected")
-        self.selected_count_label.setObjectName("muted")
-        selected_header.addWidget(selected_title)
-        selected_header.addStretch(1)
-        selected_header.addWidget(self.selected_count_label)
-        dl.addLayout(selected_header)
-
-        self.selected_list = DestinationDropList()
-        self.selected_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.selected_list.setMaximumHeight(190)
-        self.selected_list.codesDropped.connect(self._add_destination_codes)
-        dl.addWidget(self.selected_list)
+        selected_layout.addLayout(group_row)
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self._remove_selected)
-        dl.addWidget(remove_btn, 0, Qt.AlignRight)
-        splitter.addWidget(dest_card)
+        selected_layout.addWidget(remove_btn, 0, Qt.AlignRight)
+        destination_columns.addWidget(selected_card, 2)
+        dl.addLayout(destination_columns)
+        dest_card.setMaximumHeight(320)
+        root.addWidget(dest_card)
 
         # Promotion form, scrollable
-        form_card, fl = self._card("2. Promotion", "Use the existing workbook promotion catalogue so execution remains fully compatible with current pricing.")
+        form_card, fl = self._card("2. Promotion", "Saving schedules this promotion. Prices change when its key date is applied.")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
         inner.setStyleSheet("background:white;")
         form = QVBoxLayout(inner)
@@ -439,49 +514,54 @@ class PromoPlanner(QMainWindow):
         self.name_edit.lineEdit().setPlaceholderText("e.g. Black Friday Asia")
         form.addWidget(self.name_edit)
 
-        promo_row = QHBoxLayout()
-        promo_row.setSpacing(10)
+        selection_row = QHBoxLayout()
+        selection_row.setSpacing(8)
+        promo_card, promo_layout = self._card("Promotion")
+        selection_row.addWidget(promo_card, 1)
         promo_label = QLabel("Promotion from catalogue *")
         promo_label.setStyleSheet("background:transparent;font-weight:600;")
-        promo_row.addWidget(promo_label)
+        promo_layout.addWidget(promo_label)
+        promo_row = QHBoxLayout()
+        promo_row.setSpacing(4)
         self.promo_combo = QComboBox()
         self.promo_combo.setObjectName("requiredInput")
-        self.promo_combo.setMinimumWidth(260)
+        self.promo_combo.setMinimumWidth(0)
         reload_promo = QPushButton("↻")
         reload_promo.setFixedWidth(38)
         reload_promo.clicked.connect(self._reload_catalogue)
         promo_row.addWidget(self.promo_combo, 1)
         promo_row.addWidget(reload_promo)
-        form.addLayout(promo_row)
+        promo_layout.addLayout(promo_row)
 
         self.already_active = CleanCheckBox("Already active in current prices — do not publish, only schedule removal")
         self.already_active.setObjectName("optionCheck")
         self.already_active.toggled.connect(self._toggle_existing_active)
-        form.addWidget(self.already_active)
 
         dates = QHBoxLayout()
         self.start_date = self._date_control("Start date")
         self.end_date = self._date_control("End date")
         dates.addLayout(self.start_date[0])
         dates.addLayout(self.end_date[0])
-        form.addLayout(dates)
 
-        plans_label = QLabel("Plans")
-        plans_label.setStyleSheet("background:transparent;font-weight:600;")
-        form.addWidget(plans_label)
+        plan_card, plan_layout = self._card("Plans")
         plan_box = QFrame()
         plan_box.setStyleSheet(f"QFrame {{ background:white; border:1px solid {BORDER}; border-radius:7px; }}")
         plan_grid = QGridLayout(plan_box)
         plan_grid.setContentsMargins(10, 8, 10, 8)
-        plan_grid.setHorizontalSpacing(28)
-        plan_grid.setVerticalSpacing(6)
+        plan_grid.setHorizontalSpacing(8 if self.embedded else 28)
+        plan_grid.setVerticalSpacing(4 if self.embedded else 6)
+        plan_columns = 2
         for i, plan in enumerate(self.catalogue.plans):
             cb = CleanCheckBox(plan)
             cb.setObjectName("planCheck")
             cb.setChecked(True)
             self.plan_checks[plan] = cb
-            plan_grid.addWidget(cb, i // 2, i % 2)
-        form.addWidget(plan_box)
+            plan_grid.addWidget(cb, i // plan_columns, i % plan_columns)
+        plan_layout.addWidget(plan_box)
+        selection_row.addWidget(plan_card, 1)
+        form.addLayout(selection_row)
+        form.addWidget(self.already_active)
+        form.addLayout(dates)
 
         duration_panel = QFrame()
         duration_panel.setObjectName("durationPanel")
@@ -513,7 +593,7 @@ class PromoPlanner(QMainWindow):
         day_grid.setVerticalSpacing(4)
         day_grid.setContentsMargins(0, 2, 0, 2)
         days = list(self.catalogue.days)
-        columns = 15
+        columns = 8 if self.embedded else 15
         for i, day in enumerate(days):
             b = DayButton(day)
             b.setChecked(day in {7, 10})
@@ -540,16 +620,17 @@ class PromoPlanner(QMainWindow):
         form.addStretch(1)
         scroll.setWidget(inner)
         fl.addWidget(scroll, 1)
-        splitter.addWidget(form_card)
-        splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 4)
+        root.addWidget(form_card, 1)
 
         action_bar = QFrame()
         action_bar.setStyleSheet(f"background:white;border:1px solid {BORDER};border-radius:8px;")
-        al = QHBoxLayout(action_bar)
+        al = QVBoxLayout(action_bar) if self.embedded else QHBoxLayout(action_bar)
         al.setContentsMargins(12, 9, 12, 9)
         info = QLabel("Saving schedules the campaign and Outlook reminders. Current prices change only when you execute a key date.")
         info.setStyleSheet(f"color:{MID};border:0;")
+        info.setWordWrap(self.embedded)
+        if self.embedded:
+            info.setMaximumHeight(34)
         al.addWidget(info, 1)
         preview = QPushButton("Preview")
         preview.clicked.connect(self._preview_unsaved)
@@ -568,9 +649,17 @@ class PromoPlanner(QMainWindow):
             }}
         """)
         self.save_btn.clicked.connect(self._save_campaign)
-        al.addWidget(preview)
-        al.addWidget(self.cancel_edit_btn)
-        al.addWidget(self.save_btn)
+        if self.embedded:
+            actions = QHBoxLayout()
+            actions.setSpacing(4)
+            actions.addWidget(preview)
+            actions.addWidget(self.cancel_edit_btn)
+            actions.addWidget(self.save_btn)
+            al.addLayout(actions)
+        else:
+            al.addWidget(preview)
+            al.addWidget(self.cancel_edit_btn)
+            al.addWidget(self.save_btn)
         root.addWidget(action_bar)
 
     def _date_control(self, label: str):
@@ -582,7 +671,10 @@ class PromoPlanner(QMainWindow):
         ctrl = QDateEdit(QDate.currentDate())
         ctrl.setObjectName("requiredInput")
         ctrl.setCalendarPopup(True)
-        ctrl.setDisplayFormat("dd MMM yyyy")
+        ctrl.setDisplayFormat("dd MMM yy" if self.embedded else "dd MMM yyyy")
+        if self.embedded:
+            ctrl.setMinimumWidth(0)
+            ctrl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lay.addWidget(ctrl)
         return lay, ctrl
 
@@ -667,6 +759,51 @@ class PromoPlanner(QMainWindow):
 
     # ---------- Timeline ----------
     def _build_timeline_tab(self):
+        if self.embedded:
+            root = QVBoxLayout(self.timeline_tab)
+            root.setContentsMargins(6, 5, 6, 5)
+            root.setSpacing(5)
+            self.execution_date = QDateEdit(QDate.currentDate(), self.timeline_tab)
+            self.execution_date.hide()
+            self.execution_date.dateChanged.connect(self._on_execution_date_changed)
+            self.execution_date_title = QLabel("Current manual prices")
+            self.execution_date_title.setWordWrap(True)
+            self.execution_date_title.setStyleSheet("font-size:10pt;font-weight:700;")
+            event_header = QHBoxLayout()
+            event_header.addWidget(self.execution_date_title, 1)
+            self.add_price_date_btn = QPushButton("Add price-change date")
+            self.add_price_date_btn.clicked.connect(self._schedule_price_change_date)
+            event_header.addWidget(self.add_price_date_btn)
+            root.addLayout(event_header)
+            self.execution_summary = QLabel("")
+            self.execution_summary.setWordWrap(True)
+            self.execution_summary.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            self.execution_summary.setStyleSheet(f"color:{MID};")
+            self.execution_summary.setTextFormat(Qt.RichText)
+            self.execution_summary.setMaximumHeight(88)
+            root.addWidget(self.execution_summary)
+            self.midnight_changes_note = QLabel(
+                "Campaign starts, ends, and dated price changes are reviewed together for this key date."
+            )
+            self.midnight_changes_note.setWordWrap(True)
+            root.addWidget(self.midnight_changes_note)
+            self.preview_date_btn = QPushButton("Review changes")
+            self.preview_date_btn.clicked.connect(self._preview_execution_date)
+            self.apply_date_btn = QPushButton("Apply key-date changes")
+            self.apply_date_btn.setObjectName("primary")
+            self.apply_date_btn.clicked.connect(self._apply_execution_date)
+            self.undo_btn = QPushButton("Undo applied changes")
+            self.undo_btn.setObjectName("danger")
+            self.undo_btn.setVisible(False)
+            self.undo_btn.clicked.connect(self._undo_execution_date)
+            action_row = QHBoxLayout()
+            action_row.setSpacing(5)
+            action_row.addWidget(self.preview_date_btn)
+            action_row.addWidget(self.apply_date_btn)
+            action_row.addWidget(self.undo_btn)
+            root.addLayout(action_row)
+            return
+
         root = QVBoxLayout(self.timeline_tab)
         root.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
@@ -779,6 +916,8 @@ class PromoPlanner(QMainWindow):
         split.setSizes([930, 310])
 
     def _render_timeline(self):
+        if self.embedded:
+            return
         self.timeline_scene.clear()
         campaigns = self.store.list_campaigns()
         if not campaigns:
@@ -868,7 +1007,7 @@ class PromoPlanner(QMainWindow):
         except Exception:
             old = ""
         try:
-            self.catalogue = read_catalogue(self.workbook)
+            self._refresh_catalogue_from_timeline()
             self.dest_map = {code: name for code, name in self.catalogue.destinations}
             self._load_promo_combo(old)
             self._refresh_destinations()
@@ -959,16 +1098,20 @@ class PromoPlanner(QMainWindow):
         codes = [str(i.data(Qt.UserRole)) for i in self.available_list.selectedItems() if i.data(Qt.UserRole)]
         self._add_destination_codes(codes)
 
+    def destination_label(self, code: str) -> str:
+        code = str(code).strip()
+        name = self.dest_map.get(code, "")
+        return f"{name} ({code})" if name and name.casefold() != code.casefold() else code
+
     def _render_selected(self):
         self.selected_list.clear()
         for code in self.selected_destinations:
-            item = QListWidgetItem(f"{self.dest_map.get(code, code)} ({code})")
+            item = QListWidgetItem(self.destination_label(code))
             item.setData(Qt.UserRole, code)
             self.selected_list.addItem(item)
         if hasattr(self, "selected_count_label"):
             n = len(self.selected_destinations)
             self.selected_count_label.setText(f"{n} selected")
-
     def _remove_selected(self):
         remove = {str(i.data(Qt.UserRole)) for i in self.selected_list.selectedItems()}
         self.selected_destinations = [c for c in self.selected_destinations if c not in remove]
@@ -1095,10 +1238,10 @@ class PromoPlanner(QMainWindow):
         outlook_note = self._sync_outlook(cid)
         self._refresh_campaigns()
         self._refresh_execution_date()
-        self.tabs.setCurrentWidget(self.execution_tab)
+        self.tabs.setCurrentWidget(getattr(self, "campaigns_tab", self.execution_tab))
         if outlook_note:
             msg += "\n\n" + outlook_note
-        self._info("Promo Planner", msg)
+        self._info("Campaigns", msg)
 
     def _sync_outlook(self, campaign_id: int) -> str:
         c = self.store.get_campaign(campaign_id)
@@ -1115,9 +1258,9 @@ class PromoPlanner(QMainWindow):
         try:
             c = self._campaign_from_form()
             if c.status == "ACTIVE_IMPORTED":
-                p = preview_campaign(self.workbook, c, "END")
+                p = preview_campaign(self.timeline.project(), c, "END")
             else:
-                p = preview_campaign(self.workbook, c, "START")
+                p = preview_campaign(self.timeline.project(), c, "START")
         except Exception as exc:
             return self._error("Preview", str(exc))
         self._show_preview(p)
@@ -1160,6 +1303,7 @@ class PromoPlanner(QMainWindow):
         self._refresh_groups()
         self._render_timeline()
         self._refresh_execution_date()
+        self.campaignsChanged.emit()
 
     def _selected_campaign(self) -> Campaign:
         items = self.tree.selectedItems()
@@ -1180,11 +1324,12 @@ class PromoPlanner(QMainWindow):
         state = "Expired / removed" if ended else ("Published · imported manually" if imported else ("Published to current prices" if started else "Planned / not yet published"))
         start_display = c.start_date or "Already live / start unknown"
         end_display = c.end_date
+        destination_labels = ", ".join(self.destination_label(code) for code in c.destinations)
         self.detail.setPlainText(
             f"{c.name}\n"
             f"Promotion: {c.promo_name or '-'} | catalogue code: {c.promo_code}\n"
             f"{start_display} → {end_display} | {state}\n"
-            f"Destinations: {', '.join(c.destinations)}\n"
+            f"Destinations: {destination_labels}\n"
             f"Plans: {', '.join(c.plans)} | Days: {', '.join(map(str, c.days))}\n"
             f"Notes: {c.notes or '-'}"
         )
@@ -1192,6 +1337,13 @@ class PromoPlanner(QMainWindow):
     def _edit_selected(self):
         try:
             c = self._selected_campaign()
+        except Exception as exc:
+            return self._warn("Edit campaign", str(exc))
+        self.open_campaign_for_edit(c.id)
+
+    def open_campaign_for_edit(self, campaign_id: int):
+        try:
+            c = self.store.get_campaign(int(campaign_id))
         except Exception as exc:
             return self._warn("Edit campaign", str(exc))
         if self.store.has_execution(c.id, "END"):
@@ -1305,25 +1457,6 @@ class PromoPlanner(QMainWindow):
         if outlook_warning:
             self._warn("Outlook", outlook_warning)
 
-    def _save_manual_price_history_snapshot(self) -> Path:
-        """Save the current workbook into the Pricing Editor history after a planner write."""
-        workbook = Path(self.workbook)
-        # Canonical layout is outputs/manual_prices/current/manual_prices_current.xlsx.
-        # Keep a safe fallback for repositories where the workbook sits one level higher.
-        if workbook.parent.name.lower() == "current":
-            history_dir = workbook.parent.parent / "history"
-        else:
-            history_dir = workbook.parent / "history"
-        history_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        snapshot = history_dir / f"manual_prices_{ts}{workbook.suffix}"
-        counter = 1
-        while snapshot.exists():
-            snapshot = history_dir / f"manual_prices_{ts}_{counter}{workbook.suffix}"
-            counter += 1
-        shutil.copy2(workbook, snapshot)
-        return snapshot
-
     # ---------- Key dates / batch execution ----------
     def _key_dates(self) -> list[str]:
         """Return midnight boundaries: an end date and the prior date for a start."""
@@ -1333,6 +1466,12 @@ class PromoPlanner(QMainWindow):
                 dates.add((self._parse_iso(c.start_date) - timedelta(days=1)).isoformat())
             if c.end_date:
                 dates.add(c.end_date)
+        dates.update(
+            str(change.get("key_date", ""))
+            for change in self.timeline.date_override_records()
+            if change.get("key_date")
+        )
+        dates.update(self.timeline.key_dates(today=(date.today() - timedelta(days=1)).isoformat()))
         return sorted(dates)
 
     def _key_date_counts(self, key_date: str) -> tuple[int, int]:
@@ -1423,15 +1562,63 @@ class PromoPlanner(QMainWindow):
                     f"QPushButton:hover {{ border-color:{MAGENTA}; color:{MAGENTA_DARK}; }}"
                 )
             starts, ends = self._key_date_counts(kd)
+            price_edits = len(self.timeline.date_override_records(key_date=kd))
             b.setToolTip(
                 f"Midnight boundary · {dd.strftime('%d %B')} 24:00 → {next_day.strftime('%d %B %Y')} 00:00\n"
-                f"{ends} campaign(s) ending · {starts} campaign(s) starting"
+                f"{ends} campaign(s) ending · {starts} campaign(s) starting · {price_edits} editor price override(s)"
             )
             b.clicked.connect(lambda _checked=False, d=kd: self._jump_to_execution_date(d))
             self.key_date_row.addWidget(b)
         self.key_date_row.addStretch(1)
 
+    def _schedule_price_change_date(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Schedule price change")
+        layout = QFormLayout(dialog)
+        name = QLineEdit(dialog)
+        name.setPlaceholderText("For example: Autumn roaming price update")
+        effective_date = QDateEdit(QDate.currentDate().addDays(1), dialog)
+        effective_date.setCalendarPopup(True)
+        effective_date.setDisplayFormat("dd MMM yyyy")
+        effective_date.setMinimumDate(QDate.currentDate())
+        layout.addRow("Change name", name)
+        layout.addRow("Prices take effect", effective_date)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        label = name.text().strip()
+        if not label:
+            return self._warn("Schedule price change", "Enter a name for this price change.")
+        effective = effective_date.date().toPython()
+        key_date = (effective - timedelta(days=1)).isoformat()
+        try:
+            self.timeline.schedule_price_change_date(key_date, label)
+        except Exception as exc:
+            return self._error("Schedule price change", str(exc))
+        self.set_shared_key_date(key_date)
+        self._refresh_campaigns()
+        self._refresh_execution_date()
+        if callable(self.on_timeline_changed):
+            self.on_timeline_changed(key_date)
+
     def _on_execution_date_changed(self, _date: QDate):
+        self._refresh_execution_date()
+
+    def set_shared_key_date(self, key_date: str | None) -> None:
+        """Make the editor's single date selector authoritative in embedded mode."""
+        if not self.embedded:
+            return
+        self._shared_key_date = str(key_date).strip() if key_date else None
+        if self._shared_key_date:
+            qd = QDate.fromString(self._shared_key_date, "yyyy-MM-dd")
+            if qd.isValid() and self.execution_date.date() != qd:
+                self.execution_date.setDate(qd)
+            elif qd.isValid():
+                self._refresh_execution_date()
+            return
         self._refresh_execution_date()
 
     def _actions_for_execution_date(self, execution_date: str):
@@ -1473,7 +1660,15 @@ class PromoPlanner(QMainWindow):
     def _refresh_execution_date(self):
         if not hasattr(self, "execution_date"):
             return
-        self._render_key_date_strip()
+        if self.embedded and not self._shared_key_date:
+            self.execution_date_title.setText("Current manual prices")
+            self.execution_summary.setText("Choose a key date from the shared timeline above to review scheduled changes.")
+            self.preview_date_btn.setEnabled(False)
+            self.apply_date_btn.setEnabled(False)
+            self.undo_btn.setVisible(False)
+            return
+        if not self.embedded:
+            self._render_key_date_strip()
         d = self._qdate_iso(self.execution_date.date())
         self._load_issue_choices(d)
         if hasattr(self, "execution_date_title"):
@@ -1496,17 +1691,31 @@ class PromoPlanner(QMainWindow):
         starting_next_day = [c.name for c, a in actions if a == "START" and c.start_date == next_day]
         batch = self.store.get_active_batch_for_date(d)
         parts = []
-        if ending:
-            parts.append(f"ENDING {self._parse_iso(d).strftime('%d %b').upper()} AT 24:00\n• " + "\n• ".join(ending))
         if starting_next_day:
-            parts.append(f"STARTING {self._parse_iso(next_day).strftime('%d %b').upper()} AT 00:00\n• " + "\n• ".join(starting_next_day))
-        if not actions:
+            names = "<br>".join(f"- <b>{escape(name)}</b>" for name in starting_next_day)
+            parts.append(f"<b>START | {self._parse_iso(next_day).strftime('%d %b').upper()} AT 00:00</b><br>{names}")
+        if ending:
+            names = "<br>".join(f"- <b>{escape(name)}</b>" for name in ending)
+            parts.append(f"<b>END | {self._parse_iso(d).strftime('%d %b').upper()} AT 24:00</b><br>{names}")
+        date_price_changes = self.timeline.date_override_records(key_date=d)
+        if date_price_changes:
+            parts.append(f"<b>PRICE OVERRIDES</b> · {len(date_price_changes)} scheduled editor change(s)")
+        planned_events = self.timeline.key_date_labels().get(d, [])
+        if planned_events:
+            if date_price_changes:
+                parts.extend(f"<b>{escape(label)}</b>" for label in planned_events)
+            else:
+                parts.extend(
+                    f"<b>{escape(label)}</b><br>Edit prices in the editor, then save them for this date."
+                    for label in planned_events
+                )
+        if not actions and not date_price_changes and not planned_events:
             parts.append("No unapplied campaign changes are scheduled for this key date.")
         if batch:
-            parts.append(f"EXECUTED\nBatch #{batch['id']} · {batch['executed_at']}")
-        self.execution_summary.setText("\n\n".join(parts))
+            parts.append(f"<b>EXECUTED</b><br>Batch #{batch['id']} · {escape(str(batch['executed_at']))}")
+        self.execution_summary.setText("<br><br>".join(parts))
 
-        has_actions = bool(actions)
+        has_actions = bool(actions or date_price_changes)
         self.preview_date_btn.setEnabled(has_actions)
         self.apply_date_btn.setEnabled(has_actions and not bool(batch))
         self.apply_date_btn.setText(
@@ -1518,7 +1727,10 @@ class PromoPlanner(QMainWindow):
 
     def _earliest_outstanding_key_date(self) -> str | None:
         for kd in self._key_dates():
-            if self._actions_for_execution_date(kd):
+            if (
+                self._actions_for_execution_date(kd)
+                or self.timeline.date_override_records(key_date=kd)
+            ) and not self.store.get_active_batch_for_date(kd):
                 return kd
         return None
 
@@ -1746,8 +1958,9 @@ class PromoPlanner(QMainWindow):
         temp.replace(path)
 
     def _simulate_with_saved_choices(self, execution_date: str, actions):
+        current = self.timeline.project(execution_date)
         preview = preview_batch(
-            self.workbook, actions, execution_date,
+            current, actions, execution_date,
             cost_floor_choices=self._pending_cost_floor_choices,
             conflict_choices=self._pending_conflict_choices,
             date_price_changes=active_changes(
@@ -1755,8 +1968,6 @@ class PromoPlanner(QMainWindow):
                 (self._parse_iso(execution_date) + timedelta(days=1)).isoformat(),
             ),
             campaigns=self.store.list_campaigns(),
-            row_index=self.catalogue.row_index,
-            row_index_signature=self.catalogue.workbook_signature,
         )
         for _ in range(3):
             current_floors = {
@@ -1783,7 +1994,7 @@ class PromoPlanner(QMainWindow):
                 self._pending_conflict_contexts.pop(key, None)
             self._save_issue_choices(execution_date)
             preview = preview_batch(
-                self.workbook, actions, execution_date,
+                current, actions, execution_date,
                 cost_floor_choices=self._pending_cost_floor_choices,
                 conflict_choices=self._pending_conflict_choices,
                 date_price_changes=active_changes(
@@ -1791,8 +2002,6 @@ class PromoPlanner(QMainWindow):
                     (self._parse_iso(execution_date) + timedelta(days=1)).isoformat(),
                 ),
                 campaigns=self.store.list_campaigns(),
-                row_index=self.catalogue.row_index,
-                row_index_signature=self.catalogue.workbook_signature,
             )
         return preview
 
@@ -1907,8 +2116,10 @@ class PromoPlanner(QMainWindow):
     def _preview_execution_date(self):
         d = self._qdate_iso(self.execution_date.date())
         actions = self._actions_through_execution_date(d)
-        if not actions:
-            return self._info("Date preview", f"No scheduled campaign changes are projected through {d}.")
+        boundary = (self._parse_iso(d) + timedelta(days=1)).isoformat()
+        scheduled_prices = active_changes(self.root_dir, boundary)
+        if not actions and not scheduled_prices:
+            return self._info("Date preview", f"No scheduled price or campaign changes are projected through {d}.")
         try:
             self._load_issue_choices(d)
             p = self._simulate_with_saved_choices(d, actions)
@@ -2217,12 +2428,15 @@ class PromoPlanner(QMainWindow):
     def _apply_execution_date(self):
         if self._apply_worker is not None and self._apply_worker.isRunning():
             return
+        if self.embedded and callable(self.before_timeline_update) and not self.before_timeline_update():
+            return
         d = self._qdate_iso(self.execution_date.date())
         if self.store.get_active_batch_for_date(d):
             return self._info("Already executed", f"An active execution batch already exists for {d}. Undo it first if it was wrong.")
         actions = self._actions_for_execution_date(d)
-        if not actions:
-            return self._info("Execute date", f"No unapplied changes are scheduled for {d}.")
+        date_price_changes = self.timeline.date_override_records(key_date=d)
+        if not actions and not date_price_changes:
+            return self._info("Execute date", f"No unapplied price or campaign changes are scheduled for {d}.")
         if not self._confirm_sequence_override(d):
             return
         self._load_issue_choices(d)
@@ -2275,10 +2489,8 @@ class PromoPlanner(QMainWindow):
         self._apply_progress_label = label
         self._apply_progress_bar = bar
         self._apply_worker = BatchApplyWorker(
-            self.workbook, actions, self.out_dir / "backups", d,
-            floor_choices, conflict_choices, changes_for_key_date(self.root_dir, d),
-            self.store.list_campaigns(),
-            self.catalogue.row_index, self.catalogue.workbook_signature, self,
+            self.timeline, d, actions, floor_choices, conflict_choices,
+            self.store.list_campaigns(), self,
         )
         self._active_apply_date = d
         self._apply_actions = list(actions)
@@ -2308,13 +2520,29 @@ class PromoPlanner(QMainWindow):
         self._finish_apply_batch(self._active_apply_date, self._apply_actions, result)
 
     def _finish_apply_batch(self, execution_date, actions, result):
-        backup, changed_map, adjusted_cells = result
+        before, campaign_preview = result
         self._update_apply_progress(
             self._apply_progress_label, self._apply_progress_bar,
-            "Recording the saved workbook and history snapshot…", 0, 0,
+            "Recording dated changes…", 0, 0,
         )
-        history_snapshot = None
+        change_set_id = None
         try:
+            # Store the campaign layer without editor date overrides. Those
+            # already live in the higher priority, optionally expiring layer.
+            after = pd.DataFrame(campaign_preview.projected_rows)
+            effective_from = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat()
+            change_set_id, changed_fields = self.timeline.record_diff(
+                before, after,
+                effective_from=effective_from,
+                layer="campaign",
+                source="planner",
+                label=f"Promo Planner execution {execution_date}",
+                metadata={"execution_date": execution_date},
+            )
+            changed_map = {
+                (int(item.campaign_id), item.action): int(item.changed_rows)
+                for item in campaign_preview.items
+            }
             details = [
                 {
                     "campaign_id": int(c.id),
@@ -2325,7 +2553,6 @@ class PromoPlanner(QMainWindow):
                 }
                 for c, action in actions
             ]
-            history_snapshot = self._save_manual_price_history_snapshot()
             executions = []
             for c, action in actions:
                 scheduled_date = c.end_date if action == "END" else c.start_date
@@ -2334,21 +2561,21 @@ class PromoPlanner(QMainWindow):
                     detail += f"; campaign action scheduled for {scheduled_date}"
                 executions.append((int(c.id), action, changed_map.get((int(c.id), action), 0), detail))
             batch_id = self.store.create_batch_with_executions(
-                execution_date, self.workbook, backup, details, executions
+                execution_date, str(self.store.path), "", details, executions,
+                timeline_change_set_id=change_set_id,
             )
         except Exception as exc:
             try:
-                restore_workbook_backup(self.workbook, backup)
-                if history_snapshot and history_snapshot.exists():
-                    history_snapshot.unlink()
+                if change_set_id:
+                    self.timeline.undo_change_set(change_set_id)
             except Exception as rollback_exc:
                 self._dismiss_apply_progress()
                 return self._error(
                     "Apply needs recovery",
-                    f"Bookkeeping failed: {exc}\nAutomatic restore failed: {rollback_exc}\nRecovery copy: {backup}",
+                    f"Timeline bookkeeping failed: {exc}\nAutomatic rollback failed: {rollback_exc}",
                 )
             self._dismiss_apply_progress()
-            return self._error("Apply rolled back", f"The workbook was restored from its recovery copy because saving the batch record failed.\n\n{exc}")
+            return self._error("Apply rolled back", f"The timeline change was reversed because saving the batch record failed.\n\n{exc}")
 
         self._pending_cost_floor_choices = {}
         self._pending_conflict_choices = {}
@@ -2358,28 +2585,32 @@ class PromoPlanner(QMainWindow):
         self._refresh_campaigns()
         self._update_apply_progress(
             self._apply_progress_label, self._apply_progress_bar,
-            "Saved successfully. Opening Pricing Editor…", 100, 100,
+            "Saved successfully. Updating the shared price view…", 100, 100,
         )
         self._dismiss_apply_progress()
+        if callable(self.on_timeline_changed):
+            self.on_timeline_changed()
         editor_started = self._launch_pricing_editor()
-        extra = f"\nList prices raised to floor +10%: {adjusted_cells}" if adjusted_cells else ""
+        extra = ""
         editor_message = (
+            "The open pricing editor now shows the updated shared timeline."
+            if self.embedded else
             "Pricing Editor launch started so you can create the partner pack."
             if editor_started else
             "The apply is saved. Open Pricing Editor manually to create the partner pack."
         )
         self._info(
             "Changes applied",
-            f"The handover for {execution_date} is saved in manual prices.\n\n"
+            f"The handover for {execution_date} is saved in the shared pricing timeline.\n\n"
             f"Rows changed: {sum(changed_map.values())}{extra}\n"
-            f"Recovery backup: {backup.name}\nHistory snapshot: {history_snapshot.name}\nBatch: #{batch_id}\n\n"
+            f"Timeline fields changed: {changed_fields}\nBatch: #{batch_id}\n\n"
             + editor_message,
         )
 
     @Slot(str)
     def _fail_apply_batch(self, message):
         self._dismiss_apply_progress()
-        self._error("Apply failed", f"The price workbook was not successfully saved.\n\n{message}")
+        self._error("Apply failed", f"No campaign change was recorded in the pricing timeline.\n\n{message}")
 
     @Slot()
     def _restore_apply_controls(self):
@@ -2403,11 +2634,19 @@ class PromoPlanner(QMainWindow):
     def closeEvent(self, event):
         if self._apply_worker is not None and self._apply_worker.isRunning():
             event.ignore()
-            self.statusBar().showMessage("Please wait for the workbook save to finish before closing the planner.")
+            self.statusBar().showMessage("Please wait for the timeline update to finish before closing the planner.")
             return
         super().closeEvent(event)
 
     def _launch_pricing_editor(self):
+        if self.embedded:
+            return True
+        parent_tabs = self.parentWidget()
+        while parent_tabs is not None:
+            if self.embedded and isinstance(parent_tabs, QTabWidget):
+                parent_tabs.setCurrentIndex(0)
+                return True
+            parent_tabs = parent_tabs.parentWidget()
         launcher = self.root_dir / "START_HERE" / "2_open_pricing_editor.py"
         if not launcher.exists():
             self.statusBar().showMessage(f"Pricing Editor launcher was not found: {launcher}", 12000)
@@ -2423,6 +2662,8 @@ class PromoPlanner(QMainWindow):
             return False
 
     def _undo_execution_date(self):
+        if self.embedded and callable(self.before_timeline_update) and not self.before_timeline_update():
+            return
         d = self._qdate_iso(self.execution_date.date())
         batch = self.store.get_active_batch_for_date(d)
         if not batch:
@@ -2432,17 +2673,17 @@ class PromoPlanner(QMainWindow):
         if not self._confirm("Undo date execution", f"Restore manual prices to the exact state before batch #{batch['id']} for {d}?\n\nThis is intended only for correcting an execution mistake."):
             return
         try:
-            restore_workbook_backup(self.workbook, Path(batch["backup_path"]))
             self.store.undo_batch(int(batch["id"]))
-            history_snapshot = self._save_manual_price_history_snapshot()
         except Exception as exc:
             return self._error("Undo failed", str(exc))
+        if callable(self.on_timeline_changed):
+            self.on_timeline_changed()
         self._refresh_campaigns()
-        self._info("Execution undone", f"Batch #{batch['id']} for {d} was undone and manual prices were restored from its backup.\n\nHistory: {history_snapshot.name}")
+        self._info("Execution undone", f"Batch #{batch['id']} for {d} was undone in the shared pricing timeline.")
 
     def _preview_selected(self, action: str):
         try:
-            p = preview_campaign(self.workbook, self._selected_campaign(), action)
+            p = preview_campaign(self.timeline.project(), self._selected_campaign(), action)
         except Exception as exc:
             return self._error("Preview", str(exc))
         self._show_preview(p)
@@ -2476,7 +2717,7 @@ class PromoPlanner(QMainWindow):
         if out_path.suffix.lower() not in {".html", ".htm"}:
             out_path = out_path.with_suffix(".html")
         try:
-            generate_promotion_calendar(self.store, out_path, self.workbook)
+            generate_promotion_calendar(self.store, out_path, self.timeline.project())
         except Exception as exc:
             return self._error("Export promotion calendar", str(exc))
         QMessageBox.information(
@@ -2519,15 +2760,14 @@ class PromoPlanner(QMainWindow):
 
 
 def main():
-    app = QApplication.instance() or QApplication([])
-    app.setFont(QFont("Segoe UI", 9))
+    """Route direct planner launches to the integrated pricing app shell."""
     try:
-        window = PromoPlanner()
-        window.show()
-        app.exec()
-    except Exception as exc:
-        QMessageBox.critical(None, "T-Travel Promo Planner", str(exc))
-        raise
+        from automation.pricing_editor.main_window import run
+    except ModuleNotFoundError as exc:
+        if exc.name != "automation":
+            raise
+        from pricing_editor.main_window import run
+    run(initial_workspace="campaigns")
 
 
 if __name__ == "__main__":

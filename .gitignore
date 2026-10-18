@@ -53,3 +53,5 @@ automation/intelligence/google-ads.yaml
 automation/intelligence/.env*
 
 automation/intelligence/config.py
+# Development-only private input copies
+local_data/

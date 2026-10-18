@@ -5,12 +5,16 @@ import json
 import os
 from datetime import date, datetime
 from pathlib import Path
+import pandas as pd
 
-from openpyxl import load_workbook
-
-from .engine import _headers, _text, round_promo_price
-from .paths import find_manual_prices, project_root
+from .engine import _num, _text, round_promo_price
 from .store import Campaign, PromoStore
+try:
+    from automation.pricing_timeline import PricingTimeline
+except ModuleNotFoundError as exc:
+    if exc.name != "automation":
+        raise
+    from pricing_timeline import PricingTimeline
 
 
 def _display_product_name(name: str) -> str:
@@ -25,23 +29,15 @@ def _display_product_name(name: str) -> str:
     }.get(key, str(name or ""))
 
 
-def _destination_names(workbook_path: Path) -> dict[str, str]:
-    """Read destination display names from the configured Pricing sheet."""
-    wb = load_workbook(workbook_path, read_only=True, data_only=True)
-    try:
-        ws = wb["Pricing"] if "Pricing" in wb.sheetnames else wb[wb.sheetnames[0]]
-        headers = _headers(ws)
-        if "ISO" not in headers or "Country" not in headers:
-            return {}
-        names: dict[str, str] = {}
-        for values in ws.iter_rows(min_row=2, values_only=True):
-            iso = _text(values[headers["ISO"] - 1]).upper()
-            country = _text(values[headers["Country"] - 1])
-            if iso and country:
-                names.setdefault(iso, country)
-        return names
-    finally:
-        wb.close()
+def _destination_names(pricebook: pd.DataFrame) -> dict[str, str]:
+    """Read destination display names from the shared pricing projection."""
+    names: dict[str, str] = {}
+    for row in pricebook.to_dict(orient="records"):
+        iso = _text(row.get("ISO")).upper()
+        country = _text(row.get("Country"))
+        if iso and country:
+            names.setdefault(iso, country)
+    return names
 
 
 def _campaign_state(store: PromoStore, campaign: Campaign) -> tuple[str, str]:
@@ -53,66 +49,55 @@ def _campaign_state(store: PromoStore, campaign: Campaign) -> tuple[str, str]:
     return "Scheduled", "scheduled"
 
 
-def _campaign_prices(workbook_path: Path, campaign: Campaign) -> list[dict]:
+def _campaign_prices(pricebook: pd.DataFrame, campaign: Campaign) -> list[dict]:
     """Snapshot list and promo prices for each affected product, duration and currency."""
-    from .engine import _num
-
-    wb = load_workbook(workbook_path, read_only=True, data_only=True)
-    try:
-        ws = wb["Pricing"] if "Pricing" in wb.sheetnames else wb[wb.sheetnames[0]]
-        headers = _headers(ws)
-        required = {"ISO", "Plan", "Days"}
-        if not required.issubset(headers):
-            return []
-        grouped: dict[tuple[str, str, int, str], set[tuple[float, float]]] = {}
-        destinations = {str(code).upper() for code in campaign.destinations}
-        plans = set(campaign.plans)
-        days = {int(day) for day in campaign.days}
-        for values in ws.iter_rows(min_row=2, values_only=True):
-            iso = _text(values[headers["ISO"] - 1]).upper()
-            plan = _text(values[headers["Plan"] - 1])
-            country = _text(values[headers["Country"] - 1]) if "Country" in headers else ""
-            day_value = _num(values[headers["Days"] - 1])
-            if iso not in destinations or plan not in plans or day_value is None or int(day_value) not in days:
+    required = {"ISO", "Plan", "Days"}
+    if not required.issubset(set(pricebook.columns)):
+        return []
+    grouped: dict[tuple[str, str, str, int, str], set[tuple[float, float]]] = {}
+    destinations = {str(code).upper() for code in campaign.destinations}
+    plans = set(campaign.plans)
+    days = {int(day) for day in campaign.days}
+    for row in pricebook.to_dict(orient="records"):
+        iso = _text(row.get("ISO")).upper()
+        plan = _text(row.get("Plan"))
+        country = _text(row.get("Country"))
+        day_value = _num(row.get("Days"))
+        if iso not in destinations or plan not in plans or day_value is None or int(day_value) not in days:
+            continue
+        day = int(day_value)
+        for currency in ("EUR", "USD"):
+            list_price = _num(row.get(f"Price_{currency}"))
+            if list_price is None:
                 continue
-            day = int(day_value)
-            for currency in ("EUR", "USD"):
-                col = f"Price_{currency}"
-                if col not in headers:
-                    continue
-                list_price = _num(values[headers[col] - 1])
-                if list_price is None:
-                    continue
-                promo_price = round_promo_price(list_price, campaign.promo_type, campaign.promo_value)
-                grouped.setdefault((iso, country, plan, day, currency), set()).add((round(list_price, 2), promo_price))
+            promo_price = round_promo_price(list_price, campaign.promo_type, campaign.promo_value)
+            grouped.setdefault((iso, country, plan, day, currency), set()).add((round(list_price, 2), promo_price))
 
-        result = []
-        for (iso, country, plan, day, currency), prices in sorted(grouped.items()):
-            for list_price, promo_price in sorted(prices):
-                result.append({
-                    "destination": country or iso,
-                    "iso": iso,
-                    "product": _display_product_name(plan),
-                    "days": day,
-                    "currency": currency,
-                    "list_price": list_price,
-                    "promo_price": promo_price,
-                })
-        return result
-    finally:
-        wb.close()
+    result = []
+    for (iso, country, plan, day, currency), prices in sorted(grouped.items()):
+        for list_price, promo_price in sorted(prices):
+            result.append({
+                "destination": country or iso,
+                "iso": iso,
+                "product": _display_product_name(plan),
+                "days": day,
+                "currency": currency,
+                "list_price": list_price,
+                "promo_price": promo_price,
+            })
+    return result
 
 
 def build_calendar_data(
     store: PromoStore,
-    workbook_path: Path | None = None,
+    pricebook: pd.DataFrame | None = None,
     *,
     today: date | None = None,
 ) -> list[dict]:
     """Snapshot active-today and future, non-deleted campaigns with configured prices."""
     today = today or date.today()
-    workbook_path = workbook_path or find_manual_prices(project_root())
-    destination_names = _destination_names(workbook_path)
+    pricebook = pricebook if pricebook is not None else PricingTimeline(store.path).project()
+    destination_names = _destination_names(pricebook)
     result: list[dict] = []
     for campaign in store.list_campaigns():
         status_token = str(campaign.status or "").strip().upper()
@@ -164,7 +149,7 @@ def build_calendar_data(
             "status_key": status_key,
             "notes": campaign.notes or "",
             "active_today": is_applied and (start is None or start <= today) and (end is None or end >= today),
-            "prices": _campaign_prices(workbook_path, campaign),
+            "prices": _campaign_prices(pricebook, campaign),
         })
     result.sort(key=lambda c: (c["start"] or "0000-00-00", c["end"] or "9999-12-31", c["name"].casefold()))
     return result
@@ -173,7 +158,7 @@ def build_calendar_data(
 def generate_promotion_calendar(
     store: PromoStore,
     out_path: Path,
-    workbook_path: Path | None = None,
+    pricebook: pd.DataFrame | None = None,
     *,
     today: date | None = None,
     generated_at: datetime | None = None,
@@ -181,7 +166,7 @@ def generate_promotion_calendar(
 ) -> Path:
     today = today or date.today()
     generated_at = generated_at or datetime.now().astimezone()
-    campaigns = build_calendar_data(store, workbook_path, today=today)
+    campaigns = build_calendar_data(store, pricebook, today=today)
     # JSON is embedded inside a script element, so encode markup characters as
     # JSON Unicode escapes as well as applying DOM escaping when rendered.
     data_json = (

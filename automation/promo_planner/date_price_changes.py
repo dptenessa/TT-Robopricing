@@ -9,6 +9,12 @@ import pandas as pd
 
 from .engine import preview_batch
 from .store import Campaign, PromoStore
+try:
+    from automation.pricing_timeline import PricingTimeline, row_key_for_identity
+except ModuleNotFoundError as exc:
+    if exc.name != "automation":
+        raise
+    from pricing_timeline import PricingTimeline, row_key_for_identity
 
 
 def schedule_path(root: Path) -> Path:
@@ -20,14 +26,11 @@ def issue_choices_path(root: Path) -> Path:
 
 
 def load_schedule(root: Path) -> list[dict]:
-    path = schedule_path(root)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [item for item in data.get("changes", []) if isinstance(item, dict)]
-    except (OSError, ValueError, TypeError):
-        return []
+    db_path = Path(root) / "outputs" / "promo_planner" / "promo_schedule.db"
+    PromoStore(db_path)  # imports the legacy JSON schedule once, if present
+    timeline = PricingTimeline(db_path)
+    timeline.migrate_legacy_date_overrides()
+    return timeline.date_override_records()
 
 
 def active_changes(root: Path, boundary: str, *, exclude_key_date: str | None = None) -> list[dict]:
@@ -66,6 +69,10 @@ def key_dates(
                     dates.add(end.isoformat())
             except ValueError:
                 pass
+    if store:
+        timeline = PricingTimeline(store.path)
+        timeline.migrate_legacy_date_overrides()
+        dates.update(timeline.key_dates(today=(today - timedelta(days=1)).isoformat()))
     return sorted(dates)
 
 
@@ -168,7 +175,7 @@ def project_dataframe(
         exclude_key_date=key_date if exclude_key_date_changes else None,
     )
     preview = preview_batch(
-        workbook,
+        current_df,
         actions,
         key_date,
         cost_floor_choices=cost_choices,
@@ -194,7 +201,48 @@ def project_dataframe(
         for column in passthrough:
             if column in simulated:
                 projected.at[index, column] = simulated[column]
+    promo_overrides: dict[tuple, dict] = {}
+    for change in date_prices:
+        row_key = change.get("row", change)
+        identity = _row_identity(row_key)
+        fields = {
+            column: change[source]
+            for column, source in (
+                ("PromoCode", "promo_code"), ("PromoType", "promo_type"),
+                ("PromoValue", "promo_value"), ("PromoLabel", "promo_label"),
+            )
+            if source in change
+        }
+        if fields:
+            promo_overrides.setdefault(identity, {}).update(fields)
+    for index, row in projected.iterrows():
+        for column, value in promo_overrides.get(_row_identity(row), {}).items():
+            projected.at[index, column] = value
     return projected, preview
+
+
+def remove_key_date_overrides(
+    frame: pd.DataFrame,
+    root: Path,
+    key_date: str,
+    boundary: str,
+) -> pd.DataFrame:
+    """Build the editable comparison base by reversing only this date's layer."""
+    result = frame.copy()
+    timeline = PricingTimeline(Path(root) / "outputs" / "promo_planner" / "promo_schedule.db")
+    records = timeline.date_override_records(boundary=boundary, key_date=key_date)
+    positions = defaultdict(deque)
+    for index, row in result.iterrows():
+        positions[_row_identity(row)].append(index)
+    for change in records:
+        indexes = positions.get(_row_identity(change.get("row", {})))
+        if not indexes:
+            continue
+        index = indexes[0]
+        for field, old_value in change.get("old_values", {}).items():
+            if field in result.columns:
+                result.at[index, field] = old_value
+    return result
 
 
 def save_key_date_changes(
@@ -203,16 +251,15 @@ def save_key_date_changes(
     edited_df: pd.DataFrame,
     baseline_df: pd.DataFrame,
     campaigns: list[Campaign],
+    event_label: str = "",
 ) -> tuple[int, int]:
-    """Persist list-price edits as promo-owned JSON layers, never as current prices."""
+    """Persist price and promo edits as dated SQLite layers, never as snapshots."""
     if edited_df.empty or baseline_df.empty:
         return 0, 0
     campaign_by_id = {int(c.id or 0): c for c in campaigns}
     baseline = {_row_identity(row): row for _, row in baseline_df.iterrows()}
     effective_from = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
-    changed_records = {}
-    unlinked_rows = 0
-    now = pd.Timestamp.now().isoformat(timespec="seconds")
+    groups: dict[tuple, dict] = {}
     for _, row in edited_df.iterrows():
         identity = _row_identity(row)
         original = baseline.get(identity)
@@ -222,65 +269,83 @@ def save_key_date_changes(
             campaign_id = int(float(row.get("_PromoPlannerPromoOwner", 0) or 0))
         except (TypeError, ValueError):
             campaign_id = 0
+        if not campaign_id:
+            try:
+                campaign_id = int(float(original.get("_PromoPlannerPromoOwner", 0) or 0))
+            except (TypeError, ValueError):
+                campaign_id = 0
         campaign = campaign_by_id.get(campaign_id)
         if campaign is None:
-            has_price_change = any(
-                pd.notna(pd.to_numeric(row.get(f"Price_{currency}"), errors="coerce"))
-                and (
-                    pd.isna(pd.to_numeric(original.get(f"Price_{currency}"), errors="coerce"))
-                    or abs(
-                        float(pd.to_numeric(row.get(f"Price_{currency}"), errors="coerce"))
-                        - float(pd.to_numeric(original.get(f"Price_{currency}"), errors="coerce"))
-                    ) > 1e-6
-                )
-                for currency in ("EUR", "USD")
-            )
-            unlinked_rows += int(has_price_change)
+            # Imported books may have a promo code but no planner owner ID.
+            # Recover the matching active campaign so its override expires
+            # with the campaign and reveals the campaign's normal end state.
+            promo_code = str(row.get("PromoCode", "") or original.get("PromoCode", "")).strip()
+            iso = str(row.get("ISO", "")).strip().upper()
+            plan = str(row.get("Plan", "")).strip()
+            try:
+                days = int(float(row.get("Days", 0) or 0))
+            except (TypeError, ValueError):
+                days = 0
+            matches = [
+                candidate for candidate in campaigns
+                if candidate.promo_code == promo_code
+                and candidate.start_date <= effective_from <= candidate.end_date
+                and (not candidate.destinations or iso in {str(x).upper() for x in candidate.destinations})
+                and (not candidate.plans or plan in candidate.plans)
+                and (not candidate.days or days in candidate.days)
+            ]
+            if matches:
+                campaign = max(matches, key=lambda candidate: (candidate.start_date, int(candidate.id or 0)))
+        expiry = (date.fromisoformat(campaign.end_date) + timedelta(days=1)).isoformat() if campaign else ""
+        changes = []
+        for field in ("Price_EUR", "Price_USD", "PromoCode", "PromoType", "PromoValue", "PromoLabel"):
+            new_value = row.get(field, None)
+            old_value = original.get(field, None)
+            if field in {"Price_EUR", "Price_USD", "PromoValue"}:
+                new_value = pd.to_numeric(new_value, errors="coerce")
+                old_value = pd.to_numeric(old_value, errors="coerce")
+                if pd.isna(new_value) and pd.isna(old_value):
+                    continue
+                if pd.notna(new_value) and pd.notna(old_value) and abs(float(new_value) - float(old_value)) < 1e-6:
+                    continue
+                if field.startswith("Price_") and pd.isna(new_value):
+                    continue
+                new_value = round(float(new_value), 2) if pd.notna(new_value) else None
+                old_value = round(float(old_value), 2) if pd.notna(old_value) else None
+            else:
+                new_value = "" if pd.isna(new_value) else str(new_value).strip()
+                old_value = "" if pd.isna(old_value) else str(old_value).strip()
+                if new_value == old_value:
+                    continue
+            changes.append((row_key_for_identity(_identity_json(row)), field, old_value, new_value))
+        if not changes:
             continue
-        prices = {}
-        for currency in ("EUR", "USD"):
-            column = f"Price_{currency}"
-            new_value = pd.to_numeric(row.get(column), errors="coerce")
-            old_value = pd.to_numeric(original.get(column), errors="coerce")
-            if pd.notna(new_value) and (pd.isna(old_value) or abs(float(new_value) - float(old_value)) > 1e-6):
-                prices[f"price_{currency.lower()}"] = round(float(new_value), 2)
-        if not prices:
-            continue
-        end_date = date.fromisoformat(campaign.end_date) + timedelta(days=1)
-        record = {
-            "key_date": key_date,
+        group_key = (int(campaign.id or 0) if campaign else 0, expiry)
+        group = groups.setdefault(group_key, {
             "effective_from": effective_from,
-            "expires_at": end_date.isoformat(),
-            "campaign_id": campaign_id,
-            "campaign_name": campaign.name,
-            "promo_start_date": campaign.start_date,
-            "promo_end_date": campaign.end_date,
-            "row": _identity_json(row),
-            "updated_at": now,
-            **prices,
-        }
-        changed_records[(campaign_id, identity)] = record
-
-    path = schedule_path(root)
-    existing = load_schedule(root)
-    kept = [
-        item for item in existing
-        if not (
-            item.get("key_date") == key_date
-            and (int(item.get("campaign_id") or 0), _row_identity(item.get("row", {}))) not in changed_records
-        )
-    ]
-    replaced = {
-        (int(item.get("campaign_id") or 0), _row_identity(item.get("row", {})))
-        for item in kept if item.get("key_date") == key_date
-    }
-    kept.extend(record for key, record in changed_records.items() if key not in replaced)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".json.tmp")
-    temp.write_text(json.dumps({"version": 1, "changes": kept}, indent=2, ensure_ascii=False), encoding="utf-8")
-    temp.replace(path)
-    return len(changed_records), unlinked_rows
+            "expires_at": expiry,
+            "metadata": {
+                "key_date": key_date,
+                "campaign_id": int(campaign.id or 0) if campaign else 0,
+                "campaign_name": campaign.name if campaign else "",
+                "event_label": event_label.strip(),
+                "promo_start_date": campaign.start_date if campaign else "",
+                "promo_end_date": campaign.end_date if campaign else "",
+            },
+            "label": event_label.strip() or (f"Promo price override: {campaign.name}" if campaign else "Price change"),
+            "fields": [],
+        })
+        group["fields"].extend(changes)
+    store = PromoStore(Path(root) / "outputs" / "promo_planner" / "promo_schedule.db")
+    timeline = PricingTimeline(store.path)
+    timeline.migrate_legacy_date_overrides()
+    changed_fields = timeline.replace_key_date_overrides(key_date, list(groups.values()))
+    return len({field[0] for group in groups.values() for field in group["fields"]}), 0
 
 
 def changes_for_key_date(root: Path, key_date: str) -> list[dict]:
-    return [item for item in load_schedule(root) if item.get("key_date") == key_date]
+    db_path = Path(root) / "outputs" / "promo_planner" / "promo_schedule.db"
+    store = PromoStore(db_path)
+    timeline = PricingTimeline(store.path)
+    timeline.migrate_legacy_date_overrides()
+    return timeline.date_override_records(key_date=key_date)

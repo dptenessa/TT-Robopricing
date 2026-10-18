@@ -89,6 +89,8 @@ class PipelineFiles:
         TTRAVEL_SALES_MASTER_CSV environment variable to override the location
         on another workstation.
         """
+        if (self.base_dir / "outputs" / ".development_workspace").exists():
+            return self.base_dir / "local_data" / "T-Travel_sales_master.csv"
         override = str(os.environ.get("TTRAVEL_SALES_MASTER_CSV", "")).strip()
         if override:
             return Path(override)

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from openpyxl import load_workbook
+import pandas as pd
 
 from .store import Campaign
 
@@ -68,7 +69,8 @@ def _num(v):
     try:
         if v is None or (isinstance(v, str) and v.startswith("=")):
             return None
-        return float(v)
+        value = float(v)
+        return value if math.isfinite(value) else None
     except Exception:
         return None
 
@@ -155,6 +157,50 @@ def read_catalogue(path: Path) -> Catalogue:
         wb.close()
 
 
+def read_catalogue_frame(frame: pd.DataFrame, promos: list[PromoOption] | None = None) -> Catalogue:
+    """Build the planner catalogue from the shared pricing projection."""
+    destinations: dict[str, str] = {}
+    plans: set[str] = set()
+    days: set[int] = set()
+    row_index: dict[tuple[str, str, int], list[int]] = {}
+    for row_number, row in enumerate(frame.to_dict(orient="records"), start=2):
+        code = _text(row.get("ISO")).upper()
+        country = _text(row.get("Country"))
+        plan = _text(row.get("Plan"))
+        day = _num(row.get("Days"))
+        if code:
+            destinations.setdefault(code, country or code)
+        if plan:
+            plans.add(plan)
+        if day is not None and day > 0:
+            day_int = int(day)
+            days.add(day_int)
+            if code and plan:
+                row_index.setdefault((code, plan, day_int), []).append(row_number)
+    if promos is None:
+        found: dict[str, PromoOption] = {}
+        for row in frame.to_dict(orient="records"):
+            code = _text(row.get("PromoCode"))
+            ptype = _text(row.get("PromoType")).lower()
+            value = _num(row.get("PromoValue"))
+            if not code or value is None:
+                continue
+            if ptype in {"percentage", "pct", "%"}:
+                ptype = "percent"
+            if ptype in {"fixed", "amount", "value"}:
+                ptype = "absolute"
+            if ptype in {"percent", "absolute"}:
+                found[code] = PromoOption(
+                    code, ptype, float(value), _text(row.get("PromoLabel")) or code
+                )
+        promos = list(found.values())
+    return Catalogue(
+        sorted(destinations.items(), key=lambda item: (item[1].casefold(), item[0])),
+        sorted(plans), sorted(days), sorted(promos, key=lambda item: (item.label.casefold(), item.code.casefold())),
+        row_index, (0, 0),
+    )
+
+
 def _matches(row, h: dict[str, int], c: Campaign) -> bool:
     iso = _text(row[h["ISO"] - 1]).upper()
     plan = _text(row[h["Plan"] - 1])
@@ -162,16 +208,24 @@ def _matches(row, h: dict[str, int], c: Campaign) -> bool:
     return iso in set(c.destinations) and plan in set(c.plans) and day is not None and int(day) in set(c.days)
 
 
-def preview_campaign(path: Path, c: Campaign, action: str) -> Preview:
+def preview_campaign(path: Path | pd.DataFrame, c: Campaign, action: str) -> Preview:
     action = action.upper()
-    wb = load_workbook(path, read_only=True, data_only=False)
+    is_frame = isinstance(path, pd.DataFrame)
+    wb = None if is_frame else load_workbook(path, read_only=True, data_only=False)
     try:
-        ws = wb[PRICING_SHEET] if PRICING_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
-        h = _headers(ws)
+        if is_frame:
+            frame = path.astype(object).where(pd.notna(path), None).reset_index(drop=True)
+            h = {str(column): index + 1 for index, column in enumerate(frame.columns)}
+            rows = frame.itertuples(index=False, name=None)
+            promo_catalogue = {}
+        else:
+            ws = wb[PRICING_SHEET] if PRICING_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
+            h = _headers(ws)
+            rows = ws.iter_rows(min_row=2, values_only=True)
         for col in ("ISO", "Plan", "Days", "PromoCode"):
             if col not in h: raise ValueError(f"Pricing workbook is missing {col}.")
         matched = changed = below = 0; collisions=[]; examples=[]
-        for values in ws.iter_rows(min_row=2, values_only=True):
+        for values in rows:
             if not _matches(values, h, c): continue
             matched += 1
             current = _text(values[h["PromoCode"] - 1])
@@ -191,7 +245,8 @@ def preview_campaign(path: Path, c: Campaign, action: str) -> Preview:
             if len(examples) < 8: examples.append(f"{iso} · {plan} · {day}d · current promo: {current or 'none'}")
         return Preview(action, matched, changed, below, collisions[:100], examples)
     finally:
-        wb.close()
+        if wb is not None:
+            wb.close()
 
 
 def _ensure_promo_name_column(ws, h: dict[str,int]) -> dict[str,int]:
@@ -423,7 +478,7 @@ def _infer_campaign_owner(campaigns, code: str, row, header: dict[str, int], whe
 
 
 def preview_batch(
-    path: Path,
+    path: Path | pd.DataFrame,
     actions: list[tuple[Campaign, str]],
     execution_date: str = "",
     *,
@@ -441,25 +496,30 @@ def preview_batch(
     pricing row are represented as one final before/after price change.
     """
     ordered = _ordered_actions(actions)
-    stat = Path(path).stat()
-    use_row_index = (
-        row_index is not None
-        and row_index_signature == (stat.st_mtime_ns, stat.st_size)
-    )
-    # Preview uses streaming mode even with an index. Editable mode is needed for
-    # apply, but can be much slower to open large price books just to inspect rows.
-    wb = load_workbook(path, read_only=True, data_only=False)
+    is_frame = isinstance(path, pd.DataFrame)
+    workbook_path = None if is_frame else Path(path)
+    wb = None
+    if is_frame:
+        frame = path.astype(object).where(pd.notna(path), None).reset_index(drop=True)
+        h = {str(column): index + 1 for index, column in enumerate(frame.columns)}
+        rows = list(frame.itertuples(index=False, name=None))
+        promo_catalogue = {}
+    else:
+        # Workbook preview remains supported for legacy callers. The shared
+        # timeline path supplies a DataFrame and avoids repeated XLSX reads.
+        wb = load_workbook(workbook_path, read_only=True, data_only=False)
     try:
-        ws = wb[PRICING_SHEET] if PRICING_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
-        h = _headers(ws)
+        if wb is not None:
+            ws = wb[PRICING_SHEET] if PRICING_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
+            h = _headers(ws)
+            rows = list(ws.iter_rows(min_row=2, values_only=True))
+            promo_catalogue = {p.code: p for p in _read_promos(wb)}
         for col in ("ISO", "Plan", "Days", "PromoCode"):
             if col not in h:
                 raise ValueError(f"Pricing workbook is missing {col}.")
 
         # Every key date revalidates below-floor approvals across the complete
         # current pricebook, including promos that remain active or resume.
-        rows = list(ws.iter_rows(min_row=2, values_only=True))
-        promo_catalogue = {p.code: p for p in _read_promos(wb)}
         normalized_floor_choices = {
             (int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper()): str(choice).lower()
             for (cid, iso, plan, days, currency), choice in (cost_floor_choices or {}).items()
@@ -664,8 +724,8 @@ def preview_batch(
                     raise ValueError(f"Unsupported batch action: {action}")
             items.append(BatchPreviewItem(int(c.id or 0), c.name, action, matched, changed, below, collisions[:100]))
 
-        # Saved editor changes are temporary list-price overrides attached to
-        # the promo layer active on this midnight boundary.
+        # Saved editor changes are dated list-price overrides. They may belong
+        # to an active promo (and expire with it) or be independent price edits.
         for values, state in zip(rows, states):
             iso = _text(row_value(values, "ISO")).upper()
             plan = _text(row_value(values, "Plan"))
@@ -804,7 +864,8 @@ def preview_batch(
 
         return BatchPreview(execution_date, items, floor_issues, collision_issues, changes, projected_rows)
     finally:
-        wb.close()
+        if wb is not None:
+            wb.close()
 
 
 def execute_batch(
@@ -1122,14 +1183,15 @@ def execute_batch(
                 for currency in ("EUR", "USD"):
                     scheduled = normalized_date_prices.get((owner, iso, plan, day, unit, currency))
                     price_col = f"Price_{currency}"
-                    if scheduled is None or price_col not in h or not code:
+                    if scheduled is None or price_col not in h:
                         continue
-                    original_col = ORIGINAL_PRICE_EUR_COLUMN if currency == "EUR" else ORIGINAL_PRICE_USD_COLUMN
-                    original_cell = ws.cell(r, h[original_col])
-                    current_price = _num(ws.cell(r, h[price_col]).value)
-                    if _num(original_cell.value) is None and current_price is not None:
-                        original_cell.value = current_price
-                    ws.cell(r, h[PRICE_OWNER_COLUMN]).value = code
+                    if code:
+                        original_col = ORIGINAL_PRICE_EUR_COLUMN if currency == "EUR" else ORIGINAL_PRICE_USD_COLUMN
+                        original_cell = ws.cell(r, h[original_col])
+                        current_price = _num(ws.cell(r, h[price_col]).value)
+                        if _num(original_cell.value) is None and current_price is not None:
+                            original_cell.value = current_price
+                        ws.cell(r, h[PRICE_OWNER_COLUMN]).value = code
                     ws.cell(r, h[price_col]).value = scheduled
                     adjusted_cells += 1
         if "AllowBelowCost" in h:
