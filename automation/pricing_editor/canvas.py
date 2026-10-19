@@ -57,6 +57,7 @@ class PriceCurveCanvas(QWidget):
         self.pan_start = None
         self.pan_origin = None
         self.is_dragging = False
+        self.editing_allowed = False
         self.show_promo_markers = False
         self.show_prices = True
         self.setFocusPolicy(Qt.StrongFocus)
@@ -113,7 +114,7 @@ class PriceCurveCanvas(QWidget):
 
         # --- Protected price dragging: SHIFT must remain pressed ---
         if self.drag_index is not None and 0 <= self.drag_index < len(self.points):
-            if not (event.modifiers() & Qt.ShiftModifier):
+            if not self.editing_allowed or not (event.modifiers() & Qt.ShiftModifier):
                 self.drag_index = None
                 self.is_dragging = False
                 self.setCursor(Qt.ArrowCursor)
@@ -796,14 +797,14 @@ class PriceCurveCanvas(QWidget):
                 self.selected_row_id = row_id
 
                 # Selection is always safe. Price editing only starts while SHIFT is held.
-                if event.modifiers() & Qt.ShiftModifier:
+                if event.modifiers() & Qt.ShiftModifier and self.editing_allowed:
                     self.drag_index = idx
                     self.is_dragging = True
                     self.statusChanged.emit("Protected edit active: keep SHIFT pressed while dragging.")
                 else:
                     self.drag_index = None
                     self.is_dragging = False
-                    self.statusChanged.emit("Point selected. Hold SHIFT + drag to edit with the selected curve tool.")
+                    self.statusChanged.emit("Point selected. Hold SHIFT + drag to edit." if self.editing_allowed else "Read only: choose an editing date in Timeline first.")
 
                 self.pointSelected.emit(row_id)
                 self.update()

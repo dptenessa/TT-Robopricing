@@ -7,6 +7,7 @@ only changed editable fields; XLSX/CSV files remain compatible exports.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from contextlib import nullcontext
 import hashlib
 import json
 import math
@@ -30,6 +31,7 @@ EDITABLE_FIELDS = (
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
 )
 
 LAYER_PRIORITIES = {"base": 10, "campaign": 20, "override": 30, "import": 10}
@@ -360,7 +362,9 @@ class PricingTimeline:
         *,
         layers: Iterable[str] | None = None,
         exclude_key_date: str | None = None,
+        include_drafts: bool | None = None,
     ) -> pd.DataFrame:
+        include_drafts = (as_of is not None) if include_drafts is None else include_drafts
         as_of = as_of.isoformat() if isinstance(as_of, date) else str(as_of or self.current_as_of())
         allowed_layers = set(layers) if layers is not None else None
         with self._connect() as con:
@@ -381,6 +385,16 @@ class PricingTimeline:
                 ]
             if allowed_layers is not None:
                 sets = [row for row in sets if row["layer"] in allowed_layers]
+            if not include_drafts:
+                price_events = {
+                    (m["metadata"].get("key_date"), m["metadata"].get("event_label"))
+                    for m in self.event_markers() if m["source"] == "price_date"
+                }
+                sets = [row for row in sets if not (
+                    ((metadata := json.loads(row["metadata_json"] or "{}")).get("is_base_price_change")
+                     or (metadata.get("event_label") and (metadata.get("key_date"), metadata.get("event_label")) in price_events))
+                    and not metadata.get("official")
+                )]
             rows = {row["row_key"]: json.loads(row["row_json"]) for row in baseline}
             order = [row["row_key"] for row in baseline]
             for change_set in sets:
@@ -535,36 +549,44 @@ class PricingTimeline:
 
     def date_override_records(self, boundary: str | None = None, *, key_date: str | None = None, exclude_key_date: str | None = None) -> list[dict[str, Any]]:
         self.migrate_legacy_date_overrides()
+        price_events = {
+            (m["metadata"].get("key_date"), m["metadata"].get("event_label"))
+            for m in self.event_markers() if m["source"] == "price_date"
+        }
         with self._connect() as con:
             if boundary is None:
                 sets = con.execute(
-                    """SELECT * FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date')
+                    """SELECT * FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date','official_base')
                     AND undone_at='' ORDER BY effective_from,priority,id"""
                 ).fetchall()
             else:
                 sets = con.execute(
-                    """SELECT * FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date')
-                    AND undone_at='' AND effective_from<=? AND (expires_at='' OR expires_at>?)
+                    """SELECT * FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date','official_base')
+                    AND undone_at='' AND effective_from<=?
                     ORDER BY effective_from,priority,id""",
-                    (boundary, boundary),
+                    (boundary,),
                 ).fetchall()
-            baseline = {r["row_key"]: r["identity_json"] for r in con.execute(
-                "SELECT row_key,identity_json FROM pricing_baseline_rows"
-            ).fetchall()}
             grouped: dict[tuple[int, str], dict[str, Any]] = {}
             for change_set in sets:
                 metadata = json.loads(change_set["metadata_json"] or "{}")
                 event_date = str(metadata.get("key_date", ""))
+                is_base = bool(metadata.get("is_base_price_change") or (
+                    metadata.get("event_label") and (event_date, metadata.get("event_label")) in price_events
+                ))
+                if boundary and change_set["expires_at"] and change_set["expires_at"] <= boundary and not is_base:
+                    continue
                 if key_date is not None and event_date != key_date:
                     continue
                 if exclude_key_date and event_date == exclude_key_date:
                     continue
                 changes = con.execute(
-                    "SELECT row_key,field,new_value_json FROM pricing_changes WHERE change_set_id=? ORDER BY id",
+                    """SELECT c.row_key,c.field,c.old_value_json,c.new_value_json,b.identity_json
+                    FROM pricing_changes c JOIN pricing_baseline_rows b ON b.row_key=c.row_key
+                    WHERE c.change_set_id=? ORDER BY c.id""",
                     (change_set["id"],),
                 ).fetchall()
                 for change in changes:
-                    identity = json.loads(baseline.get(change["row_key"], "[]"))
+                    identity = json.loads(change["identity_json"])
                     if len(identity) != 6:
                         continue
                     row = {
@@ -575,9 +597,11 @@ class PricingTimeline:
                     item_key = (int(change_set["id"]), change["row_key"])
                     item = grouped.setdefault(item_key, {
                         "key_date": event_date, "effective_from": change_set["effective_from"],
-                        "expires_at": change_set["expires_at"],
-                        "campaign_id": int(metadata.get("campaign_id") or 0),
+                        "expires_at": "" if is_base else change_set["expires_at"],
+                        "campaign_id": 0 if is_base else int(metadata.get("campaign_id") or 0),
                         "campaign_name": str(metadata.get("campaign_name", "")),
+                        "is_base_price_change": is_base,
+                        "official": bool(metadata.get("official")),
                         "promo_start_date": str(metadata.get("promo_start_date", "")),
                         "promo_end_date": str(metadata.get("promo_end_date", "")),
                         "row": row,
@@ -599,16 +623,188 @@ class PricingTimeline:
         return result
 
     def schedule_price_change_date(self, key_date: str, label: str) -> None:
+        if self.is_price_date_official(key_date):
+            raise ValueError("This price date is already official. Add another date to change prices.")
+        self._schedule_event_date(key_date, label, "price_date", "price_change_date")
+
+    def schedule_promotion_date(self, key_date: str, label: str = "New promotion") -> None:
+        self._schedule_event_date(key_date, label, "promotion_date", "promotion_start_date")
+
+    def move_price_change_date(self, key_date: str, effective_date: str, *, today: date | None = None) -> str:
+        """Move a future price event with its price edits, retaining audit history."""
+        today = today or date.today()
+        effective = date.fromisoformat(effective_date)
+        old_effective = date.fromisoformat(key_date) + timedelta(days=1)
+        markers = [m for m in self.event_markers(key_date) if m["source"] == "price_date"]
+        if not markers:
+            raise ValueError("Select a price-change event to move.")
+        if effective < today or old_effective < today or (markers[0]["metadata"].get("official") and old_effective <= today):
+            raise ValueError("Only a future price event can be moved. Add a new change for an effective official date.")
+        new_key = (effective - timedelta(days=1)).isoformat()
+        if new_key == key_date:
+            return new_key
+        if any(m["source"] == "price_date" for m in self.event_markers(new_key)):
+            raise ValueError("A price change already exists on that date. Choose another date to avoid replacing it.")
+        reference = self.project(effective_date, layers=("base", "import", "override"), exclude_key_date=key_date)
+        reference_rows = {key: row for key, _identity, row in _row_records(reference)}
+        marker = markers[0]
+        old_label = marker["metadata"].get("event_label", marker["label"])
+        label = f"Price update {effective:%d %b %Y}" if old_label == f"Price update {old_effective:%d %b %Y}" else old_label
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            rows = con.execute("SELECT * FROM pricing_change_sets WHERE source IN ('price_date','editor_date','legacy_key_date','official_base') AND undone_at='' ORDER BY id").fetchall()
+            for row in rows:
+                metadata = json.loads(row["metadata_json"] or "{}")
+                if metadata.get("key_date") != key_date:
+                    continue
+                if row["source"] != "price_date" and not (metadata.get("is_base_price_change") or metadata.get("event_label") == old_label):
+                    continue
+                was_official = bool(metadata.get("official"))
+                metadata.update(key_date=new_key, event_label=label, moved_from=old_effective.isoformat(),
+                                is_base_price_change=row["source"] != "price_date", official=False)
+                if was_official:
+                    metadata["previous_partner_pack"] = metadata.pop("partner_pack", "")
+                    metadata.pop("official_at", None)
+                source = "price_date" if row["source"] == "price_date" else "editor_date"
+                layer = "base" if source == "price_date" else "override"
+                cur = con.execute("INSERT INTO pricing_change_sets(effective_from,expires_at,layer,priority,source,label,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)",
+                                  (effective.isoformat(), "", layer, LAYER_PRIORITIES[layer], source, label, stamp, json.dumps(metadata)))
+                changes = con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD')", (row["id"],)).fetchall()
+                con.executemany("INSERT INTO pricing_changes(change_set_id,row_key,field,old_value_json,new_value_json) VALUES(?,?,?,?,?)", [
+                    (cur.lastrowid, c["row_key"], c["field"], json.dumps(_json_value(reference_rows.get(c["row_key"], {}).get(c["field"], json.loads(c["old_value_json"])))), c["new_value_json"])
+                    for c in changes
+                ])
+                con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (stamp, row["id"]))
+            con.commit()
+        return new_key
+
+    def move_promotion_date(self, key_date: str, effective_date: str, *, today: date | None = None) -> str:
+        today = today or date.today()
+        effective = date.fromisoformat(effective_date)
+        if effective < today or date.fromisoformat(key_date) + timedelta(days=1) < today:
+            raise ValueError("Choose a current or future date for the unfinished promotion.")
+        new_key = (effective - timedelta(days=1)).isoformat()
+        if new_key == key_date:
+            return new_key
+        markers = [m for m in self.event_markers(key_date) if m["source"] == "promotion_date"]
+        if not markers:
+            raise ValueError("No unfinished promotion is selected.")
+        if any(m["source"] == "promotion_date" for m in self.event_markers(new_key)):
+            raise ValueError("Another unfinished promotion already uses that date.")
+        marker = markers[0]
+        metadata = dict(marker["metadata"], key_date=new_key, moved_from=marker["effective_from"])
+        with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            stamp = datetime.now().isoformat(timespec="seconds")
+            con.execute("INSERT INTO pricing_change_sets(effective_from,expires_at,layer,priority,source,label,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)",
+                        (effective.isoformat(), "", "base", LAYER_PRIORITIES["base"], "promotion_date", marker["label"], stamp, json.dumps(metadata)))
+            con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (stamp, marker["id"]))
+            con.commit()
+        return new_key
+
+    def event_markers(self, key_date: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT * FROM pricing_change_sets WHERE source IN ('price_date','promotion_date') AND undone_at='' ORDER BY id"
+            ).fetchall()
+        markers = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item["metadata_json"] or "{}")
+            if key_date is None or item["metadata"].get("key_date") == key_date:
+                markers.append(item)
+        return markers
+
+    def is_price_date_official(self, key_date: str) -> bool:
+        return any(m["source"] == "price_date" and m["metadata"].get("official") for m in self.event_markers(key_date))
+
+    def discard_promotion_date(self, key_date: str) -> None:
+        with self._connect() as con:
+            for row in con.execute("SELECT id,metadata_json FROM pricing_change_sets WHERE source='promotion_date' AND undone_at='' ").fetchall():
+                if json.loads(row["metadata_json"] or "{}").get("key_date") == key_date:
+                    con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), row["id"]))
+
+    def cancel_price_change_date(self, key_date: str, *, today: date | None = None) -> None:
+        today = today or date.today()
+        effective = date.fromisoformat(key_date) + timedelta(days=1)
+        if effective < today or (self.is_price_date_official(key_date) and effective <= today):
+            raise ValueError("An effective official price change is kept in history. Add a new dated change instead.")
+        with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            rows = con.execute("SELECT id,source,metadata_json FROM pricing_change_sets WHERE source IN ('price_date','editor_date','official_base') AND undone_at='' ").fetchall()
+            markers = [r for r in rows if r["source"] == "price_date" and json.loads(r["metadata_json"] or "{}").get("key_date") == key_date]
+            if not markers:
+                raise ValueError("No price-change event is selected.")
+            label = json.loads(markers[0]["metadata_json"] or "{}").get("event_label", "")
+            for row in rows:
+                metadata = json.loads(row["metadata_json"] or "{}")
+                if metadata.get("key_date") != key_date:
+                    continue
+                belongs = row["source"] in {"price_date", "official_base"} or metadata.get("is_base_price_change") or (label and metadata.get("event_label") == label)
+                if belongs:
+                    con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), row["id"]))
+            con.commit()
+
+    def mark_price_date_official(self, key_date: str, *, partner_pack: str = "", _connection=None) -> int:
+        """Commit only this event's list-price changes as a permanent dated base layer."""
+        markers = [m for m in self.event_markers(key_date) if m["source"] == "price_date"]
+        if not markers:
+            return 0  # A campaign-only export never bakes its discount into base prices.
+        if self.is_price_date_official(key_date):
+            return 0
+        with (self._connect() if _connection is None else nullcontext(_connection)) as con:
+            if _connection is None:
+                con.execute("BEGIN IMMEDIATE")
+            drafts = con.execute("SELECT id,metadata_json FROM pricing_change_sets WHERE source='editor_date' AND undone_at='' ORDER BY effective_from,priority,id").fetchall()
+            fields = {}
+            selected = []
+            for draft in drafts:
+                metadata = json.loads(draft["metadata_json"] or "{}")
+                if metadata.get("key_date") != key_date:
+                    continue
+                if not metadata.get("is_base_price_change") and metadata.get("event_label") != markers[0]["metadata"].get("event_label"):
+                    continue
+                selected.append(draft["id"])
+                for field in con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD')", (draft["id"],)):
+                    fields[(field["row_key"],field["field"])] = tuple(field)
+            marker = markers[0]
+            metadata = dict(marker["metadata"], official=True, official_at=datetime.now().isoformat(timespec="seconds"), partner_pack=partner_pack, is_base_price_change=True)
+            if fields:
+                cur = con.execute("INSERT INTO pricing_change_sets(effective_from,expires_at,layer,priority,source,label,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)", (marker["effective_from"], "", "base", LAYER_PRIORITIES["base"], "official_base", marker["label"], datetime.now().isoformat(timespec="seconds"), json.dumps(metadata)))
+                con.executemany("INSERT INTO pricing_changes(change_set_id,row_key,field,old_value_json,new_value_json) VALUES(?,?,?,?,?)", [(cur.lastrowid,*field) for field in fields.values()])
+            for draft_id in selected:
+                con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), draft_id))
+            con.execute("UPDATE pricing_change_sets SET metadata_json=? WHERE id=?", (json.dumps(metadata), marker["id"]))
+            if _connection is None:
+                con.commit()
+        return len(fields)
+
+    def mark_price_changes_official_through(self, key_date: str, *, partner_pack: str = "") -> int:
+        """Publish all base-price events included in this date's exported snapshot."""
+        keys = sorted({
+            marker["metadata"]["key_date"] for marker in self.event_markers()
+            if marker["source"] == "price_date"
+            and marker["metadata"].get("key_date", "") <= key_date
+            and not marker["metadata"].get("official")
+        })
+        with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            count = sum(self.mark_price_date_official(key, partner_pack=partner_pack, _connection=con) for key in keys)
+            con.commit()
+        return count
+
+    def _schedule_event_date(self, key_date: str, label: str, source: str, event_type: str) -> None:
         key = date.fromisoformat(str(key_date)).isoformat()
         name = " ".join(str(label).strip().split())
         if not name:
             raise ValueError("A name is required for the planned price change.")
         effective = (date.fromisoformat(key) + timedelta(days=1)).isoformat()
-        metadata = {"key_date": key, "event_type": "price_change_date", "event_label": name}
+        metadata = {"key_date": key, "event_type": event_type, "event_label": name}
         with self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
             existing = con.execute(
-                "SELECT id,metadata_json FROM pricing_change_sets WHERE source='price_date' AND undone_at=''"
+                "SELECT id,metadata_json FROM pricing_change_sets WHERE source=? AND undone_at=''", (source,)
             ).fetchall()
             marker_id = None
             for row in existing:
@@ -628,7 +824,7 @@ class PricingTimeline:
                     """INSERT INTO pricing_change_sets
                     (effective_from,expires_at,layer,priority,source,label,created_at,metadata_json)
                     VALUES(?,?,?,?,?,?,?,?)""",
-                    (effective, "", "base", LAYER_PRIORITIES["base"], "price_date", name,
+                    (effective, "", "base", LAYER_PRIORITIES["base"], source, name,
                      datetime.now().isoformat(timespec="seconds"), json.dumps(metadata, ensure_ascii=False)),
                 )
             con.commit()
@@ -637,7 +833,7 @@ class PricingTimeline:
         with self._connect() as con:
             rows = con.execute(
                 "SELECT source,label,metadata_json FROM pricing_change_sets "
-                "WHERE source IN ('price_date','editor_date','legacy_key_date') AND undone_at='' "
+                "WHERE source IN ('price_date','promotion_date','editor_date','legacy_key_date','official_base') AND undone_at='' "
                 "ORDER BY effective_from,id"
             ).fetchall()
         labels: dict[str, list[str]] = {}
@@ -649,7 +845,9 @@ class PricingTimeline:
             key = str(metadata.get("key_date", ""))
             if not key:
                 continue
-            if row["source"] == "price_date":
+            if row["source"] == "promotion_date":
+                text = f"PROMOTION: {metadata.get('event_label') or row['label']}"
+            elif row["source"] == "price_date":
                 text = f"PRICE CHANGE: {metadata.get('event_label') or row['label'] or 'Planned price change'}"
             elif metadata.get("event_label"):
                 text = f"PRICE CHANGE: {metadata['event_label']}"
@@ -665,7 +863,7 @@ class PricingTimeline:
         self.migrate_legacy_date_overrides()
         with self._connect() as con:
             sets = con.execute(
-                "SELECT metadata_json FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date','price_date') AND undone_at=''"
+                "SELECT metadata_json FROM pricing_change_sets WHERE source IN ('editor_date','legacy_key_date','price_date','promotion_date','official_base') AND undone_at=''"
             ).fetchall()
         dates = set()
         for row in sets:

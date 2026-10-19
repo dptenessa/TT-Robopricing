@@ -52,6 +52,7 @@ PRICING_COLUMNS = [
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
 ]
 
 HIDDEN_COLUMNS = {
@@ -71,6 +72,7 @@ HIDDEN_COLUMNS = {
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
 }
 
 INPUT_COLUMNS = {"Price_EUR", "Price_USD", "PromoCode", "AllowBelowCost"}
@@ -164,6 +166,8 @@ def _promo_net_price(price: Any, promo_type: str, promo_value: Any) -> float | N
         raw = base * (1.0 - value / 100.0)
     elif ptype == "absolute":
         raw = base - value
+    elif ptype == "net":
+        raw = value
     else:
         return round(base * 20.0) / 20.0
     # Match EditorState.round_promo_price(): floor to 0.05.
@@ -244,8 +248,8 @@ def normalize_pricing_dataframe(
         promo_types.append(ptype)
         promo_values.append(pvalue)
         promo_labels.append(plabel)
-        final_eur.append(_promo_net_price(row.get("Price_EUR"), ptype, pvalue))
-        final_usd.append(_promo_net_price(row.get("Price_USD"), ptype, pvalue))
+        final_eur.append(_promo_net_price(row.get("Price_EUR"), ptype, row.get("PromoNet_EUR") if ptype == "net" else pvalue))
+        final_usd.append(_promo_net_price(row.get("Price_USD"), ptype, row.get("PromoNet_USD") if ptype == "net" else pvalue))
 
     out["PromoType"] = promo_types
     out["PromoValue"] = promo_values
@@ -398,7 +402,9 @@ def write_pricing_workbook(
             col = column_index[name]
             cell = ws.cell(row=excel_row, column=col)
 
-            if name == "PromoType":
+            if row.get("PromoCode") == "PA" and name in {"PromoType", "PromoValue", "PromoLabel"}:
+                cell.value = row.get(name)
+            elif name == "PromoType":
                 cell.value = f'=IF({refs["PromoCode"]}="","",IFERROR(VLOOKUP({refs["PromoCode"]},Promos!$A$2:$D$100,2,FALSE),""))'
             elif name == "PromoValue":
                 cell.value = f'=IF({refs["PromoCode"]}="","",IFERROR(VLOOKUP({refs["PromoCode"]},Promos!$A$2:$D$100,3,FALSE),""))'
@@ -411,9 +417,10 @@ def write_pricing_workbook(
                 price_ref = refs[f"Price_{currency}"]
                 cell.value = (
                     f'=IF({refs["PromoCode"]}="",{price_ref},'
+                    f'IF({refs["PromoType"]}="net",{refs[f"PromoNet_{currency}"]},'
                     f'ROUNDDOWN(MAX(0,IF({refs["PromoType"]}="percent",'
                     f'{price_ref}*(1-{refs["PromoValue"]}/100),'
-                    f'{price_ref}-{refs["PromoValue"]}))*20,0)/20)'
+                    f'{price_ref}-{refs["PromoValue"]}))*20,0)/20))'
                 )
             elif name == "EUR_IsBelowCostFloor":
                 cell.value = f'=AND(ISNUMBER({refs["FinalPriceAfterPromo_EUR"]}),ISNUMBER({refs["CostFloor_EUR"]}),{refs["FinalPriceAfterPromo_EUR"]}<{refs["CostFloor_EUR"]}-0.000000001)'

@@ -80,6 +80,8 @@ def round_promo_price(base: float, ptype: str, value: float) -> float:
         raw = base * (1.0 - value / 100.0)
     elif ptype == "absolute":
         raw = base - value
+    elif ptype == "net":
+        raw = value
     else:
         raw = base
     return math.floor(max(raw, 0.0) * 20.0 + 1e-12) / 20.0
@@ -341,6 +343,7 @@ class CostFloorIssue:
     cost_floor: float
     target_net_price: float
     required_list_price: float
+    is_adjustment: bool = False
 
 
 @dataclass
@@ -472,9 +475,84 @@ def _infer_campaign_owner(campaigns, code: str, row, header: dict[str, int], whe
     for campaign in campaigns:
         if campaign.promo_code != code or not _matches(row, header, campaign):
             continue
-        if campaign.start_date and campaign.start_date <= when and campaign.end_date >= when:
+        if (not campaign.start_date or campaign.start_date <= when) and campaign.end_date >= when:
             candidates.append(campaign)
     return max(candidates, key=lambda c: (c.start_date, int(c.id or 0))) if candidates else None
+
+
+def _state_net(state, currency):
+    base = state["list_eur" if currency == "EUR" else "list_usd"]
+    if base is None:
+        return None
+    if not state.get("promo_code"):
+        return round(float(base), 2)
+    value = state.get(f"net_{currency.lower()}") if state.get("promo_type") == "net" else state.get("promo_value", 0)
+    return round_promo_price(base, state.get("promo_type", ""), value if value is not None else base)
+
+
+def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor_choices, floor_issues):
+    """Overlay PA after regular offers and floor decisions; never alter a base price."""
+    enabled = {str(int(c.id or 0)): c for c in campaigns
+               if c.monotonic_destinations and c.end_date >= boundary
+               and (not c.start_date or c.start_date <= boundary)}
+    if not enabled:
+        return
+    groups = {}
+    for index, row in enumerate(rows):
+        key = (_text(value(row, "ISO")).upper(), _text(value(row, "Plan")))
+        groups.setdefault(key, {}).setdefault(int(_num(value(row, "Days")) or 0), []).append(index)
+    for (iso, plan), durations in groups.items():
+        if not any(iso in c.monotonic_destinations and plan in c.plans for c in enabled.values()):
+            continue
+        caps = {}
+        for days in sorted(durations, reverse=True):
+            next_caps = dict(caps)
+            for index in durations[days]:
+                state, row = states[index], rows[index]
+                anchor = enabled.get(str(state.get("promo_owner", "")))
+                if anchor and (iso not in anchor.monotonic_destinations or days not in anchor.days or plan not in anchor.plans):
+                    anchor = None
+                nets = {currency: _state_net(state, currency) for currency in ("EUR", "USD")}
+                targets = dict(nets)
+                owners = {}
+                for currency, current in nets.items():
+                    if current is None:
+                        continue
+                    cap = caps.get(currency)
+                    if cap and current > cap[0] + 1e-9:
+                        targets[currency], owners[currency] = cap
+                    candidate_owner = owners.get(currency) or anchor or (cap[1] if cap else None)
+                    if candidate_owner and (cap or anchor):
+                        candidate = (targets[currency], candidate_owner)
+                        if currency not in next_caps or candidate[0] < next_caps[currency][0] - 1e-9:
+                            next_caps[currency] = candidate
+                if not owners:
+                    continue
+                # A separate underlying snapshot avoids confusing a synthetic PA
+                # with the real campaign stack and supports independent currencies.
+                state["pa_underlying"] = json.dumps({k: v for k, v in state.items() if k != "events"}, ensure_ascii=False)
+                owner = next(iter(owners.values()))
+                state.update(promo_code="PA", promo_type="net", promo_value=targets.get("EUR") or 0.,
+                             promo_label="Promo adjustment", promo_owner=str(int(owner.id or 0)),
+                             net_eur=targets["EUR"], net_usd=targets["USD"], pa_unresolved=False)
+                state["events"].append(f"PA · {owner.name}")
+                # Approvals belong to the source campaign and shorter duration.
+                # Raising a PA row alone would break the promised monotonicity.
+                below = False
+                for currency, target in targets.items():
+                    floor = _num(value(row, f"CostFloor_{currency}"))
+                    if target is None or floor is None or target >= floor - 1e-9:
+                        continue
+                    below = True
+                    source = owners.get(currency, owner)
+                    choice = floor_choices.get((int(source.id or 0), iso, plan, days, currency))
+                    floor_issues.append(CostFloorIssue(int(source.id or 0), source.name, iso, plan, days, currency,
+                                                     state["list_eur" if currency == "EUR" else "list_usd"],
+                                                     target, floor, floor, state["list_eur" if currency == "EUR" else "list_usd"], True))
+                    if choice != "override":
+                        state["pa_unresolved"] = True
+                state["allow_below_cost"] = below and not state["pa_unresolved"]
+            caps = next_caps
 
 
 def preview_batch(
@@ -496,6 +574,8 @@ def preview_batch(
     pricing row are represented as one final before/after price change.
     """
     ordered = _ordered_actions(actions)
+    if campaigns is None:
+        campaigns = list({int(c.id or 0): c for c, _ in ordered}.values())
     is_frame = isinstance(path, pd.DataFrame)
     workbook_path = None if is_frame else Path(path)
     wb = None
@@ -529,6 +609,7 @@ def preview_batch(
             for (cid, iso, plan, days), choice in (conflict_choices or {}).items()
         }
         normalized_date_prices = {}
+        start_price_keys = set()
         for change in date_price_changes or []:
             row_key = change.get("row", change)
             try:
@@ -543,6 +624,8 @@ def preview_batch(
                 value = _num(change.get(f"price_{currency.lower()}"))
                 if value is not None:
                     normalized_date_prices[(campaign_id, iso, plan, days, unit, currency)] = float(value)
+                    if change.get("apply_on_start"):
+                        start_price_keys.add((campaign_id, iso, plan, days, unit, currency))
         collision_issues: list[PromoCollisionIssue] = []
 
         def floor_choice(campaign_id, iso, plan, days, currency):
@@ -587,10 +670,44 @@ def preview_batch(
                 "promo_owner": _text(row_value(values, PROMO_OWNER_COLUMN)),
                 "promo_stack": _promo_stack(row_value(values, PROMO_STACK_COLUMN)),
                 "allow_below_cost": str(row_value(values, "AllowBelowCost") or "").strip().lower() in {"true", "1", "yes"},
+                "net_eur": _num(row_value(values, "PromoNet_EUR")),
+                "net_usd": _num(row_value(values, "PromoNet_USD")),
+                "pa_underlying": _text(row_value(values, "_PromoPlannerPAUnderlying")),
+                "pa_unresolved": str(row_value(values, "_PromoPlannerPAUnresolved") or "").lower() in {"true", "1"},
                 "events": [],
             })
 
         original = [dict(x) for x in states]
+        for state in states:
+            if state["pa_underlying"]:
+                try:
+                    underlying = json.loads(state["pa_underlying"])
+                except (TypeError, ValueError):
+                    raise ValueError("A PA row has invalid restoration data; restore it from a pricing snapshot.")
+                state.update(underlying)
+                state.update(pa_underlying="", pa_unresolved=False)
+                state["events"] = ["REMOVE PA"]
+        # Permanent list-price updates also replace the base hidden underneath
+        # active/suspended promotions. Ending a promotion must reveal this new
+        # base, rather than restoring the price from before the update.
+        for values, state in zip(rows, states):
+            iso = _text(row_value(values, "ISO")).upper()
+            plan = _text(row_value(values, "Plan"))
+            day = int(_num(row_value(values, "Days")) or 0)
+            unit = _text(row_value(values, "PricingUnitIdUsed"))
+            for currency in ("EUR", "USD"):
+                base = normalized_date_prices.get((0, iso, plan, day, unit, currency))
+                if base is None:
+                    continue
+                list_key = "list_eur" if currency == "EUR" else "list_usd"
+                original_key = "original_list_eur" if currency == "EUR" else "original_list_usd"
+                state[list_key] = base
+                if state.get(original_key) is not None:
+                    state[original_key] = base
+                for suspended in state["promo_stack"]:
+                    suspended[list_key] = base
+                    if suspended.get(original_key) is not None:
+                        suspended[original_key] = base
         for state in states:
             if state["allow_below_cost"]:
                 state["allow_below_cost"] = False
@@ -720,6 +837,16 @@ def preview_batch(
                     state["promo_owner"] = str(int(c.id or 0))
                     state["allow_below_cost"] = False
                     state["events"].append(f"START {c.name}")
+                    unit = _text(row_value(values, "PricingUnitIdUsed"))
+                    for currency in ("EUR", "USD"):
+                        price_key = (int(c.id or 0), iso.upper(), plan, day, unit, currency)
+                        if price_key in start_price_keys:
+                            list_key = "list_eur" if currency == "EUR" else "list_usd"
+                            original_key = "original_list_eur" if currency == "EUR" else "original_list_usd"
+                            if state.get(original_key) is None:
+                                state[original_key] = state.get(list_key)
+                            state[list_key] = normalized_date_prices[price_key]
+                            state["price_owner"] = c.promo_code
                 else:
                     raise ValueError(f"Unsupported batch action: {action}")
             items.append(BatchPreviewItem(int(c.id or 0), c.name, action, matched, changed, below, collisions[:100]))
@@ -736,14 +863,18 @@ def preview_batch(
             except (TypeError, ValueError):
                 owner = 0
             for currency in ("EUR", "USD"):
-                scheduled = normalized_date_prices.get((owner, iso, plan, day, unit, currency))
+                scheduled = normalized_date_prices.get(
+                    (owner, iso, plan, day, unit, currency),
+                    normalized_date_prices.get((0, iso, plan, day, unit, currency)),
+                )
                 if scheduled is None:
                     continue
                 list_key = "list_eur" if currency == "EUR" else "list_usd"
                 original_key = "original_list_eur" if currency == "EUR" else "original_list_usd"
-                if state.get(original_key) is None and state.get("promo_code"):
+                is_campaign_override = (owner, iso, plan, day, unit, currency) in normalized_date_prices and owner != 0
+                if is_campaign_override and state.get(original_key) is None and state.get("promo_code"):
                     state[original_key] = state.get(list_key)
-                if state.get("promo_code"):
+                if is_campaign_override and state.get("promo_code"):
                     state["price_owner"] = state["promo_code"]
                 state[list_key] = scheduled
                 state["events"].append(f"SCHEDULED PRICE EDIT ({currency})")
@@ -802,20 +933,16 @@ def preview_batch(
         for item in items:
             item.below_floor_rows = len(below_by_campaign.get(item.campaign_id, set()))
 
+        boundary = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat() if execution_date else date.today().isoformat()
+        _apply_monotonic_adjustments(states, rows, row_value, campaigns or [], boundary,
+                                    normalized_floor_choices, floor_issues)
+
         changes: list[PriceChange] = []
         for idx, values in enumerate(rows):
             before = original[idx]
             after = states[idx]
             if not after["events"]:
                 continue
-
-            def net(state, currency):
-                base = state["list_eur"] if currency == "EUR" else state["list_usd"]
-                if base is None:
-                    return None
-                if state["promo_code"]:
-                    return round_promo_price(base, state["promo_type"], state["promo_value"])
-                return round(float(base), 2)
 
             iso = _text(row_value(values, "ISO"))
             country = _text(row_value(values, "Country")) or iso
@@ -829,12 +956,12 @@ def preview_batch(
                 promo_after=after["promo_label"] or after["promo_code"] or "—",
                 list_eur_before=before["list_eur"],
                 list_eur_after=after["list_eur"],
-                net_eur_before=net(before, "EUR"),
-                net_eur_after=net(after, "EUR"),
+                net_eur_before=_state_net(before, "EUR"),
+                net_eur_after=_state_net(after, "EUR"),
                 list_usd_before=before["list_usd"],
                 list_usd_after=after["list_usd"],
-                net_usd_before=net(before, "USD"),
-                net_usd_after=net(after, "USD"),
+                net_usd_before=_state_net(before, "USD"),
+                net_usd_after=_state_net(after, "USD"),
                 allow_below_cost_before=bool(before["allow_below_cost"]),
                 allow_below_cost_after=bool(after["allow_below_cost"]),
             ))
@@ -851,6 +978,10 @@ def preview_batch(
                 "PromoValue": state["promo_value"],
                 "PromoLabel": state["promo_label"],
                 "PromoName": state["promo_label"],
+                "PromoNet_EUR": state.get("net_eur") if state["promo_type"] == "net" else None,
+                "PromoNet_USD": state.get("net_usd") if state["promo_type"] == "net" else None,
+                "_PromoPlannerPAUnderlying": state["pa_underlying"],
+                "_PromoPlannerPAUnresolved": state["pa_unresolved"],
                 "Price_EUR": state["list_eur"],
                 "Price_USD": state["list_usd"],
                 "AllowBelowCost": bool(state["allow_below_cost"]),
@@ -908,7 +1039,7 @@ def execute_batch(
     unresolved = [
         issue for issue in preview.cost_floor_issues
         if normalized_floor_choices.get((issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper()))
-        not in {"raise", "override"}
+        not in ({"override"} if issue.is_adjustment else {"raise", "override"})
     ]
     if unresolved:
         raise RuntimeError(f"Choose a cost-floor action for all {len(unresolved)} affected currency prices before applying.")
@@ -948,6 +1079,50 @@ def execute_batch(
             continue
         key = (issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency)
         adjustment_map[key] = max(adjustment_map.get(key, 0.0), issue.required_list_price)
+
+    # PA uses the same final rows as date projection. Preserve the workbook
+    # container (including VBA) while writing exact computed values, rather
+    # than reimplementing synthetic offers in the legacy per-action writer.
+    if any(c.monotonic_destinations for c in (campaigns or [])) or any(
+        row.get("PromoCode") == "PA" for row in preview.projected_rows
+    ) or any("REMOVE PA" in item.change for item in preview.price_changes):
+        try:
+            from automation.pricing_book import normalize_pricing_dataframe
+        except ModuleNotFoundError:
+            from pricing_book import normalize_pricing_dataframe
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup = backup_dir / f"{path.stem}_before_batch_{execution_date}_{datetime.now():%Y%m%d-%H%M%S-%f}{path.suffix}"
+        shutil.copy2(path, backup)
+        wb = load_workbook(path, keep_vba=path.suffix.lower() == ".xlsm")
+        try:
+            catalogue = [{"promo_code": p.code, "promo_type": p.promo_type, "promo_value": p.value, "label": p.label}
+                         for p in _read_promos(wb)]
+            catalogue += [{"promo_code": c.promo_code, "promo_type": c.promo_type, "promo_value": c.promo_value, "label": c.promo_name}
+                          for c in (campaigns or [])]
+            prepared = normalize_pricing_dataframe(pd.DataFrame(preview.projected_rows), promo_catalog=catalogue)
+            ws = wb[PRICING_SHEET] if PRICING_SHEET in wb.sheetnames else wb[wb.sheetnames[0]]
+            headers = _headers(ws)
+            for column in prepared.columns:
+                if column not in headers:
+                    headers[column] = ws.max_column + 1
+                    ws.cell(1, headers[column]).value = column
+            for number, row in enumerate(prepared.to_dict(orient="records"), start=2):
+                for column, value in row.items():
+                    ws.cell(number, headers[column]).value = None if pd.isna(value) else value
+            fd, temporary = tempfile.mkstemp(prefix=".pa-", suffix=path.suffix, dir=str(path.parent))
+            os.close(fd)
+            try:
+                wb.save(temporary)
+                os.replace(temporary, path)
+            finally:
+                if Path(temporary).exists():
+                    Path(temporary).unlink()
+        except Exception:
+            shutil.copy2(backup, path)
+            raise
+        finally:
+            wb.close()
+        return backup, {(i.campaign_id, i.action): i.changed_rows for i in preview.items}, len(adjustment_map)
 
     stage_started = time.perf_counter()
     report("Creating a recovery copy…", 10)

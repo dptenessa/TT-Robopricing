@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict, deque
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -83,18 +84,19 @@ def _row_identity(row) -> tuple:
         return str(value).strip()
 
     def number(value):
-        parsed = pd.to_numeric(value, errors="coerce")
-        if pd.isna(parsed):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
             return ""
-        return round(float(parsed), 6)
+        return "" if pd.isna(parsed) else round(parsed, 6)
 
     return (
-        text(row.get("ISO", "")).upper(),
-        text(row.get("Country", "")).casefold(),
-        text(row.get("PricingUnitIdUsed", "")),
-        text(row.get("Plan", "")),
-        number(row.get("Days", "")),
-        number(row.get("GB", "")),
+        text(row.get("ISO", row.get("iso", ""))).upper(),
+        text(row.get("Country", row.get("country", ""))).casefold(),
+        text(row.get("PricingUnitIdUsed", row.get("pricing_unit_id", ""))),
+        text(row.get("Plan", row.get("plan", ""))),
+        number(row.get("Days", row.get("days", ""))),
+        number(row.get("GB", row.get("gb", ""))),
     )
 
 
@@ -118,6 +120,54 @@ def _identity_json(row) -> dict:
     }
 
 
+def _published_price_adjustments(frame, campaigns, boundary):
+    """Retain approved temporary list raises while replaying unchanged offers."""
+    by_id = {int(c.id or 0): c for c in campaigns}
+    adjustments = []
+    for row in frame.to_dict(orient="records"):
+        try:
+            stack = json.loads(str(row.get("_PromoPlannerPromoStack") or "[]"))
+            stack = stack if isinstance(stack, list) else []
+        except (TypeError, ValueError):
+            stack = []
+        layers = stack + [{
+            "promo_owner": row.get("_PromoPlannerPromoOwner"), "price_owner": row.get("_PromoPlannerPriceOwner"),
+            "promo_code": row.get("PromoCode"), "promo_type": row.get("PromoType"), "promo_value": row.get("PromoValue"),
+            "list_eur": row.get("Price_EUR"), "list_usd": row.get("Price_USD"),
+            "original_list_eur": row.get("_PromoPlannerOriginalPrice_EUR"),
+            "original_list_usd": row.get("_PromoPlannerOriginalPrice_USD"),
+        }]
+        if row.get("_PromoPlannerPAUnderlying"):
+            try:
+                under = json.loads(str(row["_PromoPlannerPAUnderlying"]))
+                layers = under.get("promo_stack", []) + [under]
+            except (TypeError, ValueError):
+                pass
+        iso, plan, days = str(row.get("ISO", "")).upper(), str(row.get("Plan", "")), int(float(row.get("Days") or 0))
+        for layer in layers:
+            try:
+                campaign = by_id.get(int(float(layer.get("promo_owner") or 0)))
+            except (TypeError, ValueError):
+                campaign = None
+            if campaign is None or campaign.end_date < boundary or (campaign.start_date and campaign.start_date > boundary):
+                continue
+            if iso not in campaign.destinations or plan not in campaign.plans or days not in campaign.days:
+                continue
+            if layer.get("price_owner") != campaign.promo_code or layer.get("promo_code") != campaign.promo_code:
+                continue
+            if layer.get("promo_type") != campaign.promo_type or float(layer.get("promo_value") or 0) != campaign.promo_value:
+                continue
+            change = {"campaign_id": campaign.id, "apply_on_start": True,
+                      "row": {"iso": iso, "plan": plan, "days": days, "pricing_unit_id": str(row.get("PricingUnitIdUsed", ""))}}
+            for currency in ("eur", "usd"):
+                original, price = layer.get(f"original_list_{currency}"), layer.get(f"list_{currency}")
+                if original is not None and pd.notna(original) and price is not None and pd.notna(price):
+                    change[f"price_{currency}"] = float(price)
+            if "price_eur" in change or "price_usd" in change:
+                adjustments.append(change)
+    return adjustments
+
+
 def project_dataframe(
     current_df: pd.DataFrame,
     workbook: Path,
@@ -126,23 +176,39 @@ def project_dataframe(
     root: Path,
     *,
     exclude_key_date_changes: bool = False,
+    replay_executed: bool = False,
+    include_drafts: bool = True,
+    campaigns_override: list[Campaign] | None = None,
 ) -> tuple[pd.DataFrame, object]:
     """Project the current workbook through the selected midnight boundary."""
     boundary = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
-    campaigns = store.list_campaigns()
+    saved_campaigns = store.list_campaigns()
+    campaigns = saved_campaigns if campaigns_override is None else campaigns_override
+    saved_ids = {c.id for c in saved_campaigns}
     actions = []
+    has_published = False
+    baseline_day = PricingTimeline(store.path).baseline_info()["effective_from"] if replay_executed else ""
     for campaign in campaigns:
         started = store.has_execution(campaign.id, "START")
+        has_published = has_published or started
         ended = store.has_execution(campaign.id, "END")
         imported = campaign.status == "ACTIVE_IMPORTED"
+        if replay_executed and imported and baseline_day <= boundary:
+            # The migration baseline already contains imported promotions.
+            # Remove their original scope, then replay the current definition
+            # so amendments add/remove countries and change the offer correctly.
+            original = store.original_campaign_definition(campaign.id) if campaign.id in saved_ids else campaign
+            cleanup_day = (date.fromisoformat(baseline_day) - timedelta(days=1)).isoformat()
+            actions.append((replace(original, end_date=cleanup_day), "END"))
+            actions.append((replace(campaign, start_date=baseline_day), "START"))
         starts_by_boundary = bool(
-            not started and not imported and campaign.start_date
+            (replay_executed or not started) and not imported and campaign.start_date
             and date.fromisoformat(campaign.start_date) <= date.fromisoformat(boundary)
         )
         if starts_by_boundary:
             actions.append((campaign, "START"))
         ends_by_boundary = bool(
-            not ended and campaign.end_date
+            (replay_executed or not ended) and campaign.end_date
             and date.fromisoformat(campaign.end_date) < date.fromisoformat(boundary)
             and (started or imported or starts_by_boundary)
         )
@@ -174,6 +240,11 @@ def project_dataframe(
         boundary,
         exclude_key_date=key_date if exclude_key_date_changes else None,
     )
+    if not include_drafts:
+        date_prices = [row for row in date_prices if not row.get("is_base_price_change") or row.get("official")]
+    if replay_executed and has_published:
+        published = PricingTimeline(store.path).project(boundary, include_drafts=include_drafts)
+        date_prices = _published_price_adjustments(published, campaigns, boundary) + date_prices
     preview = preview_batch(
         current_df,
         actions,
@@ -185,22 +256,21 @@ def project_dataframe(
     )
 
     projected = current_df.copy().reset_index(drop=True)
-    queues = defaultdict(deque)
-    for row in preview.projected_rows:
-        queues[_row_identity(row)].append(row)
     passthrough = (
         "PromoCode", "PromoType", "PromoValue", "PromoLabel", "Price_EUR", "Price_USD",
         "AllowBelowCost", "_PromoPlannerPromoStack", "_PromoPlannerPromoOwner",
+        "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
         "_PromoPlannerOriginalPrice_EUR", "_PromoPlannerOriginalPrice_USD", "_PromoPlannerPriceOwner",
     )
-    for index, row in projected.iterrows():
-        identity = _row_identity(row)
-        if not queues[identity]:
-            continue
-        simulated = queues[identity].popleft()
-        for column in passthrough:
-            if column in simulated:
-                projected.at[index, column] = simulated[column]
+    # preview_batch preserves input row order, including duplicate identities.
+    # Assign complete columns instead of rebuilding row identities and writing
+    # every cell through pandas .at on every date switch.
+    simulated = pd.DataFrame.from_records(preview.projected_rows)
+    if len(simulated) != len(projected):
+        raise ValueError("The campaign projection changed the price-book row count.")
+    for column in passthrough:
+        if column in simulated:
+            projected[column] = simulated[column].to_numpy(copy=False)
     promo_overrides: dict[tuple, dict] = {}
     for change in date_prices:
         row_key = change.get("row", change)
@@ -215,9 +285,11 @@ def project_dataframe(
         }
         if fields:
             promo_overrides.setdefault(identity, {}).update(fields)
-    for index, row in projected.iterrows():
-        for column, value in promo_overrides.get(_row_identity(row), {}).items():
-            projected.at[index, column] = value
+    if promo_overrides:
+        identity_columns = [c for c in ("ISO", "Country", "PricingUnitIdUsed", "Plan", "Days", "GB") if c in projected]
+        for index, row in enumerate(projected[identity_columns].to_dict(orient="records")):
+            for column, value in promo_overrides.get(_row_identity(row), {}).items():
+                projected.at[index, column] = value
     return projected, preview
 
 
@@ -231,8 +303,11 @@ def remove_key_date_overrides(
     result = frame.copy()
     timeline = PricingTimeline(Path(root) / "outputs" / "promo_planner" / "promo_schedule.db")
     records = timeline.date_override_records(boundary=boundary, key_date=key_date)
+    if not records:
+        return result
     positions = defaultdict(deque)
-    for index, row in result.iterrows():
+    identity_columns = [c for c in ("ISO", "Country", "PricingUnitIdUsed", "Plan", "Days", "GB") if c in result]
+    for index, row in zip(result.index, result[identity_columns].to_dict(orient="records")):
         positions[_row_identity(row)].append(index)
     for change in records:
         indexes = positions.get(_row_identity(change.get("row", {})))
@@ -252,15 +327,53 @@ def save_key_date_changes(
     baseline_df: pd.DataFrame,
     campaigns: list[Campaign],
     event_label: str = "",
+    *,
+    displayed_df: pd.DataFrame | None = None,
+    normalize_price=None,
 ) -> tuple[int, int]:
     """Persist price and promo edits as dated SQLite layers, never as snapshots."""
     if edited_df.empty or baseline_df.empty:
         return 0, 0
+    store = PromoStore(Path(root) / "outputs" / "promo_planner" / "promo_schedule.db")
+    timeline = PricingTimeline(store.path)
+    if timeline.is_price_date_official(key_date):
+        raise ValueError("This price date is official. Add another date for further changes.")
+    base_price_event = any(m["source"] == "price_date" for m in timeline.event_markers(key_date))
+    if base_price_event and displayed_df is not None:
+        # Keep raw dated base edits separate from automatic, temporary list
+        # raises made by the promotion cost-floor preview. Only user changes
+        # relative to what was displayed become new permanent base values.
+        candidate = baseline_df.copy()
+        positions = {_row_identity(row): index for index, row in zip(candidate.index, candidate.to_dict(orient="records"))}
+        for change in timeline.date_override_records(key_date=key_date):
+            if not change.get("is_base_price_change"):
+                continue
+            index = positions.get(_row_identity(change.get("row", {})))
+            if index is None:
+                continue
+            for currency in ("EUR", "USD"):
+                value = change.get(f"price_{currency.lower()}")
+                if value is not None:
+                    candidate.at[index, f"Price_{currency}"] = value
+        displayed = {_row_identity(row): row for row in displayed_df.to_dict(orient="records")}
+        normalize = normalize_price or float
+        for row in edited_df.to_dict(orient="records"):
+            identity = _row_identity(row)
+            original_display = displayed.get(identity)
+            index = positions.get(identity)
+            if index is None or original_display is None:
+                continue
+            for field in ("Price_EUR", "Price_USD"):
+                value = pd.to_numeric(row.get(field), errors="coerce")
+                previous = pd.to_numeric(original_display.get(field), errors="coerce")
+                if pd.notna(value) and (pd.isna(previous) or abs(float(value) - normalize(float(previous))) > 1e-6):
+                    candidate.at[index, field] = float(value)
+        edited_df = candidate
     campaign_by_id = {int(c.id or 0): c for c in campaigns}
-    baseline = {_row_identity(row): row for _, row in baseline_df.iterrows()}
+    baseline = {_row_identity(row): row for row in baseline_df.to_dict(orient="records")}
     effective_from = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
     groups: dict[tuple, dict] = {}
-    for _, row in edited_df.iterrows():
+    for row in edited_df.to_dict(orient="records"):
         identity = _row_identity(row)
         original = baseline.get(identity)
         if original is None:
@@ -296,9 +409,13 @@ def save_key_date_changes(
             ]
             if matches:
                 campaign = max(matches, key=lambda candidate: (candidate.start_date, int(candidate.id or 0)))
+        if base_price_event:
+            campaign = None
         expiry = (date.fromisoformat(campaign.end_date) + timedelta(days=1)).isoformat() if campaign else ""
         changes = []
         for field in ("Price_EUR", "Price_USD", "PromoCode", "PromoType", "PromoValue", "PromoLabel"):
+            if base_price_event and not field.startswith("Price_"):
+                continue
             new_value = row.get(field, None)
             old_value = original.get(field, None)
             if field in {"Price_EUR", "Price_USD", "PromoValue"}:
@@ -317,7 +434,7 @@ def save_key_date_changes(
                 old_value = "" if pd.isna(old_value) else str(old_value).strip()
                 if new_value == old_value:
                     continue
-            changes.append((row_key_for_identity(_identity_json(row)), field, old_value, new_value))
+            changes.append((row_key_for_identity(row), field, old_value, new_value))
         if not changes:
             continue
         group_key = (int(campaign.id or 0) if campaign else 0, expiry)
@@ -329,6 +446,7 @@ def save_key_date_changes(
                 "campaign_id": int(campaign.id or 0) if campaign else 0,
                 "campaign_name": campaign.name if campaign else "",
                 "event_label": event_label.strip(),
+                "is_base_price_change": base_price_event,
                 "promo_start_date": campaign.start_date if campaign else "",
                 "promo_end_date": campaign.end_date if campaign else "",
             },

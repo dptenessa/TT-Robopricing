@@ -77,6 +77,11 @@ def polite_sleep(min_s: float = 0.1, max_s: float = 0.3) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
+def load_allowed_iso3(path: str) -> set[str]:
+    """Load the PPG ISO3 whitelist through the shared country identity helper."""
+    return {str(code).strip().upper() for code in ppg_allowed_iso3(path) if code}
+
+
 def clean(text: str) -> str:
     return " ".join((text or "").split()).strip()
 

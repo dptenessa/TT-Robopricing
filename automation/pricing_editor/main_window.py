@@ -14,6 +14,11 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QComboBox,
     QDoubleSpinBox,
+    QDialog,
+    QDialogButtonBox,
+    QDateEdit,
+    QFormLayout,
+    QLineEdit,
     QFrame,
     QGraphicsScene,
     QGraphicsView,
@@ -25,6 +30,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QProgressDialog,
     QPushButton,
     QSplitter,
@@ -38,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
+from .timeline_views import DateViewCache
 try:
     from automation.pricing_timeline import PricingTimeline
 except ModuleNotFoundError as exc:
@@ -58,6 +65,7 @@ try:
         save_key_date_changes,
     )
     from automation.promo_planner.store import PromoStore
+    from automation.promo_planner.timeline_labels import campaign_transition, today_campaign_transition, campaign_presentation, campaign_context_ids, key_date_read_only
 except ModuleNotFoundError as exc:
     # The START_HERE launcher runs the editor with automation/ as sys.path[0].
     # In that context, Promo Planner is imported as a top-level package.
@@ -70,6 +78,7 @@ except ModuleNotFoundError as exc:
         save_key_date_changes,
     )
     from promo_planner.store import PromoStore
+    from promo_planner.timeline_labels import campaign_transition, today_campaign_transition, campaign_presentation, campaign_context_ids, key_date_read_only
 try:
     from partner_export_pack import build_partner_price_pack
 except ImportError:
@@ -132,6 +141,9 @@ class MainWindow(QMainWindow):
 
         self.state = EditorState()
         self.timeline = PricingTimeline(FILES.work_dir / "promo_planner" / "promo_schedule.db")
+        self._price_view_cache = DateViewCache(
+            self.timeline.path, FILES.work_dir / "promo_planner" / "issue_choices"
+        )
         self.current_drag_mode = "inflate"
         self.mode_buttons: dict[str, QToolButton] = {}
         self.autosave_dirty = False
@@ -141,6 +153,7 @@ class MainWindow(QMainWindow):
         self._active_key_date: str | None = None
         self.initial_workspace = initial_workspace
         self._date_view_baseline_df = pd.DataFrame()
+        self._date_view_loaded_df = pd.DataFrame()
         self._switching_price_view = False
         self._using_history_snapshot = False
         self.selected_promo_code_for_range: str | None = None
@@ -175,7 +188,7 @@ class MainWindow(QMainWindow):
         self.clear_busy_cursor()
 
     def mark_dirty(self) -> None:
-        self.autosave_dirty = True
+        self.autosave_dirty = bool(self._active_key_date)
 
     def _build_ui(self):
         root = QWidget()
@@ -239,18 +252,22 @@ class MainWindow(QMainWindow):
         load_grid.addWidget(self.saved_state_combo, 0, 1)
 
         self.key_date_combo = QComboBox()
-        self.key_date_combo.addItem("Current manual prices", "")
+        self.key_date_combo.addItem("Nothing", "")
         self.key_date_combo.setEnabled(False)
         self.key_date_combo.setMinimumWidth(300)
         self.key_date_combo.setToolTip("Choose current prices or a scheduled campaign or price-change date.")
         self.key_date_combo.setStyleSheet(
-            "QComboBox { background:#3D424A; color:#FFFFFF; border:1px solid #FFFFFF; border-radius:5px; "
+            "QComboBox { background:#303842; color:#FFFFFF; border:1px solid #AAB3BE; border-radius:5px; "
             "padding:5px 8px; min-height:24px; }"
-            "QComboBox:hover { background:#4A5059; }"
-            "QComboBox::drop-down { border:0; width:24px; }"
-            "QComboBox QAbstractItemView { background:#3D424A; color:#FFFFFF; "
-            "selection-color:#FFFFFF; selection-background-color:#59616B; }"
+            "QComboBox:hover { background:#3B4652; }"
+            "QComboBox::drop-down { border:0; width:30px; background:#242B33; border-top-right-radius:5px; border-bottom-right-radius:5px; }"
+            "QComboBox QAbstractItemView { background:#242B33; color:#F4F6F8; "
+            "selection-color:#FFFFFF; selection-background-color:#8E1454; border:1px solid #727D89; "
+            "outline:0; padding:3px; }"
+            "QComboBox QAbstractItemView::item { min-height:28px; padding:4px 8px; }"
         )
+        self.key_date_combo.setMaxVisibleItems(8)
+        self.key_date_combo.view().setMaximumHeight(280)
         self.key_date_combo.currentIndexChanged.connect(self.on_key_date_view_changed)
         self.key_date_combo.setMinimumWidth(560)
         self.key_date_combo.setToolTip(
@@ -262,6 +279,38 @@ class MainWindow(QMainWindow):
         self.date_toolbar.addWidget(QLabel("Timeline"))
         self.date_toolbar.addSeparator()
         self.date_toolbar.addWidget(self.key_date_combo)
+        self.date_toolbar.addSeparator()
+        self.add_timeline_date_btn = QToolButton()
+        self.add_timeline_date_btn.setText("＋ Add dated change")
+        self.add_timeline_date_btn.setMinimumWidth(185)
+        self.add_timeline_date_btn.setMinimumHeight(34)
+        self.add_timeline_date_btn.setPopupMode(QToolButton.InstantPopup)
+        self.add_timeline_date_btn.setToolTip("Add a promotion or a price-change date to the shared timeline.")
+        add_date_menu = QMenu(self.add_timeline_date_btn)
+        add_promotion_action = add_date_menu.addAction("Add promotion…")
+        add_price_change_action = add_date_menu.addAction("Add price-change date…")
+        add_promotion_action.triggered.connect(self._add_timeline_promotion)
+        add_price_change_action.triggered.connect(self._add_timeline_price_change)
+        self.add_timeline_date_btn.setMenu(add_date_menu)
+        self.date_toolbar.addWidget(self.add_timeline_date_btn)
+        self.delete_timeline_date_btn = QToolButton()
+        self.delete_timeline_date_btn.setText("Delete…")
+        self.delete_timeline_date_btn.setToolTip("Cancel a future promotion or price change on the selected date.")
+        self.delete_timeline_date_btn.clicked.connect(self._delete_timeline_event)
+        self.delete_timeline_date_btn.setEnabled(False)
+        self.date_toolbar.addWidget(self.delete_timeline_date_btn)
+        self.move_timeline_date_btn = QToolButton()
+        self.move_timeline_date_btn.setText("Move start date…")
+        self.move_timeline_date_btn.setToolTip("Choose a planned price change or promotion and move its start using a calendar.")
+        self.move_timeline_date_btn.clicked.connect(self._move_timeline_event)
+        self.move_timeline_date_btn.setEnabled(False)
+        self.date_toolbar.addWidget(self.move_timeline_date_btn)
+        self.timeline_preview_btn = QToolButton()
+        self.timeline_preview_btn.setText("Preview & resolve")
+        self.timeline_preview_btn.setToolTip("Review before/after prices and resolve promotion overlaps or cost-floor issues for the selected date.")
+        self.timeline_preview_btn.clicked.connect(self._preview_timeline_changes)
+        self.timeline_preview_btn.setEnabled(False)
+        self.date_toolbar.addWidget(self.timeline_preview_btn)
         self.date_toolbar.addSeparator()
         self.pricing_toggle_btn = QToolButton()
         self.pricing_toggle_btn.setText("Pricing")
@@ -416,15 +465,14 @@ class MainWindow(QMainWindow):
         reset_grid.addWidget(reset_plan_btn, 0, 0)
         reset_grid.addWidget(reset_unit_btn, 0, 1)
 
-        self.export_btn = QPushButton("Export prices…")
-        self.export_btn.setToolTip(
-            "Create an optional Excel copy of the shared timeline, or create the official partner pack."
-        )
-        self.export_btn.clicked.connect(self.export_prices)
+        self.export_btn = QPushButton("Export Excel…")
+        self.export_btn.setToolTip("Export the selected Timeline date to an Excel you can edit and import back.")
+        self.export_btn.clicked.connect(self._export_timeline_excel)
+        self.partner_pack_btn = QPushButton("Create partner pack…")
+        self.partner_pack_btn.setToolTip("Create an official partner pack for the selected Timeline date.")
+        self.partner_pack_btn.clicked.connect(self._create_timeline_partner_pack)
         self.import_excel_btn = QPushButton("Import Excel…")
-        self.import_excel_btn.setToolTip(
-            "Review changes from an Excel price book and record accepted changes in the shared timeline."
-        )
+        self.import_excel_btn.setToolTip("Import edited list prices into the selected Timeline date; confirmation shows the target date.")
         self.import_excel_btn.clicked.connect(self.load_pricebook)
 
         remove_promo_btn = QPushButton("❌ Remove selected promo")
@@ -588,18 +636,22 @@ class MainWindow(QMainWindow):
         campaigns_layout = QVBoxLayout(campaigns_tab)
         campaigns_layout.setContentsMargins(6, 6, 6, 6)
         campaigns_layout.setSpacing(6)
-        campaigns_layout.addWidget(QLabel("Campaign timeline · dates follow the shared selector above"))
+        campaign_timeline_title = QLabel("Campaign timeline · dates follow the shared selector above")
+        campaign_timeline_title.setStyleSheet("font-weight:600; color:#343B44;")
+        campaigns_layout.addWidget(campaign_timeline_title)
         self.campaign_timeline_scene = QGraphicsScene(self)
         self.campaign_timeline_view = QGraphicsView(self.campaign_timeline_scene)
         self._campaigns_cache = []
-        self.campaign_timeline_view.setMinimumHeight(165)
-        self.campaign_timeline_view.setMaximumHeight(230)
+        self.campaign_timeline_view.setMinimumHeight(115)
+        self.campaign_timeline_view.setMaximumHeight(155)
         self.campaign_timeline_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.campaign_timeline_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.campaign_timeline_view.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.campaign_timeline_view.setFrameShape(QFrame.NoFrame)
         campaigns_layout.addWidget(self.campaign_timeline_view)
-        campaigns_layout.addWidget(QLabel("Campaigns"))
+        campaign_list_title = QLabel("Campaigns · italic = read only · bold = selected date")
+        campaign_list_title.setStyleSheet("font-weight:700; color:#252A31;")
+        campaigns_layout.addWidget(campaign_list_title)
         self.campaign_list = QListWidget()
         self.campaign_list.setMinimumHeight(110)
         self.campaign_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -608,7 +660,9 @@ class MainWindow(QMainWindow):
         self.campaign_detail_label = QLabel("Select a campaign to see its dates and affected destinations.")
         self.campaign_detail_label.setWordWrap(True)
         campaigns_layout.addWidget(self.campaign_detail_label)
-        campaigns_layout.addWidget(QLabel("Affected destinations · select to open in editor"))
+        destinations_title = QLabel("Affected destinations · select to open in editor")
+        destinations_title.setStyleSheet("font-weight:700; color:#252A31;")
+        campaigns_layout.addWidget(destinations_title)
         self.campaign_destinations_list = QListWidget()
         self.campaign_destinations_list.setMaximumHeight(150)
         self.campaign_destinations_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -642,10 +696,11 @@ class MainWindow(QMainWindow):
         # Currency/data and export actions affect both modelling and promos,
         # so keep them outside the tabs. This also avoids duplicating controls
         # and leaves each tab focused on the work that is specific to it.
-        global_actions = QHBoxLayout()
+        global_actions = QGridLayout()
         global_actions.setSpacing(6)
-        global_actions.addWidget(self.import_excel_btn)
-        global_actions.addWidget(self.export_btn)
+        global_actions.addWidget(self.import_excel_btn, 0, 0)
+        global_actions.addWidget(self.export_btn, 0, 1)
+        global_actions.addWidget(self.partner_pack_btn, 1, 0, 1, 2)
 
         side_layout.addWidget(QLabel("Destination"))
         side_layout.addWidget(self.country_combo)
@@ -690,6 +745,7 @@ class MainWindow(QMainWindow):
             self.planner_workspace = planner
             planner.on_timeline_changed = self._reload_editor_from_shared_timeline
             planner.before_timeline_update = self._confirm_price_view_switch
+            planner.on_destination_selected = self._select_campaign_destination_curve
             planner.campaignsChanged.connect(self._on_campaigns_changed)
             self.side_tabs.removeTab(2)
             self.campaign_panel = self.campaigns_panel
@@ -706,7 +762,7 @@ class MainWindow(QMainWindow):
                 planner.tabs.insertTab(0, self.campaign_panel, "Campaigns")
                 planner.tabs.setCurrentWidget(self.campaign_panel)
                 planner.campaigns_tab = self.campaign_panel
-            planner.tabs.setTabText(planner.tabs.indexOf(planner.create_tab), "Create promotion")
+            planner.tabs.setTabText(planner.tabs.indexOf(planner.create_tab), "Edit promotion")
             planner.tabs.currentChanged.connect(self._on_campaign_panel_tab_changed)
             self.campaign_dock = QFrame(self.splitter)
             self.campaign_dock.setObjectName("CampaignWorkspacePanel")
@@ -773,6 +829,257 @@ class MainWindow(QMainWindow):
 
     def open_pricing_panel(self) -> None:
         self._set_workspace_mode("prices")
+        self.side_tabs.setCurrentIndex(0)
+
+    def _ask_timeline_date(self, promotion: bool = False):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add promotion date" if promotion else "Add price-change date")
+        layout = QFormLayout(dialog)
+        control = QDateEdit(QDate.currentDate().addDays(1), dialog)
+        control.setCalendarPopup(True)
+        control.setMinimumDate(QDate.currentDate())
+        control.setDisplayFormat("dd MMM yyyy")
+        layout.addRow("Promotion starts" if promotion else "Prices take effect", control)
+        name = QLineEdit(dialog)
+        name.setPlaceholderText("Optional name")
+        layout.addRow("Name", name)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        effective = control.date().toPython()
+        label = name.text().strip() or (
+            f"Promotion {effective:%d %b %Y}" if promotion else f"Price update {effective:%d %b %Y}"
+        )
+        return effective, label
+
+    def _add_timeline_price_change(self) -> None:
+        chosen = self._ask_timeline_date()
+        if chosen is None or not self._confirm_price_view_switch():
+            return
+        effective, label = chosen
+        key_date = (effective - timedelta(days=1)).isoformat()
+        try:
+            self.timeline.schedule_price_change_date(key_date, label)
+            self._reload_editor_from_shared_timeline(key_date)
+        except Exception as exc:
+            QMessageBox.warning(self, "Add price-change date", str(exc))
+            return
+        self.open_pricing_panel()
+
+    def _add_timeline_promotion(self) -> None:
+        chosen = self._ask_timeline_date(promotion=True)
+        if chosen is None or not self._confirm_price_view_switch():
+            return
+        if self.planner_workspace is None:
+            self._retry_planner_workspace()
+        planner = self.planner_workspace
+        if planner is None:
+            return
+        effective, label = chosen
+        key_date = (effective - timedelta(days=1)).isoformat()
+        self.timeline.schedule_promotion_date(key_date, label)
+        self._reload_editor_from_shared_timeline(key_date)
+        planner.begin_campaign_on_date(effective.isoformat(), label=label)
+        self._set_workspace_mode("campaigns")
+        planner.tabs.setCurrentWidget(planner.create_tab)
+
+    def _move_timeline_event(self) -> None:
+        options = []
+        today = date.today()
+        for marker in self.timeline.event_markers():
+            key = marker["metadata"]["key_date"]
+            effective = date.fromisoformat(key) + timedelta(days=1)
+            if effective < today or (marker["metadata"].get("official") and effective <= today):
+                continue
+            kind = "price" if marker["source"] == "price_date" else "draft"
+            options.append((kind, marker["id"], key, effective, marker["label"], marker["metadata"].get("official", False)))
+        store = self._promo_store()
+        for campaign in store.list_campaigns():
+            if campaign.status == "ACTIVE_IMPORTED" or not campaign.start_date or campaign.start_date < today.isoformat():
+                continue
+            if store.has_execution(campaign.id, "START") or store.has_execution(campaign.id, "END"):
+                continue
+            effective = date.fromisoformat(campaign.start_date)
+            options.append(("campaign", campaign.id, (effective - timedelta(days=1)).isoformat(), effective, campaign.name, False))
+        options.sort(key=lambda item: (item[3], item[0], item[1]))
+        if not options:
+            QMessageBox.information(self, "Move dated change", "There are no future price changes or promotions to move.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Move dated change")
+        layout = QFormLayout(dialog)
+        events = QComboBox(dialog)
+        events.setMinimumWidth(400)
+        for kind, _id, _key, effective, label, _official in options:
+            events.addItem(f"{effective:%d %b %Y} · {'Price change' if kind == 'price' else 'Promotion'} · {label}")
+        chosen_date = QDateEdit(QDate.currentDate(), dialog)
+        chosen_date.setMinimumDate(QDate.currentDate())
+        chosen_date.setCalendarPopup(True)
+        chosen_date.setDisplayFormat("dd MMM yyyy")
+        keep_duration = QCheckBox("Keep promotion duration (move its end too)", dialog)
+        keep_duration.setChecked(True)
+        note = QLabel("An official price change moved to another date becomes a draft and needs a new official export.", dialog)
+        note.setWordWrap(True)
+        layout.addRow("Change", events)
+        layout.addRow("Move to", chosen_date)
+        layout.addRow(keep_duration)
+        layout.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
+        buttons.button(QDialogButtonBox.Ok).setText("Move")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+
+        def select_event(index):
+            item = options[index]
+            chosen_date.setDate(QDate(item[3].year, item[3].month, item[3].day))
+            keep_duration.setVisible(item[0] != "price")
+            note.setVisible(item[0] == "price" and bool(item[5]))
+        events.currentIndexChanged.connect(select_event)
+        initial = next((i for i, item in enumerate(options) if item[2] == self._active_key_date), 0)
+        events.setCurrentIndex(initial)
+        select_event(initial)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        kind, event_id, old_key, old_effective, _label, _official = options[events.currentIndex()]
+        effective = chosen_date.date().toPython()
+        if effective == old_effective:
+            return
+        try:
+            if not self._confirm_price_view_switch():
+                return
+            if kind == "price":
+                new_key = self.timeline.move_price_change_date(old_key, effective.isoformat())
+            elif kind == "draft":
+                new_key = self.timeline.move_promotion_date(old_key, effective.isoformat())
+            else:
+                moved = store.move_campaign_start(event_id, effective.isoformat(), keep_duration=keep_duration.isChecked())
+                new_key = (effective - timedelta(days=1)).isoformat()
+            planner = self.planner_workspace
+            if planner is not None:
+                editing = (kind == "campaign" and planner.editing_campaign_id == event_id)
+                drafting = (kind == "draft" and planner._draft_timeline_key_date == old_key)
+                if editing or drafting:
+                    planner._timeline_start_date = effective.isoformat()
+                    if drafting:
+                        planner._draft_timeline_key_date = new_key
+                    planner.start_date[1].setDate(QDate(effective.year, effective.month, effective.day))
+                    if keep_duration.isChecked():
+                        planner.end_date[1].setDate(planner.end_date[1].date().addDays((effective - old_effective).days))
+                if kind == "campaign":
+                    planner._sync_outlook(event_id)
+            self._clear_moved_issue_choices(old_key, new_key, campaign_id=event_id if kind == "campaign" else None)
+            self._reload_editor_from_shared_timeline(new_key)
+            if kind == "price":
+                self.open_pricing_panel()
+            self.statusBar().showMessage(f"Moved to {effective:%d %b %Y}. Preview the changes to review conflicts and cost floors.", 12000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Move dated change", str(exc))
+
+    def _preview_timeline_changes(self) -> None:
+        if not self._active_key_date:
+            QMessageBox.information(self, "Preview changes", "Choose a date in Timeline first.")
+            return
+        if not self._confirm_price_view_switch():
+            return
+        planner = self.planner_workspace
+        if planner is None:
+            return
+        planner.set_shared_key_date(self._active_key_date)
+        planner._preview_execution_date()
+
+    def _clear_moved_issue_choices(self, old_key: str, new_key: str, *, campaign_id=None) -> None:
+        folder = FILES.work_dir / "promo_planner" / "issue_choices"
+        for path in folder.glob("*.json"):
+            if campaign_id is None and path.stem not in {old_key, new_key}:
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            for field in ("cost_floor", "conflicts"):
+                payload[field] = [row for row in payload.get(field, []) if campaign_id is not None and int(row[0]) != campaign_id]
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary.replace(path)
+
+    def _delete_timeline_event(self) -> None:
+        key_date = self._active_key_date
+        if not key_date:
+            return
+        effective = date.fromisoformat(key_date) + timedelta(days=1)
+        if effective < date.today():
+            return
+        options = {}
+        for marker in self.timeline.event_markers(key_date):
+            if marker["source"] == "price_date":
+                if not marker["metadata"].get("official") or effective > date.today():
+                    options[f"Price change: {marker['label']}"] = ("price", None)
+            elif marker["source"] == "promotion_date":
+                options[f"Unfinished promotion: {marker['label']}"] = ("draft", None)
+        store = self._promo_store()
+        for campaign in store.list_campaigns():
+            if campaign.start_date == effective.isoformat() and campaign.status != "ACTIVE_IMPORTED" and not store.has_execution(campaign.id, "START"):
+                options[f"Promotion: {campaign.name} (#{campaign.id})"] = ("campaign", campaign.id)
+        if not options:
+            QMessageBox.information(self, "Delete dated change", "There are no cancellable future changes on this date.")
+            return
+        label, ok = QInputDialog.getItem(self, "Delete dated change", "Choose the change to cancel:", list(options), 0, False)
+        if not ok:
+            return
+        if QMessageBox.question(self, "Cancel dated change", f"Cancel {label}?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        kind, campaign_id = options[label]
+        # Discard pending edits belonging to the cancelled event, so switching
+        # dates cannot autosave and accidentally recreate it.
+        if kind == "price":
+            self.autosave_dirty = False
+        elif not self._confirm_price_view_switch():
+            return
+        try:
+            if kind == "price":
+                self.timeline.cancel_price_change_date(key_date)
+            elif kind == "draft":
+                self.timeline.discard_promotion_date(key_date)
+                if self.planner_workspace is not None:
+                    self.planner_workspace._cancel_edit()
+            else:
+                if self.planner_workspace is not None:
+                    self.planner_workspace.cancel_future_campaign(campaign_id)
+                else:
+                    store.delete_campaign(campaign_id)
+            self._price_view_cache.clear()
+            self._active_key_date = None
+            self._reload_editor_from_shared_timeline()
+            self._load_price_view_data(None)
+            if self.planner_workspace is not None:
+                self.planner_workspace._refresh_campaigns()
+        except Exception as exc:
+            QMessageBox.warning(self, "Cancel dated change", str(exc))
+
+    def _dated_edit_allowed(self) -> bool:
+        return bool(
+            self._active_key_date and not self._using_history_snapshot
+            and date.fromisoformat(self._active_key_date) + timedelta(days=1) >= date.today()
+            and not self.timeline.is_price_date_official(self._active_key_date)
+        )
+
+    def _require_dated_edit(self) -> bool:
+        if not self._dated_edit_allowed():
+            self.statusBar().showMessage("Choose an editable date in Timeline, or use Add dated change first.", 8000)
+            return False
+        return True
+
+    def _ensure_price_event(self) -> None:
+        # A price edit at a campaign boundary creates its own base-price event.
+        markers = self.timeline.event_markers(self._active_key_date)
+        if not any(m["source"] == "price_date" for m in markers):
+            effective = date.fromisoformat(self._active_key_date) + timedelta(days=1)
+            self.timeline.schedule_price_change_date(self._active_key_date, f"Price update {effective:%d %b %Y}")
+            self._refresh_key_date_views(selected=self._active_key_date)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -790,10 +1097,15 @@ class MainWindow(QMainWindow):
             self.planner_workspace._refresh_execution_date()
 
     def _on_campaigns_changed(self) -> None:
-        self._refresh_key_date_views(selected=self.key_date_combo.currentData() or "")
-        self.refresh_campaign_panel()
+        if self._manual_pricebook_df.empty:
+            self._refresh_key_date_views()
+            self.refresh_campaign_panel()
+            return
+        if self._confirm_price_view_switch():
+            self._reload_editor_from_shared_timeline(self._active_key_date)
 
     def _reload_editor_from_shared_timeline(self, selected_date: str | None = None) -> None:
+        self._price_view_cache.clear()
         current = self.timeline.project()
         if current.empty:
             return
@@ -811,15 +1123,8 @@ class MainWindow(QMainWindow):
                 self.key_date_combo.blockSignals(False)
             self._load_price_view_data(selected_date)
         else:
-            self.state.preload_pricebook(current)
-            self.state.preload_last_export(current)
-            self.populate_combos()
-            if selected_country:
-                country_index = self.country_combo.findText(selected_country, Qt.MatchFixedString)
-                if country_index >= 0:
-                    self.country_combo.setCurrentIndex(country_index)
             self._refresh_key_date_views()
-            self.refresh_canvas()
+            self._load_price_view_data(None)
         self.autosave_dirty = False
         self.refresh_campaign_panel()
 
@@ -827,8 +1132,15 @@ class MainWindow(QMainWindow):
         selected = str(self.key_date_combo.currentData() or "")
         if self.planner_workspace is not None:
             self.planner_workspace.set_shared_key_date(selected or None)
+            if selected and self.campaign_panel is not None and self._workspace_mode == "campaigns":
+                QTimer.singleShot(
+                    0,
+                    lambda: self.campaign_panel.ensureWidgetVisible(
+                        self.planner_workspace.timeline_tab, 0, 8
+                    ) if self.planner_workspace is not None else None,
+                )
         if hasattr(self, "campaign_timeline_view"):
-            self._render_campaign_timeline(self._campaigns_cache)
+            self.refresh_campaign_panel()
 
     def _refresh_campaign_context_on_tab(self, index: int) -> None:
         self.refresh_campaign_panel()
@@ -842,7 +1154,8 @@ class MainWindow(QMainWindow):
         current = self.campaign_list.currentItem()
         selected_id = current.data(Qt.UserRole) if current else None
         try:
-            campaigns = self._promo_store().list_campaigns()
+            store = self._promo_store()
+            campaigns = store.list_campaigns()
         except Exception as exc:
             self.campaign_timeline_scene.clear()
             self.campaign_timeline_scene.addText(f"Could not read campaigns: {exc}")
@@ -853,9 +1166,15 @@ class MainWindow(QMainWindow):
         self._campaigns_cache = campaigns
         self._render_campaign_timeline(campaigns)
         self.campaign_list.clear()
+        context = campaign_context_ids(campaigns, self._active_key_date)
         for campaign in sorted(campaigns, key=lambda item: (item.start_date, item.name.casefold())):
-            item = QListWidgetItem(campaign.name)
-            item.setToolTip(f"{campaign.start_date} – {campaign.end_date} · {campaign.status}")
+            state = campaign_presentation(campaign, store)
+            item = QListWidgetItem(f"{campaign.name} · {state['label']}")
+            font = item.font()
+            font.setItalic(state["readonly"])
+            font.setBold(campaign.id in context)
+            item.setFont(font)
+            item.setToolTip(f"{campaign.start_date} – {campaign.end_date} · {state['label']}")
             item.setData(Qt.UserRole, campaign.id)
             self.campaign_list.addItem(item)
             if selected_id is not None and campaign.id == selected_id:
@@ -863,11 +1182,23 @@ class MainWindow(QMainWindow):
         if self.campaign_list.count() and self.campaign_list.currentRow() < 0:
             self.campaign_list.setCurrentRow(0)
         elif not self.campaign_list.count():
-            self.campaign_detail_label.setText("No campaigns yet. Use the Create promotion tab to schedule one.")
+            self.campaign_detail_label.setText("No campaigns yet. Use Add dated change in Timeline to schedule a promotion.")
             self.campaign_destinations_list.clear()
         self.edit_campaign_btn.setEnabled(self.campaign_list.currentItem() is not None)
         self.duplicate_campaign_btn.setEnabled(self.campaign_list.currentItem() is not None)
         self.delete_campaign_btn.setEnabled(self.campaign_list.currentItem() is not None)
+        current = self.campaign_list.currentItem()
+        if current is not None:
+            self._show_campaign_details(current)
+        date_changed = getattr(self, "_campaign_context_date", object()) != self._active_key_date
+        self._campaign_context_date = self._active_key_date
+        if date_changed:
+            for row in range(self.campaign_list.count()):
+                item = self.campaign_list.item(row)
+                if item.data(Qt.UserRole) in context:
+                    self.campaign_list.setCurrentItem(item)
+                    self.campaign_list.scrollToItem(item)
+                    break
 
     def _render_campaign_timeline(self, campaigns) -> None:
         if not hasattr(self, "campaign_timeline_scene"):
@@ -924,12 +1255,17 @@ class MainWindow(QMainWindow):
                     QPen(QColor("#5A6573"), 1, Qt.DashLine),
                 )
 
+        context = campaign_context_ids(campaigns, selected_key_date or None)
         for row, (campaign, start, end) in enumerate(parsed):
             y = top + row * row_height
-            label = scene.addText(campaign.name[:24], QFont("Segoe UI", 8, QFont.Bold))
+            state = campaign_presentation(campaign, store)
+            font = QFont("Segoe UI", 8)
+            font.setItalic(state["readonly"])
+            font.setBold(campaign.id in context)
+            label = scene.addText(campaign.name[:24], font)
             label.setDefaultTextColor(QColor("#252A31"))
             label.setPos(4, y + 2)
-            label.setToolTip(campaign.name)
+            label.setToolTip(f"{campaign.name} · {state['label']}")
             started = store.has_execution(campaign.id, "START")
             ended = store.has_execution(campaign.id, "END")
             if ended:
@@ -962,10 +1298,13 @@ class MainWindow(QMainWindow):
         if campaign is None:
             self.campaign_detail_label.setText("This campaign changed in the planner. Refresh to reload it.")
             return
+        state = campaign_presentation(campaign, self._promo_store())
+        self.edit_campaign_btn.setText("View" if state["readonly"] else "Edit")
+        self.delete_campaign_btn.setEnabled(not state["readonly"])
         promo = campaign.promo_name or campaign.promo_code or campaign.promo_type
         self.campaign_detail_label.setText(
             f"<b>{campaign.name}</b><br>{campaign.start_date} → {campaign.end_date}<br>"
-            f"Promo: {promo} · {campaign.status}<br>Plans: {', '.join(campaign.plans) or 'All plans'}"
+            f"Promo: {promo} · {state['label']}<br>Plans: {', '.join(campaign.plans) or 'All plans'}"
         )
         planner = getattr(self, "planner_workspace", None)
         for destination in campaign.destinations or []:
@@ -980,6 +1319,9 @@ class MainWindow(QMainWindow):
 
     def _open_campaign_destination(self, item: QListWidgetItem) -> None:
         destination = str(item.data(Qt.UserRole) or item.text()).strip()
+        self._select_campaign_destination_curve(destination)
+
+    def _select_campaign_destination_curve(self, destination: str, plans=None, days=None) -> None:
         index = self.country_combo.findText(destination, Qt.MatchFixedString)
         if index < 0:
             normalized = destination.casefold()
@@ -994,7 +1336,12 @@ class MainWindow(QMainWindow):
             )
             return
         self.country_combo.setCurrentIndex(index)
-        self.side_tabs.setCurrentIndex(0)
+        points = self.state.current_points()
+        matching = [point for point in points if not plans or point.get("plan") in plans]
+        selected = next((point for point in matching if not days or int(point.get("days") or 0) in days), matching[0] if matching else None)
+        if selected is not None:
+            self.state.selected_row_id = str(selected["row_id"])
+        self.refresh_canvas()
 
     def open_promo_planner(self) -> None:
         if self.planner_workspace is None:
@@ -1008,12 +1355,7 @@ class MainWindow(QMainWindow):
             self.refresh_campaign_panel()
 
     def open_new_campaign(self) -> None:
-        if self.planner_workspace is None:
-            self._retry_planner_workspace()
-        if self.campaign_dock is not None and self.planner_workspace is not None:
-            self._set_workspace_mode("campaigns")
-            self.planner_workspace._cancel_edit()
-            self.planner_workspace.tabs.setCurrentWidget(self.planner_workspace.create_tab)
+        self._add_timeline_promotion()
 
     def edit_selected_campaign(self) -> None:
         if self.planner_workspace is None:
@@ -1038,8 +1380,24 @@ class MainWindow(QMainWindow):
 
     def duplicate_selected_campaign(self) -> None:
         item = self.campaign_list.currentItem()
-        if item and self.planner_workspace and self._select_planner_campaign(int(item.data(Qt.UserRole))):
-            self.planner_workspace._duplicate_selected()
+        if item is None or self.planner_workspace is None:
+            return
+        chosen = self._ask_timeline_date(promotion=True)
+        if chosen is None or not self._confirm_price_view_switch():
+            return
+        from dataclasses import replace
+        original = self._promo_store().get_campaign(int(item.data(Qt.UserRole)))
+        effective, _label = chosen
+        key_date = (effective - timedelta(days=1)).isoformat()
+        clone = replace(original, id=None, status="PLANNED", name=original.name + " - Copy",
+                        start_date=effective.isoformat(), end_date=(effective + timedelta(days=6)).isoformat())
+        self.timeline.schedule_promotion_date(key_date, clone.name)
+        self._reload_editor_from_shared_timeline(key_date)
+        planner = self.planner_workspace
+        planner.begin_campaign_on_date(effective.isoformat(), label=clone.name)
+        planner._load_campaign_into_form(clone)
+        self._set_workspace_mode("campaigns")
+        planner.tabs.setCurrentWidget(planner.create_tab)
 
     def delete_selected_campaign(self) -> None:
         item = self.campaign_list.currentItem()
@@ -1096,7 +1454,7 @@ class MainWindow(QMainWindow):
             return None
         timestamp = name[len(prefix):-len(suffix)]
         try:
-            datetime.strptime(timestamp, "%Y%m%d")
+            datetime.strptime(timestamp, "%Y%m%d_%H%M%S_%f" if "_" in timestamp else "%Y%m%d")
         except ValueError:
             return None
         return timestamp
@@ -1104,6 +1462,8 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _history_timestamp_label(timestamp: str) -> str:
         try:
+            if "_" in timestamp:
+                return datetime.strptime(timestamp, "%Y%m%d_%H%M%S_%f").strftime("%Y-%m-%d · export %H:%M:%S.%f")
             return datetime.strptime(timestamp, "%Y%m%d").strftime("%Y-%m-%d")
         except ValueError:
             return timestamp
@@ -1247,62 +1607,71 @@ class MainWindow(QMainWindow):
         campaigns = store.list_campaigns()
         dates = scheduled_key_dates(campaigns, store=store)
         labels_by_date = self.timeline.key_date_labels()
-        campaign_events: dict[str, list[str]] = {}
         today = date.today()
-        for campaign in campaigns:
-            imported = campaign.status == "ACTIVE_IMPORTED"
-            if campaign.start_date and not imported and not store.has_execution(campaign.id, "START"):
-                try:
-                    key = (date.fromisoformat(campaign.start_date) - timedelta(days=1)).isoformat()
-                    if key in dates and date.fromisoformat(key) >= today - timedelta(days=1):
-                        campaign_events.setdefault(key, []).append(f"START: {campaign.name}")
-                except ValueError:
-                    pass
-            if campaign.end_date and not store.has_execution(campaign.id, "END"):
-                try:
-                    key = date.fromisoformat(campaign.end_date).isoformat()
-                    if key in dates and date.fromisoformat(key) >= today - timedelta(days=1):
-                        campaign_events.setdefault(key, []).append(f"END: {campaign.name}")
-                except ValueError:
-                    pass
         combo = self.key_date_combo
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("Current prices", "")
+        current_transition = today_campaign_transition(campaigns, today)
+        combo.addItem(f"{today:%d %b %Y}  |  {current_transition}", "")
         for key_date in dates:
             boundary = date.fromisoformat(key_date)
             next_day = boundary + timedelta(days=1)
-            events = campaign_events.get(key_date, []) + labels_by_date.get(key_date, [])
-            event_text = " · ".join(dict.fromkeys(events)) or "Scheduled change"
+            events = labels_by_date.get(key_date, [])
+            transition = campaign_transition(campaigns, key_date)
+            event_text = transition
+            if events:
+                event_text += " · " + " · ".join(dict.fromkeys(events))
             combo.addItem(
-                f"{boundary.strftime('%d %b %Y')} → {next_day.strftime('%d %b %Y')}  |  {event_text}",
+                f"{next_day.strftime('%d %b %Y')}  |  {event_text}",
                 key_date,
             )
         wanted = selected or self._active_key_date or ""
         index = combo.findData(wanted)
+        for row in range(combo.count()):
+            key = combo.itemData(row)
+            font = QFont("Segoe UI", 9)
+            font.setBold(row == max(0, index))
+            font.setItalic(not key or key_date_read_only(campaigns, store, self.timeline, key, today=today))
+            combo.setItemData(row, font, Qt.FontRole)
         combo.setCurrentIndex(max(0, index))
         combo.setEnabled(not self._manual_pricebook_df.empty and not self._using_history_snapshot)
         combo.blockSignals(False)
         self._update_price_view_controls()
         self._sync_planner_date_from_editor()
     def _update_price_view_controls(self) -> None:
+        editable = self._dated_edit_allowed()
+        self.move_timeline_date_btn.setEnabled(not self._manual_pricebook_df.empty)
+        self.timeline_preview_btn.setEnabled(bool(self._active_key_date) and not self._manual_pricebook_df.empty)
+        self.delete_timeline_date_btn.setEnabled(bool(self._active_key_date) and date.fromisoformat(self._active_key_date) + timedelta(days=1) >= date.today())
+        for button in self.mode_buttons.values():
+            button.setEnabled(editable)
+        self.exchange_rate_spin.setEnabled(editable)
+        if hasattr(self, "canvas"):
+            self.canvas.editing_allowed = editable
+        self.drag_safety_label.setText(
+            f"Editing prices for {(date.fromisoformat(self._active_key_date) + timedelta(days=1)):%d %b %Y} · Hold SHIFT to drag."
+            if editable else "Read only · choose an editing date in Timeline first."
+        )
         if self._active_key_date:
+            effective = date.fromisoformat(self._active_key_date) + timedelta(days=1)
             self.key_date_status.setText(
-                f"Projected midnight view. Save writes dated changes to the shared SQLite pricing timeline; "
-                "manual_prices_current stays unchanged."
+                f"Editing prices effective {effective:%d %b %Y}. Changes are saved for this date."
+                if editable else f"{effective:%d %b %Y} · Read only. Add a new dated change to revise prices."
             )
             self.key_date_status.setStyleSheet("color:#8a4b08; font-weight:600; padding:3px 0;")
         elif self._using_history_snapshot:
             self.key_date_status.setText("A historical saved snapshot is loaded. Reload current prices to browse planned dates.")
             self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
         elif not self._manual_pricebook_df.empty:
-            self.key_date_status.setText("Current prices come from the shared timeline. Excel import/export is optional.")
+            self.key_date_status.setText("Read only. Choose a date in Timeline to change prices or create a promotion.")
             self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
         else:
             self.key_date_status.setText("Load current prices to browse scheduled dates.")
             self.key_date_status.setStyleSheet("color:#555555; padding:3px 0;")
-        if hasattr(self, "export_btn"):
-            self.export_btn.setText("Save key-date prices" if self._active_key_date else "Export prices…")
+        dated_output = bool(self._active_key_date) and not self._manual_pricebook_df.empty and not self._using_history_snapshot
+        self.export_btn.setEnabled(dated_output)
+        self.partner_pack_btn.setEnabled(dated_output)
+        self.import_excel_btn.setEnabled(editable)
         if hasattr(self, "saved_state_combo"):
             self.saved_state_combo.setEnabled(not bool(self._active_key_date) and self.saved_state_combo.count() > 0)
         if hasattr(self, "side_tabs"):
@@ -1365,7 +1734,7 @@ class MainWindow(QMainWindow):
     def _load_price_view(self, key_date: str | None) -> None:
         progress = None
         if key_date is not None:
-            progress = QProgressDialog("Loading the selected promo date…", "", 0, 0, self)
+            progress = QProgressDialog("Loading the selected pricing date…", "", 0, 0, self)
             progress.setWindowTitle("Loading prices")
             progress.setCancelButton(None)
             progress.setWindowModality(Qt.WindowModal)
@@ -1382,46 +1751,70 @@ class MainWindow(QMainWindow):
 
     def _load_price_view_data(self, key_date: str | None) -> None:
         if key_date is None:
-            view = self._manual_pricebook_df.copy()
+            today_key = (date.today() - timedelta(days=1)).isoformat()
+            cache_key = "live:" + today_key
+            cached = self._price_view_cache.get(cache_key)
+            if cached is None:
+                revision = self._price_view_cache.revision()
+                view, _baseline, _warning = self._project_key_date_view(today_key, include_drafts=False)
+                self._price_view_cache.put(cache_key, view, pd.DataFrame(), "", revision=revision)
+            else:
+                view = cached[0]
             self._date_view_baseline_df = pd.DataFrame()
             self._active_key_date = None
-            warning_text = "Current manual prices"
+            warning_text = self.key_date_combo.itemText(0) + " · Read only"
         else:
-            store = self._promo_store()
-            # Rebuild the selected date from the shared timeline boundary in
-            # memory, then reverse only the selected editor layer to obtain a
-            # clean comparison base without simulating the campaign twice.
-            boundary = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
-            date_base = self.timeline.project(boundary)
-            projected, preview = project_pricebook_for_key_date(
-                date_base,
-                self._manual_pricebook_path or (FILES.editor_exports_dir / "manual_prices_current.xlsx"),
-                store,
-                key_date,
-                FILES.base_dir,
-            )
-            baseline = remove_key_date_overrides(
-                projected, FILES.base_dir, key_date, boundary,
-            )
-            view = projected
+            cached = self._price_view_cache.get(key_date)
+            if cached is None:
+                revision = self._price_view_cache.revision()
+                view, baseline, warning_text = self._project_key_date_view(key_date)
+                self._price_view_cache.put(
+                    key_date, view, baseline, warning_text, revision=revision
+                )
+            else:
+                view, baseline, warning_text = cached
             self._date_view_baseline_df = baseline
             self._active_key_date = key_date
-            warnings = []
-            if preview.collisions:
-                warnings.append(f"{len(preview.collisions)} promo conflict(s) still need a decision in Promo Planner")
-            if preview.cost_floor_issues:
-                warnings.append(f"{len(preview.cost_floor_issues)} active price(s) need cost-floor review")
-            boundary = date.fromisoformat(key_date) + timedelta(days=1)
-            warning_text = f"After midnight: {boundary.strftime('%d %b %Y')} 00:00"
-            if warnings:
-                warning_text += " · " + " · ".join(warnings)
-        self.state.preload_pricebook(view)
-        self.state.preload_last_export(view)
+        self.state.load_timeline_view(view)
+        self._date_view_loaded_df = view.copy()
+        if self._workspace_mode == "prices":
+            self.side_tabs.setCurrentIndex(0)
         self.populate_combos()
         self.autosave_dirty = False
         self._update_price_view_controls()
         self.refresh_canvas()
         self.statusBar().showMessage(warning_text, 12000)
+
+    def _project_key_date_view(self, key_date: str, *, include_drafts: bool = True):
+        store = self._promo_store()
+        # Rebuild the selected date from the shared timeline boundary in
+        # memory, then reverse only the selected editor layer to obtain a
+        # clean comparison base without simulating the campaign twice.
+        boundary = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
+        date_base = self.timeline.project(boundary, layers=("base", "import", "override"), include_drafts=include_drafts)
+        projected, preview = project_pricebook_for_key_date(
+            date_base,
+            self._manual_pricebook_path or (FILES.editor_exports_dir / "manual_prices_current.xlsx"),
+            store,
+            key_date,
+            FILES.base_dir,
+            replay_executed=True,
+            include_drafts=include_drafts,
+        )
+        baseline = remove_key_date_overrides(
+            projected, FILES.base_dir, key_date, boundary,
+        )
+        view = projected
+        warnings = []
+        if preview.collisions:
+            warnings.append(f"{len(preview.collisions)} promo conflict(s) still need a decision in Promo Planner")
+        if preview.cost_floor_issues:
+            warnings.append(f"{len(preview.cost_floor_issues)} active price(s) need cost-floor review")
+        boundary = date.fromisoformat(key_date) + timedelta(days=1)
+        warning_text = f"After midnight: {boundary.strftime('%d %b %Y')} 00:00"
+        if warnings:
+            warning_text += " · " + " · ".join(warnings)
+        return view, baseline, warning_text
 
     def _price_date_event_name(self, key_date: str) -> str:
         for label in self.timeline.key_date_labels().get(key_date, []):
@@ -1431,15 +1824,27 @@ class MainWindow(QMainWindow):
     def _save_key_date_prices(self, *, silent: bool = False) -> int:
         if not self._active_key_date:
             return 0
+        self._ensure_price_event()
+        edited = self.state.export_prices_dataframe()
+        campaigns = self._promo_store().list_campaigns()
         count, unlinked = save_key_date_changes(
             FILES.base_dir,
             self._active_key_date,
-            self.state.export_prices_dataframe(),
+            edited,
             self._date_view_baseline_df,
-            self._promo_store().list_campaigns(),
+            campaigns,
             event_label=self._price_date_event_name(self._active_key_date),
+            displayed_df=self._date_view_loaded_df,
+            normalize_price=self.state.round_regular_price,
         )
+        self._date_view_loaded_df = edited.copy()
         self.autosave_dirty = False
+        effective = (date.fromisoformat(self._active_key_date) + timedelta(days=1)).isoformat()
+        if any(c.monotonic_destinations and (not c.start_date or c.start_date <= effective) and effective <= c.end_date for c in campaigns):
+            # Editing an anchor changes dependent PA nets. Refresh them before
+            # this saved view can be used for an Excel or partner-pack export.
+            self._price_view_cache.clear()
+            self._load_price_view_data(self._active_key_date)
         message = (
             f"Saved scheduled price changes for the midnight after {self._active_key_date}. "
             f"{count} row override(s) are stored in the shared pricing timeline; current prices were not changed."
@@ -1450,76 +1855,34 @@ class MainWindow(QMainWindow):
         return count
 
     def load_pricebook(self):
+        if not self._require_dated_edit():
+            return
         source, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import Excel price changes",
-            str(FILES.editor_exports_dir),
+            self, "Import prices for the selected date", str(FILES.editor_exports_dir),
             "Excel workbooks (*.xlsx *.xlsm *.xls);;CSV files (*.csv)",
         )
         if not source:
             return
-        source = Path(source)
-
-        df = load_table(
-            source,
-            currency_hint="EUR",
-            eur_to_usd=self.state.eur_to_usd,
-        )
-        if df.empty:
-            QMessageBox.warning(self, "Import failed", "No usable pricing rows were found in that file.")
-            return
-
-        if not self.timeline.baseline_info():
-            self.timeline.initialize_baseline(
-                df, source_path=source, effective_from=self.timeline.current_as_of(),
-            )
-            canonical = self.timeline.project()
-            changed_fields = changed_rows = 0
-        else:
-            canonical = self.timeline.project()
-            try:
-                changed_fields, changed_rows = self.timeline.diff_summary(canonical, df)
-            except ValueError as exc:
-                QMessageBox.warning(
-                    self, "Excel import needs catalogue migration",
-                    f"This workbook changes the set of pricing points, so it cannot be merged as a price update.\n\n{exc}",
-                )
+        try:
+            frame = load_table(Path(source), currency_hint="EUR", eur_to_usd=self.state.eur_to_usd)
+            if frame.empty:
+                raise ValueError("No usable pricing rows were found in that file.")
+            fields, rows = self.timeline.diff_summary(self.state.export_prices_dataframe(), frame)
+            if not fields:
                 return
-        if changed_fields:
-            answer = QMessageBox.question(
-                self,
-                "Review Excel price changes",
-                f"Import {changed_fields:,} changed fields across {changed_rows:,} pricing points from:\n\n{source}\n\n"
-                "These changes will be recorded in the shared timeline. Continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
+            effective = date.fromisoformat(self._active_key_date) + timedelta(days=1)
+            if QMessageBox.question(
+                self, "Import dated prices",
+                f"Import list prices for {effective:%d %b %Y} from {source}?\n{rows:,} pricing rows differ.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            ) != QMessageBox.Yes:
                 return
-            self.timeline.record_diff(
-                canonical, df,
-                effective_from=self.timeline.current_as_of(),
-                layer="import",
-                source="excel_import",
-                label=f"Excel import: {source.name}",
-                metadata={"source_path": str(source)},
-            )
-            canonical = self.timeline.project()
-
-        self._manual_pricebook_df = canonical.copy()
-        self._manual_pricebook_path = source
-        self._using_history_snapshot = False
-        self.state.preload_pricebook(canonical)
-        self.state.preload_last_export(canonical)
-
-        self.populate_combos()
-        self._active_key_date = None
-        self._refresh_key_date_views()
-        self.refresh_canvas()
-        if self.planner_workspace is None:
-            self._retry_planner_workspace()
-        else:
-            self.planner_workspace._reload_catalogue()
+            key_date = self._active_key_date
+            self.state.load_timeline_view(frame)
+            self._save_key_date_prices(silent=True)
+            self._reload_editor_from_shared_timeline(key_date)
+        except Exception as exc:
+            QMessageBox.warning(self, "Import dated prices", str(exc))
 
     def load_saved_state_timestamp(self, timestamp: str, selected_label: str | None = None) -> bool:
         if not self.state.row_index:
@@ -1573,7 +1936,6 @@ class MainWindow(QMainWindow):
         # Partner packs are official outputs, so compare only with prior official snapshots.
         timestamps = [
             ts for ts in self.saved_state_timestamps(official_only=True)
-            if ts != current_timestamp
         ]
         if not timestamps:
             return None
@@ -1591,22 +1953,6 @@ class MainWindow(QMainWindow):
         if not ok or not selected_label:
             return None
         return label_to_timestamp.get(str(selected_label))
-
-    def ask_official_export(self) -> bool | None:
-        message = QMessageBox(self)
-        message.setWindowTitle("Save pricing state")
-        message.setText("Save current prices and history")
-        message.setInformativeText(
-            "If this snapshot is official, a partner pack will also be created."
-        )
-        official_check = QCheckBox("Make this snapshot official and create partner pack")
-        official_check.setChecked(False)
-        message.setCheckBox(official_check)
-        message.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        message.setDefaultButton(QMessageBox.Ok)
-        if message.exec() != QMessageBox.Ok:
-            return None
-        return official_check.isChecked()
 
     @staticmethod
     def official_partner_pack_filename(timestamp: str, save_name: str) -> str:
@@ -1673,6 +2019,9 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def use_loaded_for_selected_plan(self, show_status: bool = False):
+        if not self._require_dated_edit():
+            return
+        self._ensure_price_event()
         self.state.reload_selected_plan_from_loaded()
         self.mark_dirty()
         self.refresh_canvas()
@@ -1685,249 +2034,173 @@ class MainWindow(QMainWindow):
 
 
     def use_loaded_for_pricing_unit(self):
+        if not self._require_dated_edit():
+            return
+        self._ensure_price_event()
         self.state.reload_pricing_unit_from_loaded()
         self.mark_dirty()
         self.refresh_canvas()
 
-    def save_exports_to_folder(
-        self,
-        export_dir: Path,
-        include_history: bool = False,
-        autosave: bool = False,
-        timestamp: str | None = None,
-    ) -> str:
-        export_dir = Path(export_dir)
-        export_dir.mkdir(parents=True, exist_ok=True)
-        ts = timestamp or datetime.now().strftime("%Y%m%d")
-        prices = self.state.export_prices_dataframe()
-        if not self.timeline.baseline_info():
-            seed = self._manual_pricebook_df if not self._manual_pricebook_df.empty else prices
-            self.timeline.initialize_baseline(
-                seed,
-                source_path=self._manual_pricebook_path or "",
-                effective_from=self.timeline.current_as_of(),
-            )
-        if not self._using_history_snapshot and not self._active_key_date and not self._manual_pricebook_df.empty:
-            _change_set_id, changed_fields = self.timeline.record_diff(
-                self._manual_pricebook_df,
-                prices,
-                effective_from=self.timeline.current_as_of(),
-                source="editor",
-                label="Pricing Editor save",
-            )
-            if changed_fields:
-                self._manual_pricebook_df = prices.copy()
-
-        if not autosave:
-            # Materialize the current database projection for an explicit export
-            # or for the unchanged partner-pack generation flow.
-            prices_path = export_dir / "manual_prices_current.xlsx"
-            write_pricing_workbook(prices, prices_path, promo_catalog=self.state.promo_catalog)
-
-        if export_dir == FILES.editor_exports_dir:
-            self._manual_pricebook_df = prices.copy()
-
-        if include_history:
-            # History is an immutable data snapshot; it does not need workbook UX/formulas.
-            FILES.editor_history_root.mkdir(parents=True, exist_ok=True)
-            self.state.export_prices_csv(
-                FILES.editor_history_root / f"manual_prices_{ts}.csv"
-            )
-
-        return ts
-
     def quick_save(self):
-        if self._active_key_date:
-            self._save_key_date_prices()
+        """Ctrl+S flushes dated edits; it never creates a pack or history snapshot."""
+        if not self._dated_edit_allowed():
+            self.statusBar().showMessage("Read only. Choose an editing date in Timeline first.", 8000)
             return
         try:
-            # Persist the compact changeset immediately. XLSX generation is
-            # reserved for explicit export; the shared Planner reads SQLite.
-            self.save_exports_to_folder(FILES.editor_autosave_dir, autosave=True)
-            self.autosave_dirty = False
-
-            self.statusBar().showMessage("Timeline saved. Excel export is optional.")
-
-        except Exception as e:
-            print("Quick save failed:", e)
-            self.statusBar().showMessage("Quick save failed.")
-
+            self._save_key_date_prices(silent=True)
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not save dated prices: {exc}", 12000)
 
     def autosave(self):
+        if not self._dated_edit_allowed():
+            return
         if not self.autosave_dirty or self.autosave_in_progress or self.canvas.is_dragging:
             return
-
         try:
             self.autosave_in_progress = True
-            if self._active_key_date:
-                self._save_key_date_prices(silent=True)
-                self.statusBar().showMessage("Scheduled date prices saved to the pricing timeline")
-                return
-            export_dir = FILES.editor_autosave_dir
-            self.save_exports_to_folder(export_dir, autosave=True)
-            self.autosave_dirty = False
-
-            self.statusBar().showMessage("Autosaved to the shared pricing timeline")
-
-        except Exception as e:
-            print("Autosave failed:", e)
+            self._save_key_date_prices(silent=True)
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not autosave dated prices: {exc}", 12000)
         finally:
             self.autosave_in_progress = False
 
-
     def export_prices(self):
-        if self._active_key_date:
-            self._save_key_date_prices()
+        """Compatibility entry point: partner packs are always official."""
+        self._create_timeline_partner_pack()
+
+    def _record_partner_pack_history(self, prices, timestamp, result, name, compare_timestamp):
+        """Keep every successful pack's exact input, without overwriting earlier packs."""
+        history = FILES.editor_history_root
+        history.mkdir(parents=True, exist_ok=True)
+        token = timestamp
+        if any((history / f"manual_prices_{token}{suffix}").exists() for suffix in (".csv", ".xlsx")) or self.export_metadata_path(token).exists():
+            token = f"{timestamp}_{datetime.now():%H%M%S_%f}"
+        path = history / f"manual_prices_{token}.csv"
+        with path.open("x", encoding="utf-8", newline="") as stream:
+            prices.to_csv(stream, index=False)
+        self.save_export_metadata(
+            timestamp=token, official=True, partner_zip=result.zip_path,
+            compare_timestamp=compare_timestamp, pack_result=result, name=name,
+        )
+        self.refresh_saved_state_combo(selected_timestamp=token)
+        return path
+
+    def _export_timeline_excel(self) -> None:
+        self._export_key_date_prices(official=False)
+
+    def _create_timeline_partner_pack(self) -> None:
+        self._export_key_date_prices(official=True)
+
+    def _export_key_date_prices(self, *, official: bool = True) -> None:
+        """Export the selected projected date without overwriting current prices."""
+        key_date = self._active_key_date
+        if not key_date or self._using_history_snapshot:
+            QMessageBox.information(self, "Export dated prices", "Choose a date in Timeline first.")
             return
-        cursor_active = False
-        try:
-            official_export = self.ask_official_export()
-            if official_export is None:
-                return
-            official_name = ""
-            if official_export:
-                official_name, accepted = QInputDialog.getText(
-                    self,
-                    "Name official save",
-                    "Save name (shown in the saved-prices dropdown):",
-                )
-                official_name = official_name.strip()
-                if not accepted or not official_name:
-                    return
+        if self.autosave_dirty:
+            try:
+                self._save_key_date_prices(silent=True)
+            except Exception as exc:
+                return QMessageBox.warning(self, "Scheduled-date export", str(exc))
 
-            ts = datetime.now().strftime("%Y%m%d")
-            local_export_dir = FILES.editor_exports_dir
-
-            self.statusBar().showMessage("Saving consolidated prices, autosave and history...")
-            self.clear_busy_cursor()
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            cursor_active = True
-            QApplication.processEvents()
-
-            # Explicit export creates an optional workbook and one dated CSV
-            # recovery point. Quick saves remain database-only.
-            ts = self.save_exports_to_folder(
-                local_export_dir,
-                include_history=True,
-                timestamp=ts,
+        official_name = ""
+        if official:
+            official_name, accepted = QInputDialog.getText(
+                self, "Create partner pack", "Pack name (this creates an official pack and publishes the included dated price changes):"
             )
-            self._refresh_manual_baseline()
-            self.save_exports_to_folder(
-                FILES.editor_autosave_dir,
-                autosave=True,
-                timestamp=ts,
-            )
-
-            # The canonical workbook is now saved, so regenerate the disposable
-            # recommendation annotation + CSVs + HTML insight view from that exact state.
-            # self.refresh_pricing_intelligence(force=True, refresh=True)
-
-            if not official_export:
-                self.save_export_metadata(
-                    timestamp=ts,
-                    official=False,
-                )
-                self.autosave_dirty = False
-                self.refresh_saved_state_combo(selected_timestamp=ts)
-
-                QApplication.restoreOverrideCursor()
-                cursor_active = False
-                QMessageBox.information(
-                    self,
-                    "Save complete",
-                    "Current prices and autosave were saved.\n\n"
-                    "This snapshot was not marked official, so no partner pack was created.",
-                )
-                self.statusBar().showMessage(
-                    "Save complete: current and autosave saved; no partner pack created."
-                )
+            official_name = official_name.strip()
+            if not accepted or not official_name:
                 return
 
-            # Official snapshots additionally create the partner pack.
-            compare_timestamp = self.select_partner_compare_timestamp(ts)
-            default_zip = self.official_partner_pack_filename(ts, official_name)
-            partner_pack_dir = self.partner_pack_dir_for_status(True)
-            partner_pack_dir.mkdir(parents=True, exist_ok=True)
-
-            # Release the wait cursor while the native save dialog is open.
-            QApplication.restoreOverrideCursor()
-            cursor_active = False
+        effective_date = date.fromisoformat(key_date) + timedelta(days=1)
+        timestamp = effective_date.strftime("%Y%m%d")
+        # Keep staging beside history so partner-pack comparisons find prior snapshots.
+        date_dir = (FILES.editor_history_root.parent / f"partner_pack_stage_{timestamp}"
+                    if official else FILES.work_dir / "promo_planner" / "key_date_exports" / timestamp)
+        date_dir.mkdir(parents=True, exist_ok=True)
+        stage_book = date_dir / "manual_prices_current.xlsx"
+        if official:
+            export_path = stage_book
+        else:
+            suggested = FILES.editor_exports_dir / f"manual_prices_after_{effective_date.isoformat()}.xlsx"
             path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save official partner price pack ZIP",
-                str(partner_pack_dir / default_zip),
-                "Zip files (*.zip)",
+                self, f"Export Excel for {effective_date:%d %b %Y}", str(suggested), "Excel workbooks (*.xlsx)"
             )
             if not path:
-                # Pricing state is already saved. Keep it non-official if partner-pack creation is cancelled.
-                self.save_export_metadata(timestamp=ts, official=False)
-                self.refresh_saved_state_combo(selected_timestamp=ts)
-                self.statusBar().showMessage(
-                    "Prices saved, but partner-pack creation was cancelled; snapshot remains non-official."
-                )
                 return
+            export_path = Path(path)
+            if export_path.suffix.lower() != ".xlsx":
+                export_path = export_path.with_suffix(".xlsx")
 
+        try:
+            prices = self.state.export_prices_dataframe()
+            if prices.empty:
+                raise ValueError("The selected date has no price rows to export.")
+            pending_pa = prices.get("_PromoPlannerPAUnresolved", pd.Series(False, index=prices.index))
+            if official and pending_pa.astype(str).str.lower().isin({"true", "1", "1.0"}).any():
+                raise ValueError("PA adjustments below cost need approval in Preview & resolve. You can also disable PA for those destinations in Edit promotion.")
+            write_pricing_workbook(prices, stage_book, promo_catalog=self.state.promo_catalog)
+            if export_path.resolve() != stage_book.resolve():
+                write_pricing_workbook(prices, export_path, promo_catalog=self.state.promo_catalog)
+        except Exception as exc:
+            return QMessageBox.critical(self, "Scheduled-date export failed", str(exc))
+
+        if not official:
+            QMessageBox.information(
+                self,
+                "Scheduled-date prices exported",
+                f"Projected prices for {effective_date:%d %b %Y} were exported to:\n{export_path}\n\n"
+                "Current prices and the production timeline were not overwritten.",
+            )
+            return
+
+        compare_timestamp = self.select_partner_compare_timestamp(timestamp)
+        default_zip = self.official_partner_pack_filename(timestamp, official_name)
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save scheduled-date partner pack ZIP",
+            str(self.partner_pack_dir_for_status(True) / default_zip),
+            "Zip files (*.zip)",
+        )
+        if not path:
+            QMessageBox.information(
+                self, "Excel exported", f"The Excel snapshot was saved to:\n{export_path}\n\nPartner-pack creation was cancelled."
+            )
+            return
+        try:
             zip_path = self.partner_zip_path_in_status_folder(Path(path), True)
-
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            cursor_active = True
-            QApplication.processEvents()
-
-            pack_result = build_partner_price_pack(
-                local_export_dir,
+            result = build_partner_price_pack(
+                date_dir,
                 zip_path,
                 compare_timestamp=compare_timestamp,
-                current_timestamp=ts,
+                current_timestamp=timestamp,
                 destination_table_json=FILES.destination_table_json,
                 regions_yaml=FILES.regions_yaml,
                 ppg_csv=FILES.ppg_csv,
             )
-            self.save_export_metadata(
-                timestamp=ts,
-                official=True,
-                partner_zip=pack_result.zip_path,
-                compare_timestamp=compare_timestamp,
-                pack_result=pack_result,
-                name=official_name,
+        except Exception as exc:
+            return QMessageBox.critical(
+                self, "Partner pack failed", f"The projected Excel was saved, but partner-pack creation failed:\n\n{exc}"
             )
-            self.autosave_dirty = False
-            self.refresh_saved_state_combo(selected_timestamp=ts)
-
-            QApplication.restoreOverrideCursor()
-            cursor_active = False
-
-            pack_lines = [
-                (
-                    f"{result.member_name}: {result.rows_written} rows"
-                    f" ({result.rows_removed_below_cost} below-cost removed)"
-                )
-                for result in pack_result.files
-            ]
-            diff_lines = [
-                f"{result.member_name}: {result.rows_written} changed rows"
-                for result in pack_result.diff_files
-            ]
-            diff_text = "\n\nDiff CSVs:\n" + "\n".join(diff_lines) if diff_lines else ""
-            QMessageBox.information(
-                self,
-                "Official export complete",
-                f"Current prices, autosave and history were saved.\n\n"
-                f"The official partner ZIP was saved as:\n{pack_result.zip_path}\n\n"
-                f"CSV files inside ZIP: {len(pack_result.files)}\n"
-                + "\n".join(pack_lines)
-                + diff_text,
+        try:
+            history_path = self._record_partner_pack_history(
+                prices, timestamp, result, official_name, compare_timestamp,
             )
-            self.statusBar().showMessage(
-                "Official export complete: pricing history saved and partner pack created."
-            )
-
-        except Exception as e:
-            QMessageBox.warning(self, "Export failed", f"Could not save export: {e}")
-            self.statusBar().showMessage("Export failed.")
-
-        finally:
-            if cursor_active:
-                self.clear_busy_cursor()
+            self.timeline.mark_price_changes_official_through(key_date, partner_pack=str(result.zip_path))
+            self._promo_store().mark_campaigns_official(effective_date.isoformat(), str(result.zip_path))
+            self._price_view_cache.clear()
+            self._refresh_manual_baseline()
+            self._refresh_key_date_views(selected=key_date)
+            self._update_price_view_controls()
+            self.refresh_campaign_panel()
+        except Exception as exc:
+            return QMessageBox.critical(self, "Official price update", f"The partner pack was created, but saving its history or committing the base prices failed:\n{exc}")
+        QMessageBox.information(
+            self,
+            "Scheduled-date export complete",
+            f"Projected Excel: {export_path}\nPartner pack: {result.zip_path}\nHistory CSV: {history_path}\n\n"
+            "The partner pack is official. Price updates through this date are permanent from their effective dates; promotions keep their scheduled start and end dates.",
+        )
 
     def populate_combos(self):
         self.country_combo.blockSignals(True)
@@ -2032,6 +2305,9 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def on_exchange_rate_changed(self, rate: float):
+        if not self._require_dated_edit():
+            return
+        self._ensure_price_event()
         self.state.set_eur_to_usd(float(rate))
         self.mark_dirty()
         self.refresh_canvas()
@@ -2237,7 +2513,15 @@ class MainWindow(QMainWindow):
         self.recommendation_status_label.setText(text)
 
     def on_recommendation_selected(self, row_id: str):
+        if not self._require_dated_edit():
+            return
         self.state.selected_row_id = str(row_id)
+        point = self.state.row_index.get(str(row_id))
+        rec = self.state.recommendation_for_point(point, self.state.active_currency, actionable_only=True) if point else None
+        if rec and str(rec.get("Mechanism", "")).upper() == "PROMO":
+            self._open_promotion_for_selected_date(str(rec.get("SuggestedPromoCode", "")))
+            return
+        self._ensure_price_event()
         result = self.state.apply_recommendation(str(row_id))
 
         if result.get("needs_confirmation"):
@@ -2272,17 +2556,43 @@ class MainWindow(QMainWindow):
         self.refresh_promo_range_controls()
         self.refresh_canvas()
 
-    def on_promo_selected_from_chart(self, promo_code: str):
+    def _open_promotion_for_selected_date(self, promo_code: str) -> None:
+        if not self._require_dated_edit():
+            return
         if promo_code == "__REMOVE_PROMO__":
-            self.state.remove_selected_promo()
-        else:
-            self.selected_promo_code_for_range = str(promo_code)
-            self.state.assign_promo_to_selected(str(promo_code))
+            self.open_promo_planner()
+            self.statusBar().showMessage("Set the campaign end date in Campaigns to schedule its removal.", 8000)
+            return
+        planner = self.planner_workspace
+        if planner is None:
+            return
+        effective = date.fromisoformat(self._active_key_date) + timedelta(days=1)
+        point = self.state.selected_point_info()
+        label = f"Promotion {effective:%d %b %Y}"
+        self.timeline.schedule_promotion_date(self._active_key_date, label)
+        planner.begin_campaign_on_date(effective.isoformat(), label=label)
+        if point:
+            planner.selected_destinations = [str(point.get("iso", ""))]
+            planner._render_selected()
+            for plan, check in planner.plan_checks.items():
+                check.setChecked(plan == point.get("plan"))
+            for day, button in planner.day_buttons.items():
+                button.setChecked(day == int(point.get("days") or 0))
+        for index, option in enumerate(planner._promo_by_display.values()):
+            if option.code == promo_code:
+                planner.promo_combo.setCurrentIndex(index)
+                break
+        self._refresh_key_date_views(selected=self._active_key_date)
+        self._set_workspace_mode("campaigns")
+        planner.tabs.setCurrentWidget(planner.create_tab)
 
-        self.mark_dirty()
-        self.refresh_canvas()
+    def on_promo_selected_from_chart(self, promo_code: str):
+        self._open_promotion_for_selected_date(promo_code)
 
     def on_point_dragged(self, row_id: str, new_price: float, point_index: int):
+        if not self._require_dated_edit():
+            return
+        self._ensure_price_event()
         self.state.selected_row_id = row_id
         mode = self.current_drag_mode
 
@@ -2645,71 +2955,15 @@ class MainWindow(QMainWindow):
         return float(start), float(end)
 
     def apply_selected_promo_to_range(self) -> None:
-        promo_code = str(self.selected_promo_code_for_range or "").strip()
-        if not promo_code:
-            QMessageBox.information(
-                self,
-                "Promo range",
-                "Select a promo from Promo options first.",
-            )
-            return
-
-        day_range = self._selected_promo_range()
-        if day_range is None:
-            return
-
-        start_day, end_day = day_range
-        affected = self.state.assign_promo_to_range(promo_code, start_day, end_day)
-        if affected <= 0:
-            QMessageBox.information(
-                self,
-                "Promo range",
-                "No matching price points were found for this plan and duration range.",
-            )
-            return
-
-        self.mark_dirty()
-        self.refresh_canvas()
-        scope = "EUR + USD"
-        self.statusBar().showMessage(
-            f"Applied {promo_code} to {affected} price points from "
-            f"{self._promo_day_label(start_day)} to {self._promo_day_label(end_day)} days ({scope})."
-        )
+        code = str(self.selected_promo_code_for_range or "")
+        if code:
+            self._open_promotion_for_selected_date(code)
 
     def remove_promo_from_range(self) -> None:
-        day_range = self._selected_promo_range()
-        if day_range is None:
-            return
-
-        start_day, end_day = day_range
-        affected = self.state.remove_promo_from_range(start_day, end_day)
-        self.mark_dirty()
-        self.refresh_canvas()
-        scope = "EUR + USD"
-        self.statusBar().showMessage(
-            f"Removed promos from {affected} price points from "
-            f"{self._promo_day_label(start_day)} to {self._promo_day_label(end_day)} days ({scope})."
-        )
+        self._open_promotion_for_selected_date("__REMOVE_PROMO__")
 
     def apply_promo(self, item: QListWidgetItem):
-        promo_code = item.data(Qt.UserRole)
-
-        if promo_code == "__REMOVE_PROMO__":
-            self.state.remove_selected_promo()
-            self.selected_promo_code_for_range = None
-            self.mark_dirty()
-            self.refresh_canvas()
-            return
-
-        # Only select the promo here.
-        # Do not apply it yet to the selected price point.
-        self.selected_promo_code_for_range = str(promo_code)
-
-        self.refresh_promo_range_controls()
-
-        self.statusBar().showMessage(
-            f"Selected promo for range: {self.selected_promo_code_for_range}"
-        )
+        self._open_promotion_for_selected_date(str(item.data(Qt.UserRole)))
 
     def toggle_left_panel(self):
         if self._left_panel_collapsed:
@@ -2737,9 +2991,7 @@ class MainWindow(QMainWindow):
         self.state.clear_brush()
 
     def remove_selected_promo(self):
-        self.state.remove_selected_promo()
-        self.mark_dirty()
-        self.refresh_canvas()
+        self._open_promotion_for_selected_date("__REMOVE_PROMO__")
 
     def try_auto_load(self):
         self.timeline.set_current_as_of(date.today().isoformat())
@@ -2846,7 +3098,7 @@ class MainWindow(QMainWindow):
             self.populate_combos()
             self._active_key_date = None
             self._refresh_key_date_views()
-            self.refresh_canvas()
+            self._load_price_view_data(None)
             self.statusBar().showMessage("Auto-loaded available files.")
         else:
             self.statusBar().showMessage(
