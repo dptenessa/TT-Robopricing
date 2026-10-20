@@ -26,15 +26,18 @@ import csv
 import json
 import math
 import os
+import shutil
 import sqlite3
 import statistics
+import subprocess
+import sys
 import urllib.request
 import urllib.error
 import time
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 
-VERSION = "1.7.1-holiday-coverage-validation"
+VERSION = "1.7.2-trends-adc-recovery"
 
 TEST_ORIGINS = ["DE", "FR"]
 TEST_DESTINATIONS = ["JP", "TR", "ES", "MA", "US"]
@@ -810,8 +813,87 @@ def collect_google_trends_history(
 ) -> dict[tuple[str, str], float]:
     """Fetch and store daily Top/Rising terms for the recent history window."""
     min_date = date.fromisoformat(observed) - timedelta(days=history_days - 1)
+    relogin_attempted = False
+
+    def needs_adc_login(exc: Exception) -> bool:
+        message = str(exc).lower()
+        auth_markers = (
+            "invalid_grant", "reauthentication", "invalid credentials",
+            "application default credentials", "refresherror",
+            "insufficient authentication scopes", "access_token_scope_insufficient",
+        )
+        if any(marker in message for marker in auth_markers):
+            return True
+        try:
+            from google.api_core.exceptions import Unauthenticated
+            if isinstance(exc, Unauthenticated):
+                return True
+        except ImportError:
+            pass
+        try:
+            from google.auth.exceptions import RefreshError
+            if isinstance(exc, RefreshError):
+                return True
+        except ImportError:
+            pass
+        return False
+
+    def refresh_adc_interactively() -> bool:
+        """Launch Google's supported ADC login only after an auth failure."""
+        gcloud = shutil.which("gcloud")
+        if not gcloud:
+            print(
+                "GOOGLE TRENDS AUTH: sign-in is required, but gcloud was not found. "
+                "Install Google Cloud CLI, then run: gcloud auth application-default "
+                "login --scopes=https://www.googleapis.com/auth/cloud-platform",
+                flush=True,
+            )
+            return False
+        print(
+            "GOOGLE TRENDS AUTH: Google requires sign-in. Opening the standard "
+            "Google Cloud CLI sign-in; complete it in the browser window.",
+            flush=True,
+        )
+        command = [
+            gcloud, "auth", "application-default", "login",
+            "--scopes=https://www.googleapis.com/auth/cloud-platform",
+        ]
+        try:
+            options = {"check": False}
+            if os.name == "nt":
+                options["creationflags"] = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            else:
+                options["stdin"] = None
+            result = subprocess.run(command, **options)
+        except OSError as exc:
+            print(f"GOOGLE TRENDS AUTH ERROR: could not start gcloud ({exc}).", flush=True)
+            return False
+        if result.returncode:
+            print(
+                "GOOGLE TRENDS AUTH ERROR: sign-in did not complete. "
+                "No Trends refresh was recorded as successful.",
+                flush=True,
+            )
+            return False
+        quota = subprocess.run(
+            [gcloud, "auth", "application-default", "set-quota-project", project_id],
+            check=False,
+            **({"creationflags": getattr(subprocess, "CREATE_NEW_CONSOLE", 0)} if os.name == "nt" else {}),
+        )
+        if quota.returncode:
+            print(
+                "GOOGLE TRENDS AUTH: sign-in completed, but the quota project "
+                f"could not be set to {project_id}. Grant serviceusage.services.use "
+                "on that project, then run gcloud auth application-default "
+                f"set-quota-project {project_id} and retry.",
+                flush=True,
+            )
+            return False
+        return True
+
     def query(lo, hi, members):
         from google.cloud import bigquery
+        nonlocal relogin_attempted
         client = bigquery.Client(project=project_id)
         origin_sql = ",".join("'"+o+"'" for o in members if len(o)==2 and o.isalpha())
         sql = f"""
@@ -849,7 +931,25 @@ def collect_google_trends_history(
         ORDER BY refresh_date DESC, country_code, kind, rank
         """
     
-        return client.query(sql).result()
+        try:
+            return list(client.query(sql).result())
+        except Exception as exc:
+            if not needs_adc_login(exc):
+                raise
+            if relogin_attempted:
+                print(
+                    "GOOGLE TRENDS AUTH ERROR: authentication still fails after "
+                    "sign-in. Check the selected Google account, BigQuery access, "
+                    "API enablement and quota-project permission.",
+                    flush=True,
+                )
+                raise
+            relogin_attempted = True
+            if not refresh_adc_interactively():
+                raise
+            # The client created before the login still holds the old credentials.
+            client = bigquery.Client(project=project_id)
+            return list(client.query(sql).result())
     rows = cached_trends(db, observed, origins, history_days, query,
                          force=refresh, offline=offline)
     rows_by_origin = defaultdict(list)
