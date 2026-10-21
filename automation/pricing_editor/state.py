@@ -208,6 +208,8 @@ def calculate_promo_price(base_price: float, promo_type: str, promo_value: float
         final_price = base_price - float(promo_value)
     elif promo_type == "percent":
         final_price = base_price * (1.0 - float(promo_value) / 100.0)
+    elif promo_type == "net":
+        final_price = float(promo_value)
     else:
         final_price = base_price
     return max(round(final_price, 4), 0.0)
@@ -277,6 +279,7 @@ def load_table(
         "_PromoPlannerPromoStack", "_PromoPlannerPromoOwner",
         "_PromoPlannerOriginalPrice_EUR", "_PromoPlannerOriginalPrice_USD",
         "_PromoPlannerPriceOwner",
+        "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
     ]
     if "IsBelowCostFloor" not in df.columns:
         if "IsBelowCalculatedCostFloor" in df.columns:
@@ -824,6 +827,10 @@ class EditorState:
         return base_price
 
     def _promo_value_for_currency(self, promo: dict[str, Any], currency: str | None = None) -> float:
+        if promo.get("promo_type") == "net":
+            target = promo.get(f"promo_net_{normalize_currency(currency or self.active_currency).lower()}")
+            if target is not None and pd.notna(target):
+                return float(target)
         # Absolute promo values are currency-agnostic: 4 means -4 EUR and -4 USD.
         return float(promo.get("promo_value", 0) or 0)
 
@@ -921,32 +928,33 @@ class EditorState:
         )
         return self.ppg_country_names
 
-    def _canonicalize_pricebook_country_names(self) -> None:
+    def _canonicalize_pricebook_country_names(self, frame: pd.DataFrame | None = None) -> None:
         """Force loaded price-book country names to the current PPG value by ISO."""
-        if self.pricebook_df.empty or "ISO" not in self.pricebook_df.columns:
+        frame = self.pricebook_df if frame is None else frame
+        if frame.empty or "ISO" not in frame.columns:
             return
 
         country_names = self.ppg_country_name_map()
         if not country_names:
             return
 
-        self.pricebook_df["ISO"] = (
-            self.pricebook_df["ISO"]
+        frame["ISO"] = (
+            frame["ISO"]
             .astype("string")
             .fillna("")
             .astype(str)
             .str.strip()
             .str.upper()
         )
-        mapped = self.pricebook_df["ISO"].map(country_names)
+        mapped = frame["ISO"].map(country_names)
 
-        ht_mask = self.pricebook_df.get(
+        ht_mask = frame.get(
             "Provider",
-            pd.Series("", index=self.pricebook_df.index),
+            pd.Series("", index=frame.index),
         ).astype(str).str.strip().eq("HT")
         missing_ht = sorted(
-            self.pricebook_df.loc[
-                ht_mask & self.pricebook_df["ISO"].str.len().eq(2) & mapped.isna(),
+            frame.loc[
+                ht_mask & frame["ISO"].str.len().eq(2) & mapped.isna(),
                 "ISO",
             ]
             .dropna()
@@ -960,7 +968,7 @@ class EditorState:
             )
 
         replace_mask = mapped.notna()
-        self.pricebook_df.loc[replace_mask, "Country"] = mapped.loc[replace_mask]
+        frame.loc[replace_mask, "Country"] = mapped.loc[replace_mask]
 
     def set_selection_defaults(self) -> None:
         countries = self.countries()
@@ -993,7 +1001,7 @@ class EditorState:
         out: dict[str, dict[str, dict[str, Any]]] = {c: {} for c in CURRENCIES}
         if self.pricebook_df.empty:
             return out
-        for _, row in self.pricebook_df.iterrows():
+        for row in self.pricebook_df.to_dict(orient="records"):
             code = str(row.get("PromoCode", "")).strip()
             if not code:
                 continue
@@ -1013,6 +1021,8 @@ class EditorState:
                 "promo_code": code,
                 "promo_type": promo_type,
                 "promo_value": promo_value,
+                "promo_net_eur": row.get("PromoNet_EUR"),
+                "promo_net_usd": row.get("PromoNet_USD"),
                 "promo_currency": "",
                 "promo_label": promo_label,
             }
@@ -1023,27 +1033,31 @@ class EditorState:
                 out[currency][key] = dict(promo)
         return out
 
-    def preload_pricebook(self, df: pd.DataFrame) -> None:
-        self.clear_runtime()
-        self.pricebook_df = df.copy()
-        self._canonicalize_pricebook_country_names()
+    def _prepare_pricebook_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        frame = df.copy()
+        self._canonicalize_pricebook_country_names(frame)
         allowed_isos = self.allowed_ppg_isos()
 
-        if allowed_isos and "ISO" in self.pricebook_df.columns:
-            self.pricebook_df["ISO"] = self.pricebook_df["ISO"].astype(str).str.strip().str.upper()
-            pricing_source = self.pricebook_df.get(
+        if allowed_isos and "ISO" in frame.columns:
+            frame["ISO"] = frame["ISO"].astype(str).str.strip().str.upper()
+            pricing_source = frame.get(
                 "PricingSourceUsed",
-                pd.Series("", index=self.pricebook_df.index),
+                pd.Series("", index=frame.index),
             ).astype(str).str.strip().str.lower()
             # Countries still obey the PPG whitelist. Locked regions are first-class
             # pricing units and must not be dropped simply because their ISO field
             # contains a region code instead of an ISO2 country code.
-            keep = self.pricebook_df["ISO"].isin(allowed_isos) | pricing_source.eq("region_max")
-            self.pricebook_df = self.pricebook_df[keep].copy()
+            keep = frame["ISO"].isin(allowed_isos) | pricing_source.eq("region_max")
+            frame = frame[keep].copy()
+        return frame
+
+    def preload_pricebook(self, df: pd.DataFrame) -> None:
+        self.clear_runtime()
+        self.pricebook_df = self._prepare_pricebook_frame(df)
         self.promo_store_by_currency = self._base_promos_from_df()
 
         unit_lookup: dict[str, set[str]] = {}
-        for _, row in self.pricebook_df.iterrows():
+        for row in self.pricebook_df.to_dict(orient="records"):
             unit_id = str(row.get("PricingUnitIdUsed", "")).strip()
             if unit_id:
                 unit_lookup.setdefault(unit_id, set()).add(str(row.get("Country", "")).strip())
@@ -1057,7 +1071,7 @@ class EditorState:
             ht = cdf[cdf["Provider"].astype(str).str.strip().eq("HT")].copy()
             ht = ht.sort_values(["Plan", "Days", "GB", "Price"])
             points: list[dict[str, Any]] = []
-            for _, row in ht.iterrows():
+            for row in ht.to_dict(orient="records"):
                 unit_id = str(row.get("PricingUnitIdUsed", "")).strip()
                 scope_key = str(row.get("sku_scope_key", "")).strip()
 
@@ -1130,6 +1144,9 @@ class EditorState:
                     ),
                     "is_new_entry": False,
                     "allow_below_cost": _boolish(row.get("AllowBelowCost", False)),
+                    "manual_pa_links": "" if pd.isna(row.get("_ManualPALinks", "")) else str(row.get("_ManualPALinks", "")),
+                    "promo_pa_underlying": "" if pd.isna(row.get("_PromoPlannerPAUnderlying", "")) else str(row.get("_PromoPlannerPAUnderlying", "")),
+                    "promo_pa_unresolved": _boolish(row.get("_PromoPlannerPAUnresolved", False)),
                     "promo_planner_stack": "" if pd.isna(row.get("_PromoPlannerPromoStack", "")) else str(row.get("_PromoPlannerPromoStack", "")),
                     "promo_planner_owner": "" if pd.isna(row.get("_PromoPlannerPromoOwner", "")) else str(row.get("_PromoPlannerPromoOwner", "")),
                     "promo_planner_original_price_eur": (
@@ -1178,6 +1195,96 @@ class EditorState:
 
         self._refresh_all_display_prices()
         self.set_selection_defaults()
+
+    def load_timeline_view(self, df: pd.DataFrame) -> bool:
+        """Reuse catalogue indexes when only dated prices/promos have changed.
+
+        Returns True for the incremental path. Imports/catalogue changes fall
+        back to the complete loader, including the usual whitelist checks.
+        """
+        frame = self._prepare_pricebook_frame(df)
+        dynamic = {
+            "Price", "Price_EUR", "Price_USD", "PromoCode", "PromoType", "PromoValue",
+            "PromoLabel", "PromoName", "AllowBelowCost", "FinalPriceAfterPromo",
+            "FinalPriceAfterPromo_EUR", "FinalPriceAfterPromo_USD",
+            "_PromoPlannerPromoStack", "_PromoPlannerPromoOwner",
+            "_PromoPlannerOriginalPrice_EUR", "_PromoPlannerOriginalPrice_USD",
+            "_PromoPlannerPriceOwner",
+            "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
+        }
+        before_columns = set(self.pricebook_df.columns) - dynamic
+        after_columns = set(frame.columns) - dynamic
+        same_catalogue = bool(self.row_index) and before_columns == after_columns
+        if same_catalogue:
+            columns = sorted(before_columns)
+            same_catalogue = self.pricebook_df[columns].reset_index(drop=True).equals(
+                frame[columns].reset_index(drop=True)
+            )
+        if not same_catalogue:
+            self.preload_pricebook(df)
+            self.preload_last_export(df)
+            return False
+
+        def signature(point):
+            return (
+                tuple(point.get("working_prices", {}).get(c) for c in CURRENCIES),
+                tuple(point.get("base_prices", {}).get(c) for c in CURRENCIES),
+                tuple(point.get("base_display_prices", {}).get(c) for c in CURRENCIES),
+                bool(point.get("allow_below_cost")), bool(point.get("is_new_entry")),
+                point.get("promo_planner_stack"), point.get("promo_planner_owner"),
+                point.get("promo_pa_underlying"), point.get("promo_pa_unresolved"), point.get("manual_pa_links"),
+                point.get("promo_planner_original_price_eur"),
+                point.get("promo_planner_original_price_usd"), point.get("promo_planner_price_owner"),
+                tuple(tuple(sorted((self._promo_for_point(point, c) or {}).items())) for c in CURRENCIES),
+            )
+
+        previous = {rid: signature(point) for rid, point in self.row_index.items()}
+        self.pricebook_df = frame
+        self.working_price_by_scope = {}
+        self.brush_start_row_id = self.brush_end_row_id = None
+        for row in frame.to_dict(orient="records"):
+            point = self.row_index.get(str(row.get("row_id", "")))
+            if point is None:
+                continue
+            prices = {c: self._price_for_currency_from_row(row, c) for c in CURRENCIES}
+            point["base_prices"] = prices
+            point["base_display_prices"] = {
+                c: self._final_price_for_currency_from_row(row, c, prices[c])
+                if str(row.get("PromoCode", "")).strip() else prices[c]
+                for c in CURRENCIES
+            }
+            for field, column in (
+                ("manual_pa_links", "_ManualPALinks"),
+                ("promo_pa_underlying", "_PromoPlannerPAUnderlying"),
+                ("promo_planner_stack", "_PromoPlannerPromoStack"),
+                ("promo_planner_owner", "_PromoPlannerPromoOwner"),
+                ("promo_planner_price_owner", "_PromoPlannerPriceOwner"),
+            ):
+                value = row.get(column, "")
+                point[field] = "" if pd.isna(value) else str(value)
+            point["promo_pa_unresolved"] = _boolish(row.get("_PromoPlannerPAUnresolved", False))
+            for c in ("eur", "usd"):
+                value = pd.to_numeric(row.get(f"_PromoPlannerOriginalPrice_{c.upper()}"), errors="coerce")
+                point[f"promo_planner_original_price_{c}"] = None if pd.isna(value) else float(value)
+
+        # Rebuild saved/working scope values, but recalculate display/floor
+        # diagnostics only for changed points and dependent regional anchors.
+        self.preload_last_export(df, refresh_display=False)
+        changed = {rid for rid, point in self.row_index.items() if previous[rid] != signature(point)}
+        floor_keys = {
+            (point.get("provider"), point.get("plan"), point.get("days"))
+            for rid in changed for point in (self.row_index[rid],)
+            if not self._is_region_point(point)
+        }
+        for rid, point in self.row_index.items():
+            dependent_region = self._is_region_point(point) and (
+                point.get("provider"), point.get("plan"), point.get("days")
+            ) in floor_keys
+            if rid in changed or dependent_region:
+                self._apply_point_display(point)
+        self.working_prices = self._working_prices_for(self.active_currency)
+        self.loaded_prices = self._loaded_prices_for(self.active_currency)
+        return True
 
     def preload_market(self, df: pd.DataFrame) -> None:
         self.market_df = df.copy()
@@ -1819,11 +1926,12 @@ class EditorState:
     def revenue_projected_total(self) -> float:
         return self.revenue_last_month_total() + self.revenue_impact_total()
 
-    def preload_last_export(self, df: pd.DataFrame) -> None:
+    def preload_last_export(self, df: pd.DataFrame, *, refresh_display: bool = True) -> None:
         if df.empty:
             for q in self.row_index.values():
                 q["is_new_entry"] = True
-                self._apply_point_display(q)
+                if refresh_display:
+                    self._apply_point_display(q)
             return
 
         self.loaded_prices = {}
@@ -1833,7 +1941,7 @@ class EditorState:
         self.promo_store_by_currency = {c: {} for c in CURRENCIES}
         matched_entry_keys: set[str] = set()
 
-        for _, row in df.iterrows():
+        for row in df.to_dict(orient="records"):
             scope_key = str(row.get("sku_scope_key", "")).strip()
             entry_key = build_price_row_key(
                 row.get("ISO", ""),
@@ -1890,6 +1998,8 @@ class EditorState:
                     "promo_code": promo_code,
                     "promo_type": promo_type,
                     "promo_value": promo_value,
+                    "promo_net_eur": row.get("PromoNet_EUR"),
+                    "promo_net_usd": row.get("PromoNet_USD"),
                     "promo_currency": "",
                     "promo_label": promo_label,
                 }
@@ -1902,7 +2012,8 @@ class EditorState:
         for q in self.row_index.values():
             entry_key = str(q.get("entry_key", "")).strip()
             q["is_new_entry"] = bool(entry_key) and entry_key not in matched_entry_keys
-            self._apply_point_display(q)
+            if refresh_display:
+                self._apply_point_display(q)
 
     def _apply_point_display(self, point: dict[str, Any]) -> None:
         currency = self.normalize_current_currency()
@@ -2408,52 +2519,7 @@ class EditorState:
 
         return markers
 
-    def available_promo_days_for_selected(self) -> list[float]:
-        p = self.selected_point_info()
-        if p is None:
-            return []
 
-        unit_id = str(p.get("pricing_unit_id", "")).strip()
-        plan = str(p.get("plan", "")).strip()
-        days: set[float] = set()
-        for q in self.row_index.values():
-            if str(q.get("pricing_unit_id", "")).strip() != unit_id:
-                continue
-            if str(q.get("plan", "")).strip() != plan:
-                continue
-            try:
-                day = float(q.get("days"))
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(day):
-                days.add(day)
-        return sorted(days)
-
-    def _matching_promo_range_points(
-        self,
-        start_day: float,
-        end_day: float,
-    ) -> list[dict[str, Any]]:
-        p = self.selected_point_info()
-        if p is None:
-            return []
-
-        low, high = sorted((float(start_day), float(end_day)))
-        unit_id = str(p.get("pricing_unit_id", "")).strip()
-        plan = str(p.get("plan", "")).strip()
-        matches = []
-        for q in self.row_index.values():
-            if str(q.get("pricing_unit_id", "")).strip() != unit_id:
-                continue
-            if str(q.get("plan", "")).strip() != plan:
-                continue
-            try:
-                day = float(q.get("days"))
-            except (TypeError, ValueError):
-                continue
-            if low <= day <= high:
-                matches.append(q)
-        return matches
 
     def _apply_promo_template_to_points(
         self,
@@ -2502,22 +2568,153 @@ class EditorState:
         ]
         return self._apply_promo_template_to_points(match, points)
 
-    def assign_promo_to_range(
-        self,
-        promo_code: str,
-        start_day: float,
-        end_day: float,
-    ) -> int:
-        match = next(
-            (c for c in self.promo_candidates_for_selected() if c["promo_code"] == promo_code),
-            None,
-        )
-        if not match:
+    def selected_has_manual_pa_dependents(self) -> bool:
+        selected = self.selected_point_info()
+        if selected is None:
+            return False
+        owner = str(selected.get("promo_scope_key", ""))
+        for point in self.row_index.values():
+            if point.get("iso") != selected.get("iso") or point.get("plan") != selected.get("plan"):
+                continue
+            data = self._manual_pa_data(point)
+            if data and any(layer["owner"] == owner for layer in data["layers"]):
+                return True
+        return False
+
+    def _manual_pa_data(self, point: dict[str, Any]) -> dict | None:
+        raw = point.get("manual_pa_links", "")
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not isinstance(data.get("layers"), list) or "base" not in data:
+            raise ValueError("Invalid manual PA restoration data.")
+        return data
+
+    def _manual_pa_base(self, point: dict[str, Any]) -> dict:
+        metadata = ("promo_pa_underlying", "promo_pa_unresolved", "promo_planner_stack", "promo_planner_owner",
+                    "promo_planner_original_price_eur", "promo_planner_original_price_usd",
+                    "promo_planner_price_owner", "allow_below_cost")
+        return {"promos": {c: dict(self._promo_for_point(point, c)) if self._promo_for_point(point, c) else None
+                           for c in CURRENCIES},
+                "metadata": {key: point.get(key) for key in metadata}}
+
+    def _render_manual_pa(self, point: dict[str, Any], data: dict, *, active_campaign_ids=None, effective_date="") -> None:
+        """Rebuild from underlying offers plus remaining independent caps."""
+        key = str(point.get("promo_scope_key", ""))
+        base = data["base"]
+        metadata = base["metadata"]
+        owner = str(metadata.get("promo_planner_owner") or "")
+        if active_campaign_ids is not None and owner and owner not in active_campaign_ids:
+            # Never revive an expired timed offer hidden underneath manual PA.
+            stack = json.loads(metadata.get("promo_planner_stack") or "[]")
+            restored = None
+            while stack:
+                layer = stack.pop()
+                layer_owner = str(layer.get("promo_owner") or "")
+                if layer_owner and layer_owner not in active_campaign_ids:
+                    continue
+                if layer.get("end_date") and effective_date and layer["end_date"] < effective_date:
+                    continue
+                restored = layer
+                break
+            promo = None if restored is None else dict(
+                promo_code=restored.get("promo_code", ""), promo_type=restored.get("promo_type", ""),
+                promo_value=restored.get("promo_value", 0), promo_label=restored.get("promo_label", ""),
+                promo_net_eur=restored.get("net_eur"), promo_net_usd=restored.get("net_usd"))
+            base["promos"] = {c: dict(promo) if promo and promo["promo_code"] else None for c in CURRENCIES}
+            metadata.update(promo_planner_owner=str(restored.get("promo_owner") or "") if restored else "",
+                            promo_planner_stack=json.dumps(stack) if stack else "", promo_pa_underlying="",
+                            promo_pa_unresolved=False, allow_below_cost=False)
+        for currency in CURRENCIES:
+            promo = base["promos"].get(currency)
+            store = self._promo_store_for(currency)
+            if promo:
+                store[key] = dict(promo)
+            else:
+                store.pop(key, None)
+        point.update(base["metadata"])
+        layers = data["layers"]
+        if not layers:
+            point["manual_pa_links"] = ""
+            self._apply_point_display(point)
+            return
+        targets = {c: min([self._final_price_for_currency(point, c, self._working_price_for_currency(point, c))]
+                          + [float(layer["caps"][c]) for layer in layers]) for c in CURRENCIES}
+        template = dict(promo_code="PA", promo_type="net", promo_value=targets["EUR"],
+                        promo_net_eur=targets["EUR"], promo_net_usd=targets["USD"],
+                        promo_label="Promo adjustment", promo_currency="")
+        self._apply_promo_template_to_points(template, [point])
+        point.update(manual_pa_links=json.dumps(data, ensure_ascii=False),
+                     promo_pa_underlying="", promo_pa_unresolved=False,
+                     promo_planner_owner="", allow_below_cost=False)
+
+    def assign_manual_promo(self, promo_code: str, *, align_shorter: bool = False,
+                            active_campaign_ids=None, effective_date="") -> int:
+        """Save a manual offer; linked PA restores when that anchor is removed."""
+        selected = self.selected_point_info()
+        if selected is None:
             return 0
-        return self._apply_promo_template_to_points(
-            match,
-            self._matching_promo_range_points(start_day, end_day),
-        )
+        template = None
+        if promo_code != "__REMOVE_PROMO__":
+            template = next((c for c in self.promo_candidates_for_selected()
+                             if c["promo_code"] == promo_code), None)
+            if template is None:
+                return 0
+        iso, plan = selected.get("iso"), selected.get("plan")
+        duration = float(selected["days"])
+        owner = str(selected.get("promo_scope_key", ""))
+        points = [q for q in self.row_index.values()
+                  if q.get("iso") == iso and q.get("plan") == plan]
+        anchors = [q for q in points if float(q["days"]) == duration]
+        # Validate every snapshot before changing any rows.
+        links = {str(q["row_id"]): self._manual_pa_data(q) for q in points}
+        touched = set()
+        for q in points:
+            data = links[str(q["row_id"])]
+            if not data or not any(layer["owner"] == owner for layer in data["layers"]):
+                continue
+            data["layers"] = [layer for layer in data["layers"] if layer["owner"] != owner]
+            self._render_manual_pa(q, data, active_campaign_ids=active_campaign_ids, effective_date=effective_date)
+            touched.add(str(q.get("promo_scope_key")))
+        # Editing an individual dependent point explicitly replaces its PA.
+        for q in anchors:
+            q["manual_pa_links"] = ""
+        if promo_code == "__REMOVE_PROMO__":
+            count = self._remove_promos_from_points(anchors)
+        else:
+            count = self._apply_promo_template_to_points(template, anchors)
+        for q in anchors:
+            q.update(promo_pa_underlying="", promo_pa_unresolved=False,
+                     promo_planner_owner="", allow_below_cost=False)
+        if not align_shorter or promo_code == "__REMOVE_PROMO__":
+            self._refresh_all_display_prices()
+            return count + len(touched)
+        caps = {c: self._final_price_for_currency(selected, c, self._working_price_for_currency(selected, c))
+                for c in CURRENCIES}
+        for q in points:
+            if float(q["days"]) >= duration:
+                continue
+            data = self._manual_pa_data(q)
+            # Keep another anchor's constraint even when its cheaper overlay
+            # currently masks this one. Removing it can reveal this cap later.
+            base = data["base"] if data else self._manual_pa_base(q)
+            base_nets = {}
+            for c in CURRENCIES:
+                promo = base["promos"].get(c)
+                price = self._working_price_for_currency(q, c)
+                base_nets[c] = (self.round_promo_price(calculate_promo_price(
+                    price, promo.get("promo_type", ""), self._promo_value_for_currency(promo, c)))
+                    if promo else self.round_regular_price(price))
+            if all(base_nets[c] <= caps[c] + 1e-9 for c in CURRENCIES):
+                continue
+            if data is None:
+                data = {"base": base, "layers": []}
+            data["layers"].append({"owner": owner, "caps": caps})
+            self._render_manual_pa(q, data, active_campaign_ids=active_campaign_ids, effective_date=effective_date)
+            touched.add(str(q.get("promo_scope_key")))
+        self._refresh_all_display_prices()
+        return count + len(touched)
+
 
     def _remove_promos_from_points(self, points: list[dict[str, Any]]) -> int:
         currencies = self._currencies_for_promo_edit()
@@ -2557,10 +2754,6 @@ class EditorState:
         ]
         return self._remove_promos_from_points(points)
 
-    def remove_promo_from_range(self, start_day: float, end_day: float) -> int:
-        return self._remove_promos_from_points(
-            self._matching_promo_range_points(start_day, end_day)
-        )
 
     def workbench_scope_points(
         self,
@@ -2723,7 +2916,7 @@ class EditorState:
             final_usd = self._final_price_for_currency(point, "USD", price_usd)
             final_eur = self._final_price_for_currency(point, "EUR", price_eur)
 
-            self._refresh_point_floor_status(point)
+            # _refresh_all_display_prices above already refreshed both currency floors.
             below_by_currency = point.get("below_cost_floor_by_currency", {}) or {}
             floors_by_currency = point.get("cost_floor_by_currency", {}) or {}
             allow_below_cost = bool(point.get("allow_below_cost", False))
@@ -2750,6 +2943,11 @@ class EditorState:
                 "PromoCode": promo.get("promo_code", "") if promo else "",
                 "PromoType": promo.get("promo_type", "") if promo else "",
                 "PromoValue": promo_value,
+                "PromoNet_EUR": promo.get("promo_net_eur") if promo and promo.get("promo_type") == "net" else None,
+                "PromoNet_USD": promo.get("promo_net_usd") if promo and promo.get("promo_type") == "net" else None,
+                "_ManualPALinks": point.get("manual_pa_links", ""),
+                "_PromoPlannerPAUnderlying": point.get("promo_pa_underlying", ""),
+                "_PromoPlannerPAUnresolved": bool(point.get("promo_pa_unresolved", False)),
                 "PromoLabel": promo.get("promo_label", "") if promo else "",
                 "PromoBasePrice": price_eur if promo else "",
                 "FinalPriceAfterPromo_EUR": final_eur,

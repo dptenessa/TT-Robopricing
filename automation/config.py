@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from pathlib import Path
 
 HT_REV_SHARE = 0.03
@@ -83,4 +84,18 @@ if BASE_DIR.name == "automation":
 INPUT_REGIONS = BASE_DIR / "inputs" / "destinations.yaml"
 OUTPUT_NAME = "region_prices_current.csv"
 
-T_TRAVEL_SALES_FILE = r"C:\Users\ddeblock\Deutsche Telekom AG\HT-TD Travel eSIM Launch - Documents\General\11_Reporting\T-Travel_sales_master.csv"
+DEV_WORKSPACE_MARKER = BASE_DIR / "outputs" / ".development_workspace"
+LOCAL_SALES_MASTER = BASE_DIR / "local_data" / "T-Travel_sales_master.csv"
+if DEV_WORKSPACE_MARKER.exists():
+    # Development must use its own copy and must never fall back to production.
+    T_TRAVEL_SALES_FILE = str(LOCAL_SALES_MASTER)
+else:
+    _sales_override = str(os.environ.get("TTRAVEL_SALES_MASTER_CSV", "")).strip()
+    T_TRAVEL_SALES_FILE = _sales_override or str(
+        Path.home()
+        / "Deutsche Telekom AG"
+        / "HT-TD Travel eSIM Launch - Documents"
+        / "General"
+        / "11_Reporting"
+        / "T-Travel_sales_master.csv"
+    )

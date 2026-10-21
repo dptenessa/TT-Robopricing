@@ -11,6 +11,14 @@ from .paths import find_manual_prices, planner_output_dir, project_root
 from .outlook_sync import delete_campaign_events, sync_campaign_events
 from .management_calendar import generate_management_calendar
 from .store import Campaign, PromoStore
+try:
+    from automation.pricing_book import read_pricing_workbook
+    from automation.pricing_timeline import PricingTimeline
+except ModuleNotFoundError as exc:
+    if exc.name != "automation":
+        raise
+    from pricing_book import read_pricing_workbook
+    from pricing_timeline import PricingTimeline
 
 MAGENTA = "#E20074"
 MAGENTA_DARK = "#B0005A"
@@ -120,6 +128,14 @@ class PromoPlanner(tk.Tk):
         self.out_dir = planner_output_dir(self.root_dir)
         self.store = PromoStore(self.out_dir / "promo_schedule.db")
         self.workbook = find_manual_prices(self.root_dir)
+        self.timeline = PricingTimeline(self.store.path)
+        if not self.timeline.baseline_info():
+            baseline = read_pricing_workbook(self.workbook)
+            self.timeline.initialize_baseline(
+                baseline,
+                source_path=self.workbook,
+                effective_from=date.today().isoformat(),
+            )
         self.catalogue = read_catalogue(self.workbook)
         self.dest_map = {code: name for code, name in self.catalogue.destinations}
         self.selected_destinations: list[str] = []
@@ -956,11 +972,16 @@ class PromoPlanner(tk.Tk):
         started = self.store.has_execution(c.id, "START")
         ended = self.store.has_execution(c.id, "END")
         state = "Expired / removed" if ended else ("Published to current prices" if started else "Planned / not yet published")
+        destination_labels = ", ".join(
+            "{} ({})".format(self.dest_map.get(code, code), code)
+            if self.dest_map.get(code, code) != code else code
+            for code in c.destinations
+        )
         txt = (
             f"{c.name}\n"
             f"Promotion: {c.promo_name or '-'} | catalogue code: {c.promo_code}\n"
             f"{c.start_date} → {c.end_date} | {state}\n"
-            f"Destinations: {', '.join(c.destinations)}\n"
+            f"Destinations: {destination_labels}\n"
             f"Plans: {', '.join(c.plans)} | Days: {', '.join(map(str, c.days))}\n"
             f"Notes: {c.notes or '-'}"
         )
@@ -1076,14 +1097,12 @@ class PromoPlanner(tk.Tk):
 
 
 def main():
+    """Route legacy direct launches to the shared-timeline Qt planner."""
     try:
-        PromoPlanner().mainloop()
-    except Exception as exc:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("T-Travel Promo Planner", str(exc))
-        root.destroy()
-        raise
+        from .app import main as shared_timeline_main
+    except ImportError:
+        from app import main as shared_timeline_main
+    shared_timeline_main()
 
 
 if __name__ == "__main__":

@@ -14,22 +14,12 @@ def planner_output_dir(root: Path | None = None) -> Path:
 
 
 def find_manual_prices(root: Path | None = None) -> Path:
-    root = root or project_root()
-    base = root / "outputs" / "manual_prices"
-    preferred = [
-        base / "manual_prices_current.xlsx",
-        base / "manual_prices_current.xlsm",
-    ]
-    for path in preferred:
-        if path.exists():
-            return path
-    candidates = sorted(
-        list(base.rglob("manual_prices_current*.xlsx")) + list(base.rglob("manual_prices_current*.xlsm")),
-        key=lambda p: ("autosave" in p.name.lower(), len(p.parts), p.name.lower()),
-    )
-    if candidates:
-        return candidates[0]
+    """Use the production current workbook; never guess from other snapshots."""
+    root = Path(root) if root is not None else project_root()
+    path = root / "outputs" / "manual_prices" / "current" / "manual_prices_current.xlsx"
+    if path.is_file():
+        return path
     raise FileNotFoundError(
-        "Could not find outputs/manual_prices/manual_prices_current.xlsx. "
-        "Export/current-save your pricing book first."
+        f"Could not find the current production price book: {path}. "
+        "Place manual_prices_current.xlsx in outputs/manual_prices/current before initializing the pricing database."
     )

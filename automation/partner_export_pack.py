@@ -1462,6 +1462,10 @@ def build_partner_price_pack(
     current_price_book = local_export_dir / "manual_prices_current.xlsx"
     if not current_price_book.exists():
         current_price_book = local_export_dir / "manual_prices_current.csv"
+    current_frame = read_pricing_workbook(current_price_book) if current_price_book.suffix.lower() == ".xlsx" else pd.read_csv(current_price_book)
+    pa_pending = current_frame.get("_PromoPlannerPAUnresolved", pd.Series(False, index=current_frame.index))
+    if pa_pending.astype(str).str.lower().isin({"true", "1", "1.0"}).any():
+        raise ValueError("PA adjustments below cost need approval in Preview & resolve, or disable PA for those destinations before creating a partner pack.")
     current_membership = _membership_snapshot_from_manual_prices(
         current_price_book,
         region_catalog,
