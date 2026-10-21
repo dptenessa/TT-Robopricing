@@ -21,8 +21,8 @@ TABLE_URLS = {
 }
 URL = None
 PUBLISH_URLS = {
-    "uat": 'https://productcatalog.amdocs-dbs.com/publishedCatalogDashboard/publish',#"https://dtag-uat.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
-    "production": "https://productcatalog.amdocs-dbs.com/publishedCatalogDashboard/publish " # https://t-travel.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
+    "uat": 'https://productcatalog.amdocs-dbs.com/publishedCatalogDashboard/publish',# "https://dtag-uat.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish"
+    "production": "https://productcatalog.amdocs-dbs.com/publishedCatalogDashboard/publish" # https://t-travel.console.amdocs-dbs.com/api/productcatalog/publishedCatalogDashboard/publish",
 }
 API_KEY_ENV_VARS = {
     "uat": "FREQUENT_DESTINATIONS_UAT_API_KEY",
@@ -75,7 +75,7 @@ destinations = {
     "CV": "PT,SN,FR,ES,BR,USA",
     "CY": "GR,GB,IT,FR,DE,AE",
     "CZ": "SK,AT,DE,IT,HR,GR",
-    "DE": "ES,IT,AT,TR,FR,NL",
+    "DE": "TR,EG,TH,GB,USA,FR",
     "DK": "ES,DE,SE,IT,FR,NO",
     "DZ": "FR,TN,TR,ES,IT,AE",
     "EC": "USA,CO,PE,ES,MX,PA",
@@ -187,7 +187,7 @@ destinations = {
     "TW": "JP,KR,TH,USA,SG,HK",
     "TZ": "KE,MU,ZA,AE,RW,GB",
     "UA": "PL,DE,TR,RO,CZ,IT",
-    "USA": "MX,CA,GB,FR,IT,ES",
+    "US": "TR,EG,TH,DE,GB,FR",
     "UY": "AR,BR,USA,ES,CL,PY",
     "UZ": "KZ,RU,TR,KG,AE,TJ",
     "VE": "CO,USA,ES,PR,BR,MX",
