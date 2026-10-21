@@ -11,13 +11,12 @@ from datetime import date
 from typing import Optional
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-import pandas as pd
 
 try:
     from country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
 except ImportError:
     from automation.country_identity import allowed_iso3 as ppg_allowed_iso3, resolve_country
-from openpyxl import load_workbook
+
 from playwright.sync_api import sync_playwright #, TimeoutError as PWTimeoutError
 
 os.environ.pop("HTTP_PROXY", None)
@@ -77,11 +76,6 @@ def polite_sleep(min_s: float = 0.1, max_s: float = 0.3) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
-def load_allowed_iso3(path: str) -> set[str]:
-    """Load the PPG ISO3 whitelist through the shared country identity helper."""
-    return {str(code).strip().upper() for code in ppg_allowed_iso3(path) if code}
-
-
 def clean(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
@@ -115,6 +109,473 @@ def country_name_to_iso2(name: str | None) -> str | None:
     identity = resolve_country(name, WHITELIST_XLSX)
     return identity["iso2"] if identity else None
 
+
+def load_allowed_iso3(path: str) -> set[str]:
+    """Load the PPG ISO3 whitelist through the shared country identity helper."""
+    return {str(code).strip().upper() for code in ppg_allowed_iso3(path) if code}
+
+
+def prepare_currency_once(page, countries: list[dict[str, str]]) -> None:
+    seed_url = None
+
+    for c in countries:
+        if c["slug"] not in {"europe", "world"}:
+            seed_url = c["url"]
+            break
+
+    if not seed_url:
+        print("[currency] no seed country found for initial currency switch")
+        return
+
+    print(f"[currency] preparing once using {seed_url}")
+    goto_with_retry(page, seed_url)
+
+    accept_cookies(page)
+    wait_for_cookie_overlay_to_clear(page)
+
+    current = detect_currency_from_page(page)
+    print(f"[currency] initial detected currency: {current}")
+
+    if current != CURRENCY:
+        ok = switch_currency(page, CURRENCY)
+        print(f"[currency] switch to {CURRENCY}: {'ok' if ok else 'failed'}")
+    else:
+        print(f"[currency] already in {CURRENCY}")
+
+    clear_ui_overlays(page)
+    human_wait(page, 800, 1600)
+
+
+def write_rows_to_csv(rows: list[dict], filename: str) -> None:
+    ensure_parent_dir(filename)
+
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=CSV_FIELDNAMES,
+            extrasaction="ignore",
+            quoting=csv.QUOTE_ALL,
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    
+        
+def rotate_and_write_csv(rows: list[dict], current_file: str, previous_file: str) -> None:
+    ensure_parent_dir(current_file)
+    ensure_parent_dir(previous_file)
+
+    tmp_file = current_file + ".tmp"
+
+    write_rows_to_csv(rows, tmp_file)
+
+    if os.path.exists(current_file):
+        os.replace(current_file, previous_file)
+
+    os.replace(tmp_file, current_file)
+
+
+def setup_page(page) -> None:
+    def route_handler(route):
+        if route.request.resource_type in {"image", "media", "font"}:
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route("**/*", route_handler)
+    page.set_default_timeout(60000)
+    page.set_default_navigation_timeout(90000)
+
+
+def goto_with_retry(page, url: str, tries: int = 3) -> None:
+    last_err: Optional[Exception] = None
+
+    for attempt in range(tries):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            human_wait(page, 1200, 2400)
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < tries - 1:
+                time.sleep(random.uniform(2.0, 4.0))
+
+    raise RuntimeError(f"Failed to load {url} after {tries} tries: {last_err}")
+
+
+def accept_cookies(page) -> bool:
+    selectors = [
+        "#didomi-notice-agree-button",
+        'button[id*="didomi"][id*="agree"]',
+        'button:has-text("Agree")',
+        'button:has-text("Accept")',
+        'button:has-text("Accept all")',
+        'button:has-text("Accept All")',
+        'button:has-text("Allow all")',
+    ]
+
+    human_wait(page, 1000, 1800)
+
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() == 0:
+                continue
+
+            for i in range(loc.count()):
+                btn = loc.nth(i)
+                try:
+                    if btn.is_visible():
+                        print(f"[cookies] clicking {sel}")
+                        btn.click(timeout=5000, force=True)
+                        page.wait_for_timeout(1800)
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    print("[cookies] no cookie button clicked")
+    return False
+
+
+def wait_for_cookie_overlay_to_clear(page) -> None:
+    try:
+        page.locator("#didomi-popup").wait_for(state="hidden", timeout=5000)
+        print("[cookies] overlay hidden")
+    except Exception:
+        print("[cookies] overlay still present or not found")
+
+
+def detect_currency_from_page(page) -> Optional[str]:
+    try:
+        text = page.locator("body").inner_text() or ""
+        if " USD" in text or "$" in text:
+            return "USD"
+        if " EUR" in text or "€" in text:
+            return "EUR"
+    except Exception:
+        pass
+    return None
+
+
+def close_currency_popup(page) -> None:
+    print("[currency] attempting to close popup")
+
+    try:
+        page.keyboard.press("Escape")
+        human_wait(page, 1000, 1800)
+    except Exception:
+        pass
+
+    try:
+        page.mouse.click(20, 20)
+        human_wait(page, 500, 1000)
+    except Exception:
+        pass
+
+    selectors = [
+        'button[aria-label="Close"]',
+        'button:has-text("Close")',
+        '.modal button.btn-close',
+        '.offcanvas button.btn-close',
+    ]
+
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                loc.first.click(timeout=2000, force=True)
+                human_wait(page, 1500, 2500)
+                return
+        except Exception:
+            pass
+
+
+def clear_ui_overlays(page) -> None:
+    close_currency_popup(page)
+    try:
+        page.locator("#didomi-popup").wait_for(state="hidden", timeout=2000)
+    except Exception:
+        pass
+
+
+def switch_currency(page, currency_code: str) -> bool:
+    currency_code = currency_code.upper().strip()
+
+    current = detect_currency_from_page(page)
+    print(f"[main] detected currency: {current}")
+
+    if current == currency_code:
+        print(f"[main] already in {currency_code}, skipping switch")
+        return True
+
+    open_selectors = [
+        "body > esim-root > ng-component > div > esim-header > header > nav > div > div.d-flex.flex-column.gap-2 > div:nth-child(2) > ul > li:nth-child(1) > esim-header-currency-modal > esim-header-modal > button",
+        "esim-header-currency-modal button.btn-color",
+        "esim-header-currency-modal button",
+    ]
+
+    opened = False
+    for sel in open_selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                print(f"[currency] open with: {sel}")
+                loc.first.click(timeout=4000)
+                human_wait(page, 1500, 2500)
+                opened = True
+                break
+        except Exception as e:
+            print(f"[currency] failed open {sel}: {e}")
+
+    if not opened:
+        current = detect_currency_from_page(page)
+        if current == currency_code:
+            print(f"[currency] could not open modal, but page is already {currency_code}")
+            return True
+        print("[currency] could not open currency modal")
+        return False
+
+    option_selectors = (
+        ['text=/\\bUSD\\b/i', 'text=/\\$\\s*USD/i']
+        if currency_code == "USD"
+        else ['text=/\\bEUR\\b/i', 'text=/€\\s*EUR/i']
+    )
+
+    for sel in option_selectors:
+        try:
+            loc = page.locator(sel)
+            n = loc.count()
+            for i in range(n):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible():
+                        print(f"[currency] selecting with {sel}")
+                        el.click(timeout=4000, force=True)
+                        human_wait(page, 1500, 2500)
+                        current = detect_currency_from_page(page)
+                        if current == currency_code:
+                            print(f"[currency] switched to {currency_code}")
+                            close_currency_popup(page)
+                            return True
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"[currency] failed choose {sel}: {e}")
+
+    current = detect_currency_from_page(page)
+    if current == currency_code:
+        print(f"[currency] page is already {currency_code}")
+        close_currency_popup(page)
+        return True
+
+    print(f"[currency] could not switch to {currency_code}")
+    close_currency_popup(page)
+    return False
+
+
+def print_filter_state(page) -> None:
+    for idx in [0, 1]:
+        try:
+            checked = page.locator(f"input#esimFilter{idx}").first.is_checked()
+            print(f"[filter-state] esimFilter{idx} checked={checked}")
+        except Exception as e:
+            print(f"[filter-state] esimFilter{idx} error: {e}")
+
+
+def visible_offer_signature(page) -> tuple[int, tuple[str, ...]]:
+    """Return a lightweight signature of the currently visible offer set."""
+    cards = page.locator("esim-offer-card:visible")
+    texts: list[str] = []
+    for i in range(cards.count()):
+        try:
+            texts.append(clean(cards.nth(i).inner_text()))
+        except Exception:
+            texts.append("")
+    return len(texts), tuple(texts)
+
+
+def wait_for_visible_offers_stable(
+    page,
+    timeout_ms: int = 15000,
+    stable_checks: int = 3,
+    interval_ms: int = 350,
+) -> bool:
+    """Wait until at least one visible card exists and the visible set is stable."""
+    deadline = time.time() + (timeout_ms / 1000)
+    previous: Optional[tuple[int, tuple[str, ...]]] = None
+    same_count = 0
+
+    while time.time() < deadline:
+        try:
+            current = visible_offer_signature(page)
+        except Exception:
+            current = (0, tuple())
+
+        if current[0] > 0 and current == previous:
+            same_count += 1
+            if same_count >= stable_checks:
+                return True
+        else:
+            same_count = 0
+
+        previous = current
+        page.wait_for_timeout(interval_ms)
+
+    print("[offers] visible offer cards did not stabilize before timeout")
+    return False
+
+
+def click_filter(page, idx: int) -> bool:
+    print(f"\n[filter] activating esimFilter{idx}")
+
+    label = page.locator(f'label[for="esimFilter{idx}"]')
+    inp = page.locator(f'input#esimFilter{idx}')
+
+    try:
+        if inp.count() == 0:
+            print(f"[filter] esimFilter{idx} not found")
+            return False
+
+        # Avoid toggling off a control that is already selected.
+        if inp.first.is_checked():
+            print(f"[filter] esimFilter{idx} already active")
+            wait_for_visible_offers_stable(page)
+            return True
+    except Exception as e:
+        print(f"[filter] initial state read failed for {idx}: {e}")
+
+    clicked = False
+    try:
+        if label.count() > 0 and label.first.is_visible():
+            label.first.click(timeout=4000, force=True)
+            clicked = True
+        elif inp.first.is_visible():
+            inp.first.click(timeout=4000, force=True)
+            clicked = True
+    except Exception as e:
+        print(f"[filter] click failed for {idx}: {e}")
+
+    if not clicked:
+        return False
+
+    try:
+        inp.first.wait_for(state="attached", timeout=4000)
+    except Exception:
+        pass
+
+    deadline = time.time() + 8
+    checked = False
+    while time.time() < deadline:
+        try:
+            checked = inp.first.is_checked()
+            if checked:
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(200)
+
+    print(f"[filter] esimFilter{idx} checked={checked}")
+    if checked:
+        wait_for_visible_offers_stable(page)
+    return checked
+
+
+def extract_special_offer(card) -> str:
+    try:
+        badge = card.locator("p.bg-supporting-yellow")
+        if badge.count() > 0:
+            return clean(badge.first.inner_text())
+    except Exception:
+        pass
+    return ""
+
+
+def extract_offer_ponder(special_offer: str) -> str:
+    if not special_offer:
+        return ""
+    m = re.search(r"(\d+)\s*%", special_offer)
+    return m.group(1) if m else ""
+
+
+def extract_gb(card) -> str:
+    try:
+        h4 = card.locator("h4")
+        if h4.count() > 0:
+            txt = clean(h4.first.inner_text())
+
+            # Keep Unlimited as-is
+            if re.search(r"^unlimited$", txt, flags=re.I):
+                return "Unlimited"
+
+            # Remove GB if present and return just the number
+            m = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*GB\b", txt, flags=re.I)
+            if m:
+                return m.group(1).replace(",", ".")
+
+            # Fallback: if it's already just a number, keep it
+            m = re.search(r"^[0-9]+(?:[.,][0-9]+)?$", txt)
+            if m:
+                return txt.replace(",", ".")
+
+            return txt
+    except Exception:
+        pass
+    return ""
+
+
+def extract_price(card) -> tuple[Optional[float], str]:
+    try:
+        tag = card.locator("esim-offer-price-tag")
+        if tag.count() > 0:
+            txt = clean(tag.first.inner_text())
+            price = parse_money(txt)
+            currency = ""
+            if "USD" in txt.upper() or "$" in txt:
+                currency = "USD"
+            elif "EUR" in txt.upper() or "€" in txt:
+                currency = "EUR"
+            return price, currency
+    except Exception:
+        pass
+    return None, ""
+
+
+def variant_id_from_fields(plan: str, gb: str, days: int | str, special_offer: str) -> str:
+    plan_slug = re.sub(r"[^a-z0-9]+", "-", plan.lower()).strip("-")
+    gb_slug = re.sub(r"[^a-z0-9]+", "-", gb.lower()).strip("-")
+    days_slug = f"{days}days" if str(days) else "nodays"
+    offer_slug = re.sub(r"[^a-z0-9]+", "-", special_offer.lower()).strip("-") if special_offer else "nooffer"
+    return f"{plan_slug}-{gb_slug}-{days_slug}-{offer_slug}"
+
+def normalize_provider_country(text: str, slug: str = "") -> str:
+    txt = clean(text)
+
+    replacements = [
+        (r"^eSIM\s+for\s+", ""),
+        (r"^Orange\s+Travel\s+eSIM\s+for\s+", ""),
+    ]
+
+    for pattern, repl in replacements:
+        txt = re.sub(pattern, repl, txt, flags=re.I).strip()
+
+    manual_text_map = {
+        "Global eSIM": "World",
+        "eSIM for Réunion": "Réunion",
+        "eSIM for Türkiye": "Turkey",
+        "eSIM for Åland Islands": "Åland Islands",
+    }
+
+    if text in manual_text_map:
+        return manual_text_map[text]
+
+    if txt:
+        return txt
+
+    if slug:
+        return slug.replace("-", " ").strip().title()
+
+    return txt
 
 def slug_to_country_name(slug: str) -> str:
     manual_slug_map = {

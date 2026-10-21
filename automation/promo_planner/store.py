@@ -32,6 +32,18 @@ class Campaign:
     outlook_end_id: str = ""
 
     monotonic_destinations: list[str] = field(default_factory=list)
+    monotonic_all_promos: bool = False
+
+    @property
+    def display_start_date(self) -> str:
+        """Stable visual anchor; an unknown actual start remains unknown."""
+        start = self.start_date
+        if not start:
+            try:
+                start = date.fromisoformat(self.created_at[:10]).isoformat()
+            except (ValueError, TypeError):
+                start = self.end_date
+        return min(start, self.end_date) if self.end_date else start
 
     @property
     def is_locked(self) -> bool:
@@ -302,6 +314,9 @@ class PromoStore:
         if "monotonic_destinations_json" not in cols:
             con.execute("ALTER TABLE campaigns ADD COLUMN monotonic_destinations_json TEXT NOT NULL DEFAULT '[]'")
 
+        if "monotonic_all_promos" not in cols:
+            con.execute("ALTER TABLE campaigns ADD COLUMN monotonic_all_promos INTEGER NOT NULL DEFAULT 0")
+
         ecols = {r["name"] for r in con.execute("PRAGMA table_info(executions)").fetchall()}
         if "batch_id" not in ecols:
             con.execute("ALTER TABLE executions ADD COLUMN batch_id INTEGER")
@@ -341,8 +356,8 @@ class PromoStore:
                  json.dumps(c.destinations),json.dumps(c.plans),json.dumps(c.days),int(c.allow_below_cost),
                  c.notes,c.status,created,c.official_partner_pack,c.official_partner_pack_at,c.outlook_start_id,c.outlook_end_id),
             )
-            con.execute("UPDATE campaigns SET monotonic_destinations_json=? WHERE id=?",
-                        (json.dumps(sorted(set(c.monotonic_destinations) & set(c.destinations))), cur.lastrowid))
+            con.execute("UPDATE campaigns SET monotonic_destinations_json=?, monotonic_all_promos=? WHERE id=?",
+                        (json.dumps(sorted(set(c.monotonic_destinations) & set(c.destinations))), int(c.monotonic_all_promos), cur.lastrowid))
             return int(cur.lastrowid)
 
     def update_campaign(self, c: Campaign) -> None:
@@ -374,8 +389,8 @@ class PromoStore:
                  c.notes,c.status,c.id),
             )
 
-            con.execute("UPDATE campaigns SET monotonic_destinations_json=? WHERE id=?",
-                        (json.dumps(sorted(set(c.monotonic_destinations) & set(c.destinations))), c.id))
+            con.execute("UPDATE campaigns SET monotonic_destinations_json=?, monotonic_all_promos=? WHERE id=?",
+                        (json.dumps(sorted(set(c.monotonic_destinations) & set(c.destinations))), int(c.monotonic_all_promos), c.id))
 
     def mark_campaigns_official(self, effective_date: str, partner_pack: str) -> None:
         """Record which campaign definitions were included in a successful pack."""
@@ -482,6 +497,7 @@ class PromoStore:
             official_partner_pack_at=r["official_partner_pack_at"] if "official_partner_pack_at" in keys else "",
             outlook_start_id=r["outlook_start_id"] if "outlook_start_id" in keys else "",
             outlook_end_id=r["outlook_end_id"] if "outlook_end_id" in keys else "",
+            monotonic_all_promos=bool(r["monotonic_all_promos"]) if "monotonic_all_promos" in keys else False,
             monotonic_destinations=json.loads(r["monotonic_destinations_json"]) if "monotonic_destinations_json" in keys else [],
         )
 

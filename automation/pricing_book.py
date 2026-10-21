@@ -52,7 +52,7 @@ PRICING_COLUMNS = [
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
-    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
 ]
 
 HIDDEN_COLUMNS = {
@@ -72,7 +72,7 @@ HIDDEN_COLUMNS = {
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
-    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
 }
 
 INPUT_COLUMNS = {"Price_EUR", "Price_USD", "PromoCode", "AllowBelowCost"}

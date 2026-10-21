@@ -168,6 +168,49 @@ def _published_price_adjustments(frame, campaigns, boundary):
     return adjustments
 
 
+def _date_review_rows(campaigns, date_prices, key_date, *, include_adjustments=False):
+    """Pricing points affected at this midnight, rather than all replayed offers."""
+    boundary = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
+    points = set()
+    for campaign in campaigns:
+        starts = campaign.status != "ACTIVE_IMPORTED" and campaign.start_date == boundary
+        ends = campaign.end_date == key_date
+        if not (starts or ends):
+            continue
+        durations = set(campaign.days)
+        # Ending/starting an anchor also changes shorter PA prices.
+        for iso in campaign.destinations:
+            days = (set(range(1, (30 if campaign.monotonic_all_promos else max(durations, default=0)) + 1))
+                    if include_adjustments and iso in campaign.monotonic_destinations else durations)
+            points.update((str(iso).upper(), plan, int(day))
+                          for plan in campaign.plans for day in days)
+    if include_adjustments:
+        # Another offer starting/ending can change a broad campaign's anchors.
+        for campaign in campaigns:
+            if not (campaign.monotonic_all_promos and campaign.end_date >= boundary
+                    and (not campaign.start_date or campaign.start_date <= boundary)):
+                continue
+            for event in campaigns:
+                if not (event.start_date == boundary or event.end_date == key_date):
+                    continue
+                points.update((str(iso).upper(), plan, day)
+                              for iso in set(event.destinations) & set(campaign.monotonic_destinations)
+                              for plan in set(event.plans) & set(campaign.plans)
+                              for day in range(1, max(event.days, default=0) + 1))
+    for change in date_prices:
+        if change.get("key_date") != key_date and change.get("effective_from") != boundary:
+            continue
+        row = change.get("row", change)
+        iso, plan, day = str(row.get("iso", "")).upper(), str(row.get("plan", "")), int(row.get("days") or 0)
+        points.add((iso, plan, day))
+        for campaign in campaigns:
+            if (include_adjustments and iso in campaign.monotonic_destinations and plan in campaign.plans
+                    and (campaign.monotonic_all_promos or day <= max(campaign.days, default=0)) and campaign.end_date >= boundary and (not campaign.start_date or campaign.start_date <= boundary)):
+                # Either an anchor edit or a shorter underlying-price edit can change PA.
+                points.update((iso, plan, duration) for duration in range(1, day + 1))
+    return points
+
+
 def project_dataframe(
     current_df: pd.DataFrame,
     workbook: Path,
@@ -184,6 +227,11 @@ def project_dataframe(
     boundary = (date.fromisoformat(key_date) + timedelta(days=1)).isoformat()
     saved_campaigns = store.list_campaigns()
     campaigns = saved_campaigns if campaigns_override is None else campaigns_override
+    if not include_drafts:
+        # Today's reference view must not activate a saved-but-unpublished
+        # promotion merely because its planned start date has passed.
+        campaigns = [c for c in campaigns if c.status == "ACTIVE_IMPORTED"
+                     or c.official_partner_pack or store.has_execution(c.id, "START")]
     saved_ids = {c.id for c in saved_campaigns}
     actions = []
     has_published = False
@@ -216,6 +264,7 @@ def project_dataframe(
             actions.append((campaign, "END"))
 
     cost_choices = {}
+    cost_choice_dates = {}
     conflict_choices = {}
     choices_dir = issue_choices_path(root)
     if choices_dir.exists():
@@ -229,7 +278,9 @@ def project_dataframe(
             for record in data.get("cost_floor", []):
                 if len(record) == 6:
                     cid, iso, plan, days, currency, choice = record
-                    cost_choices[(int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper())] = str(choice)
+                    choice_key = (int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper())
+                    cost_choices[choice_key] = str(choice)
+                    cost_choice_dates[choice_key] = path.stem
             for record in data.get("conflicts", []):
                 if len(record) == 6:
                     cid, iso, plan, days, _current_code, choice = record
@@ -240,6 +291,15 @@ def project_dataframe(
         boundary,
         exclude_key_date=key_date if exclude_key_date_changes else None,
     )
+    # A newly edited manual offer cannot inherit a prior offer's approval.
+    for change in date_prices:
+        if not any(field in change for field in ("promo_code", "promo_type", "promo_value", "promo_net_eur", "promo_net_usd")):
+            continue
+        row = change.get("row", {})
+        for currency in ("EUR", "USD"):
+            choice_key = (0, str(row.get("iso", "")).upper(), str(row.get("plan", "")), int(row.get("days") or 0), currency)
+            if cost_choice_dates.get(choice_key, "") < change.get("key_date", ""):
+                cost_choices.pop(choice_key, None)
     if not include_drafts:
         date_prices = [row for row in date_prices if not row.get("is_base_price_change") or row.get("official")]
     if replay_executed and has_published:
@@ -253,13 +313,15 @@ def project_dataframe(
         conflict_choices=conflict_choices,
         date_price_changes=date_prices,
         campaigns=campaigns,
+        review_rows=_date_review_rows(campaigns, date_prices, key_date),
+        adjustment_review_rows=_date_review_rows(campaigns, date_prices, key_date, include_adjustments=True),
     )
 
     projected = current_df.copy().reset_index(drop=True)
     passthrough = (
         "PromoCode", "PromoType", "PromoValue", "PromoLabel", "Price_EUR", "Price_USD",
         "AllowBelowCost", "_PromoPlannerPromoStack", "_PromoPlannerPromoOwner",
-        "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
+        "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
         "_PromoPlannerOriginalPrice_EUR", "_PromoPlannerOriginalPrice_USD", "_PromoPlannerPriceOwner",
     )
     # preview_batch preserves input row order, including duplicate identities.
@@ -271,25 +333,6 @@ def project_dataframe(
     for column in passthrough:
         if column in simulated:
             projected[column] = simulated[column].to_numpy(copy=False)
-    promo_overrides: dict[tuple, dict] = {}
-    for change in date_prices:
-        row_key = change.get("row", change)
-        identity = _row_identity(row_key)
-        fields = {
-            column: change[source]
-            for column, source in (
-                ("PromoCode", "promo_code"), ("PromoType", "promo_type"),
-                ("PromoValue", "promo_value"), ("PromoLabel", "promo_label"),
-            )
-            if source in change
-        }
-        if fields:
-            promo_overrides.setdefault(identity, {}).update(fields)
-    if promo_overrides:
-        identity_columns = [c for c in ("ISO", "Country", "PricingUnitIdUsed", "Plan", "Days", "GB") if c in projected]
-        for index, row in enumerate(projected[identity_columns].to_dict(orient="records")):
-            for column, value in promo_overrides.get(_row_identity(row), {}).items():
-                projected.at[index, column] = value
     return projected, preview
 
 
@@ -343,7 +386,7 @@ def save_key_date_changes(
         # Keep raw dated base edits separate from automatic, temporary list
         # raises made by the promotion cost-floor preview. Only user changes
         # relative to what was displayed become new permanent base values.
-        candidate = baseline_df.copy()
+        candidate = baseline_df.astype(object).copy()
         positions = {_row_identity(row): index for index, row in zip(candidate.index, candidate.to_dict(orient="records"))}
         for change in timeline.date_override_records(key_date=key_date):
             if not change.get("is_base_price_change"):
@@ -355,6 +398,11 @@ def save_key_date_changes(
                 value = change.get(f"price_{currency.lower()}")
                 if value is not None:
                     candidate.at[index, f"Price_{currency}"] = value
+            for field, source in (("PromoCode", "promo_code"), ("PromoType", "promo_type"),
+                                  ("PromoValue", "promo_value"), ("PromoLabel", "promo_label"),
+                                  ("PromoNet_EUR", "promo_net_eur"), ("PromoNet_USD", "promo_net_usd"), ("_ManualPALinks", "manual_pa_links")):
+                if source in change:
+                    candidate.at[index, field] = change[source]
         displayed = {_row_identity(row): row for row in displayed_df.to_dict(orient="records")}
         normalize = normalize_price or float
         for row in edited_df.to_dict(orient="records"):
@@ -368,6 +416,25 @@ def save_key_date_changes(
                 previous = pd.to_numeric(original_display.get(field), errors="coerce")
                 if pd.notna(value) and (pd.isna(previous) or abs(float(value) - normalize(float(previous))) > 1e-6):
                     candidate.at[index, field] = float(value)
+            promo_fields = ("PromoCode", "PromoType", "PromoValue", "PromoLabel", "PromoNet_EUR", "PromoNet_USD", "_ManualPALinks")
+            def same(field):
+                a, b = row.get(field), original_display.get(field)
+                if field in {"PromoValue", "PromoNet_EUR", "PromoNet_USD"}:
+                    a, b = pd.to_numeric(a, errors="coerce"), pd.to_numeric(b, errors="coerce")
+                    if field == "PromoValue" and not str(row.get("PromoCode") or "").strip() and not str(original_display.get("PromoCode") or "").strip():
+                        return True
+                    return (pd.isna(a) and pd.isna(b)) or (pd.notna(a) and pd.notna(b) and abs(float(a)-float(b)) < 1e-9)
+                return ("" if pd.isna(a) else str(a).strip()) == ("" if pd.isna(b) else str(b).strip())
+            if any(not same(field) for field in promo_fields):
+                for field in promo_fields:
+                    value = row.get(field)
+                    if field in {"PromoValue", "PromoNet_EUR", "PromoNet_USD"}:
+                        value = pd.to_numeric(value, errors="coerce")
+                        value = float(value) if pd.notna(value) else None
+                    candidate.at[index, field] = value
+                candidate.at[index, "_PromoPlannerPAUnderlying"] = ""
+                candidate.at[index, "_PromoPlannerPAUnresolved"] = False
+                candidate.at[index, "_PromoPlannerPromoOwner"] = ""
         edited_df = candidate
     campaign_by_id = {int(c.id or 0): c for c in campaigns}
     baseline = {_row_identity(row): row for row in baseline_df.to_dict(orient="records")}
@@ -413,12 +480,10 @@ def save_key_date_changes(
             campaign = None
         expiry = (date.fromisoformat(campaign.end_date) + timedelta(days=1)).isoformat() if campaign else ""
         changes = []
-        for field in ("Price_EUR", "Price_USD", "PromoCode", "PromoType", "PromoValue", "PromoLabel"):
-            if base_price_event and not field.startswith("Price_"):
-                continue
+        for field in ("Price_EUR", "Price_USD", "PromoCode", "PromoType", "PromoValue", "PromoLabel", "PromoNet_EUR", "PromoNet_USD", "_ManualPALinks"):
             new_value = row.get(field, None)
             old_value = original.get(field, None)
-            if field in {"Price_EUR", "Price_USD", "PromoValue"}:
+            if field in {"Price_EUR", "Price_USD", "PromoValue", "PromoNet_EUR", "PromoNet_USD"}:
                 new_value = pd.to_numeric(new_value, errors="coerce")
                 old_value = pd.to_numeric(old_value, errors="coerce")
                 if pd.isna(new_value) and pd.isna(old_value):

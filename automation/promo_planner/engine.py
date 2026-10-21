@@ -455,6 +455,8 @@ def _promo_frame(state: dict, owner: str = "", end_date: str = "") -> dict:
         "promo_code": state.get("promo_code", ""),
         "promo_type": state.get("promo_type", ""),
         "promo_value": state.get("promo_value", 0.0),
+        "net_eur": state.get("net_eur"),
+        "net_usd": state.get("net_usd"),
         "promo_label": state.get("promo_label", ""),
         "promo_owner": str(owner or ""),
         "end_date": str(end_date or ""),
@@ -490,7 +492,7 @@ def _state_net(state, currency):
     return round_promo_price(base, state.get("promo_type", ""), value if value is not None else base)
 
 
-def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor_choices, floor_issues):
+def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor_choices, floor_issues, review_rows=None):
     """Overlay PA after regular offers and floor decisions; never alter a base price."""
     enabled = {str(int(c.id or 0)): c for c in campaigns
                if c.monotonic_destinations and c.end_date >= boundary
@@ -504,6 +506,11 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
     for (iso, plan), durations in groups.items():
         if not any(iso in c.monotonic_destinations and plan in c.plans for c in enabled.values()):
             continue
+        # Broad alignment is still owned by an active, opted-in campaign.
+        # A manual offer can supply its net price without owning the PA lifetime.
+        broad = [c for c in enabled.values() if c.monotonic_all_promos
+                 and iso in c.monotonic_destinations and plan in c.plans]
+        broad_owner = max(broad, key=lambda c: (c.start_date, int(c.id or 0))) if broad else None
         caps = {}
         for days in sorted(durations, reverse=True):
             next_caps = dict(caps)
@@ -512,6 +519,8 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
                 anchor = enabled.get(str(state.get("promo_owner", "")))
                 if anchor and (iso not in anchor.monotonic_destinations or days not in anchor.days or plan not in anchor.plans):
                     anchor = None
+                if anchor is None and broad_owner and state.get("promo_code"):
+                    anchor = broad_owner
                 nets = {currency: _state_net(state, currency) for currency in ("EUR", "USD")}
                 targets = dict(nets)
                 owners = {}
@@ -521,8 +530,10 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
                     cap = caps.get(currency)
                     if cap and current > cap[0] + 1e-9:
                         targets[currency], owners[currency] = cap
-                    candidate_owner = owners.get(currency) or anchor or (cap[1] if cap else None)
-                    if candidate_owner and (cap or anchor):
+                    # Unrelated cheaper points must not become new anchors in
+                    # campaign-only mode. An adjusted point only carries its cap.
+                    candidate_owner = owners.get(currency) or anchor
+                    if candidate_owner:
                         candidate = (targets[currency], candidate_owner)
                         if currency not in next_caps or candidate[0] < next_caps[currency][0] - 1e-9:
                             next_caps[currency] = candidate
@@ -539,6 +550,7 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
                 # Approvals belong to the source campaign and shorter duration.
                 # Raising a PA row alone would break the promised monotonicity.
                 below = False
+                all_below_approved = True
                 for currency, target in targets.items():
                     floor = _num(value(row, f"CostFloor_{currency}"))
                     if target is None or floor is None or target >= floor - 1e-9:
@@ -546,12 +558,15 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
                     below = True
                     source = owners.get(currency, owner)
                     choice = floor_choices.get((int(source.id or 0), iso, plan, days, currency))
-                    floor_issues.append(CostFloorIssue(int(source.id or 0), source.name, iso, plan, days, currency,
-                                                     state["list_eur" if currency == "EUR" else "list_usd"],
-                                                     target, floor, floor, state["list_eur" if currency == "EUR" else "list_usd"], True))
+                    if review_rows is None or (iso, plan, days) in review_rows:
+                        floor_issues.append(CostFloorIssue(int(source.id or 0), source.name, iso, plan, days, currency,
+                                                         state["list_eur" if currency == "EUR" else "list_usd"],
+                                                         target, floor, floor, state["list_eur" if currency == "EUR" else "list_usd"], True))
                     if choice != "override":
-                        state["pa_unresolved"] = True
-                state["allow_below_cost"] = below and not state["pa_unresolved"]
+                        all_below_approved = False
+                        if review_rows is None or (iso, plan, days) in review_rows:
+                            state["pa_unresolved"] = True
+                state["allow_below_cost"] = below and all_below_approved
             caps = next_caps
 
 
@@ -567,6 +582,8 @@ def preview_batch(
     campaigns: list[Campaign] | None = None,
     row_index: dict[tuple[str, str, int], list[int]] | None = None,
     row_index_signature: tuple[int, int] | None = None,
+    review_rows: set[tuple[str, str, int]] | None = None,
+    adjustment_review_rows: set[tuple[str, str, int]] | None = None,
 ) -> BatchPreview:
     """Simulate a whole execution batch without writing the workbook.
 
@@ -598,8 +615,8 @@ def preview_batch(
             if col not in h:
                 raise ValueError(f"Pricing workbook is missing {col}.")
 
-        # Every key date revalidates below-floor approvals across the complete
-        # current pricebook, including promos that remain active or resume.
+        # Historical decisions still project forward; issue reporting can be
+        # restricted to points affected at the selected date.
         normalized_floor_choices = {
             (int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper()): str(choice).lower()
             for (cid, iso, plan, days, currency), choice in (cost_floor_choices or {}).items()
@@ -672,6 +689,7 @@ def preview_batch(
                 "allow_below_cost": str(row_value(values, "AllowBelowCost") or "").strip().lower() in {"true", "1", "yes"},
                 "net_eur": _num(row_value(values, "PromoNet_EUR")),
                 "net_usd": _num(row_value(values, "PromoNet_USD")),
+                "manual_pa_links": _text(row_value(values, "_ManualPALinks")),
                 "pa_underlying": _text(row_value(values, "_PromoPlannerPAUnderlying")),
                 "pa_unresolved": str(row_value(values, "_PromoPlannerPAUnresolved") or "").lower() in {"true", "1"},
                 "events": [],
@@ -879,8 +897,42 @@ def preview_batch(
                 state[list_key] = scheduled
                 state["events"].append(f"SCHEDULED PRICE EDIT ({currency})")
 
-        # Ask for a fresh per-row decision for every active promo below its
-        # floor at this key date, including a promo restored from the stack.
+        # Manual/detailed promo overrides must participate in the same floor
+        # and monotonicity calculation as regular campaigns, including PA nets.
+        manual_changes = [change for change in (date_price_changes or [])
+                          if any(field in change for field in ("promo_code", "promo_type", "promo_value", "promo_net_eur", "promo_net_usd", "manual_pa_links"))]
+        manual_indexes = {}
+        for idx, values in (enumerate(rows) if manual_changes else ()):
+
+            manual_key = (_text(row_value(values, "ISO")).upper(), _text(row_value(values, "Plan")),
+                          int(_num(row_value(values, "Days")) or 0), _text(row_value(values, "PricingUnitIdUsed")))
+            manual_indexes.setdefault(manual_key, []).append(idx)
+        manual_rows = set()
+        active_owners = {str(int(c.id or 0)): c for c in (campaigns or [])}
+        for change in manual_changes:
+            identity = change.get("row", change)
+            manual_key = (str(identity.get("iso", "")).upper(), str(identity.get("plan", "")),
+                          int(identity.get("days") or 0), str(identity.get("pricing_unit_id", "")))
+            for idx in manual_indexes.get(manual_key, []):
+                state = states[idx]
+                owner = active_owners.get(str(state.get("promo_owner", "")))
+                if (change.get("is_base_price_change") and owner
+                        and owner.start_date >= change.get("effective_from", "")):
+                    continue  # A later timed campaign overlays the manual offer.
+                manual_rows.add(idx)
+                for source, target in (("promo_code", "promo_code"), ("promo_type", "promo_type"),
+                                       ("promo_value", "promo_value"), ("promo_label", "promo_label"),
+                                       ("promo_net_eur", "net_eur"), ("promo_net_usd", "net_usd"),
+                                       ("manual_pa_links", "manual_pa_links")):
+                    if source in change:
+                        state[target] = change[source]
+                state.update(pa_underlying="", pa_unresolved=False)
+                if change.get("is_base_price_change"):
+                    state["promo_owner"] = ""
+                state["events"].append("MANUAL PROMO EDIT")
+
+        # Review only affected points when the timeline supplies a date scope.
+        # Existing saved campaign decisions still carry forward until expiry.
         floor_issues = []
         below_by_campaign: dict[int, set[tuple[str, str, int]]] = {}
         campaign_by_id = {str(int(c.id or 0)): c for c in (campaigns or [])}
@@ -888,11 +940,12 @@ def preview_batch(
             state = states[idx]
             state["allow_below_cost"] = False
             code = _text(state["promo_code"])
-            if not code:
-                continue
             iso = _text(row_value(values, "ISO")).upper()
             plan = _text(row_value(values, "Plan"))
             day = int(_num(row_value(values, "Days")) or 0)
+            in_review = review_rows is None or (iso, plan, day) in review_rows
+            if not code:
+                continue
             active_campaign = campaign_by_id.get(str(state.get("promo_owner", "")))
             if active_campaign is None:
                 resulting_date = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat() if execution_date else execution_date
@@ -900,25 +953,30 @@ def preview_batch(
                 if active_campaign is not None:
                     state["promo_owner"] = str(int(active_campaign.id or 0))
             campaign_id = int(active_campaign.id or 0) if active_campaign else 0
-            campaign_name = active_campaign.name if active_campaign else (state["promo_label"] or code)
+            campaign_name = active_campaign.name if active_campaign else (state["promo_label"] or code or "Price change")
+            pa_approvals = []
             for currency in ("EUR", "USD"):
                 list_key = "list_eur" if currency == "EUR" else "list_usd"
                 floor = _num(row_value(values, f"CostFloor_{currency}")) if f"CostFloor_{currency}" in h else None
                 base = state[list_key]
                 if base is None or floor is None:
                     continue
-                net_price = round_promo_price(base, state["promo_type"], state["promo_value"])
+                net_price = _state_net(state, currency)
                 if net_price >= floor - 1e-9:
                     continue
                 target = float(floor) * 1.10
-                required = required_list_price_for_target(target, state["promo_type"], state["promo_value"])
-                floor_issues.append(CostFloorIssue(
-                    campaign_id, campaign_name, iso, plan, day, currency,
-                    float(base), float(net_price), float(floor), float(target), float(required)
-                ))
+                required = float(base) if state["promo_type"] == "net" else required_list_price_for_target(target, state["promo_type"], state["promo_value"])
+                if in_review:
+                    floor_issues.append(CostFloorIssue(
+                        campaign_id, campaign_name, iso, plan, day, currency,
+                        float(base), float(net_price), float(floor), float(target), float(required),
+                        code == "PA" and state["promo_type"] == "net"
+                    ))
                 below_by_campaign.setdefault(campaign_id, set()).add((iso, plan, day))
-                choice = floor_choice(campaign_id, iso, plan, day, currency)
-                if choice == "raise":
+                choice = floor_choice(campaign_id, iso, plan, day, currency) if campaign_id or in_review or idx in manual_rows else None
+                if code == "PA" and state["promo_type"] == "net":
+                    pa_approvals.append(choice == "override")
+                if choice == "raise" and not (code == "PA" and state["promo_type"] == "net"):
                     original_key = "original_list_eur" if currency == "EUR" else "original_list_usd"
                     if state.get(original_key) is None:
                         state[original_key] = float(base)
@@ -930,12 +988,16 @@ def preview_batch(
                     if not state["allow_below_cost"]:
                         state["events"].append(f"BELOW-COST OVERRIDE ({currency})")
                     state["allow_below_cost"] = True
+            if pa_approvals:
+                state["allow_below_cost"] = all(pa_approvals)
+                state["pa_unresolved"] = in_review and not all(pa_approvals)
         for item in items:
             item.below_floor_rows = len(below_by_campaign.get(item.campaign_id, set()))
 
         boundary = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat() if execution_date else date.today().isoformat()
         _apply_monotonic_adjustments(states, rows, row_value, campaigns or [], boundary,
-                                    normalized_floor_choices, floor_issues)
+                                    normalized_floor_choices, floor_issues,
+                                    adjustment_review_rows if adjustment_review_rows is not None else review_rows)
 
         changes: list[PriceChange] = []
         for idx, values in enumerate(rows):
@@ -980,6 +1042,7 @@ def preview_batch(
                 "PromoName": state["promo_label"],
                 "PromoNet_EUR": state.get("net_eur") if state["promo_type"] == "net" else None,
                 "PromoNet_USD": state.get("net_usd") if state["promo_type"] == "net" else None,
+                "_ManualPALinks": state.get("manual_pa_links", ""),
                 "_PromoPlannerPAUnderlying": state["pa_underlying"],
                 "_PromoPlannerPAUnresolved": state["pa_unresolved"],
                 "Price_EUR": state["list_eur"],

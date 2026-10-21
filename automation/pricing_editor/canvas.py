@@ -20,12 +20,15 @@ class PriceCurveCanvas(QWidget):
     pointDragged = Signal(str, float, int)
     recommendationSelected = Signal(str)
     promoSelected = Signal(str)
+    manualPromoSelected = Signal(str, bool)
     statusChanged = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(1040, 650)
         self.setMouseTracking(True)
+        self.setToolTip("Shift + right-click a point, then choose a promo to apply it. "
+                        "Ctrl + Shift + right-click also aligns shorter durations.")
         self.competitors: list[dict[str, Any]] = []
         self.points: list[dict[str, Any]] = []
         self.promo_markers: list[dict[str, Any]] = []
@@ -58,6 +61,7 @@ class PriceCurveCanvas(QWidget):
         self.pan_origin = None
         self.is_dragging = False
         self.editing_allowed = False
+        self.manual_promo_alignment = None
         self.show_promo_markers = False
         self.show_prices = True
         self.setFocusPolicy(Qt.StrongFocus)
@@ -253,6 +257,8 @@ class PriceCurveCanvas(QWidget):
             for currency, is_below in below_by_currency.items()
             if str(currency).upper() != active_currency
         )
+        if (active_below or other_below) and point.get("allow_below_cost") and not point.get("promo_pa_unresolved"):
+            return "approved_below"
         if active_below and other_below:
             return "both_below"
         if active_below:
@@ -756,15 +762,27 @@ class PriceCurveCanvas(QWidget):
         if event.button() == Qt.RightButton:
             promo_code = self._nearest_promo_marker(event.position())
             if promo_code:
-                self.promoSelected.emit(promo_code)
+                mode = self.manual_promo_alignment
+                if event.modifiers() & Qt.ShiftModifier:
+                    mode = bool(event.modifiers() & Qt.ControlModifier)
+                if mode is not None and self.editing_allowed:
+                    self.manualPromoSelected.emit(promo_code, mode)
+                else:
+                    self.promoSelected.emit(promo_code)
+                self.manual_promo_alignment = None
                 return
 
+            self.manual_promo_alignment = (bool(event.modifiers() & Qt.ControlModifier)
+                                           if event.modifiers() & Qt.ShiftModifier and self.editing_allowed else None)
             idx = self._nearest_point_index(event.position())
             if idx is not None:
                 row_id = self.points[idx]["row_id"]
                 self.selected_row_id = row_id
                 self.show_promo_markers = True
                 self.pointSelected.emit(row_id)
+                if self.manual_promo_alignment is not None:
+                    self.statusChanged.emit("Choose promo: apply + align shorter durations" if self.manual_promo_alignment
+                                            else "Choose promo: apply to this duration only")
                 return
 
             self.zoom_start = event.position()
@@ -772,6 +790,14 @@ class PriceCurveCanvas(QWidget):
             return
 
         if event.button() == Qt.LeftButton:
+            if self.manual_promo_alignment is not None and self.editing_allowed:
+                promo_code = self._nearest_promo_marker(event.position())
+                if promo_code:
+                    mode = self.manual_promo_alignment
+                    self.manual_promo_alignment = None
+                    self.manualPromoSelected.emit(promo_code, mode)
+                    return
+            self.manual_promo_alignment = None
             if (
                 self.recommendation_card_apply_hitbox is not None
                 and self.recommendation_card_row_id
@@ -955,7 +981,7 @@ class PriceCurveCanvas(QWidget):
 
                 if max_rev > 0:
                     bar_max_height = rect.height() * 0.12
-                    bar_width = max(8, int(rect.width() / max(len(package_points) * 4, 1)))
+                    bar_width = max(12, int(rect.width() / max(len(package_points) * 3, 1)))
 
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(QBrush(QColor(220, 220, 220, 120)))
@@ -968,12 +994,24 @@ class PriceCurveCanvas(QWidget):
                         x_pos = self._to_screen(p["x"], 0).x()
                         bar_h = bar_max_height * revenue / max_rev
 
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QBrush(QColor(220, 220, 220, 120)))
                         painter.drawRect(
                             int(x_pos - bar_width / 2),
                             int(rect.bottom() - bar_h),
                             int(bar_width),
                             int(bar_h),
                         )
+                        # Vertical amounts fit narrow duration columns. Anchor
+                        # at the base without changing quantitative bar heights.
+                        painter.save()
+                        painter.setFont(QFont("Segoe UI", 7))
+                        painter.setPen(QColor("#b0b0b0"))
+                        label = f"{revenue:,.2f}".rstrip("0").rstrip(".")
+                        painter.translate(x_pos, rect.bottom() - 3)
+                        painter.rotate(-90)
+                        painter.drawText(QRectF(0, -bar_width / 2, 100, bar_width), Qt.AlignLeft | Qt.AlignVCenter, label)
+                        painter.restore()
 
             line_color = QColor("#198754") if self._is_unlimited(plan) else QColor("#bdbdbd")
             line_width = 1 if self._is_unlimited(plan) else 1
@@ -1016,10 +1054,12 @@ class PriceCurveCanvas(QWidget):
                     outline = QColor("#555555")
                 floor_state = self._floor_marker_state(point)
 
-                # Cost-floor visualization is factual only; AllowBelowCost affects
-                # export eligibility, not chart markers. Active/both-below points
-                # are X-only so there is no ambiguous circle underneath.
-                if floor_state in {"active_below", "both_below"}:
+                # Approval changes the marker, while factual below-floor flags remain intact.
+                if floor_state == "approved_below":
+                    painter.setPen(QPen(QColor("#198754"), 3))
+                    painter.drawLine(QPointF(pt.x() - 5, pt.y()), QPointF(pt.x() - 1, pt.y() + 4))
+                    painter.drawLine(QPointF(pt.x() - 1, pt.y() + 4), QPointF(pt.x() + 6, pt.y() - 5))
+                elif floor_state in {"active_below", "both_below"}:
                     cross_color = QColor("#1565c0") if floor_state == "active_below" else QColor("#c62828")
                     cross_half = 4
                     painter.setPen(QPen(cross_color, 2))
@@ -1155,6 +1195,13 @@ class PriceCurveCanvas(QWidget):
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#00897b"), 3)
         painter.setPen(QColor("#333333"))
         painter.drawText(int(legend_x) + 28, int(y) + 4, "New entry")
+
+        y += 22
+        painter.setPen(QPen(QColor("#198754"), 3))
+        painter.drawLine(QPointF(legend_x + 5, y), QPointF(legend_x + 9, y + 4))
+        painter.drawLine(QPointF(legend_x + 9, y + 4), QPointF(legend_x + 16, y - 5))
+        painter.setPen(QColor("#333333"))
+        painter.drawText(int(legend_x) + 28, int(y) + 4, "Below floor approved")
         y += 22
 
         self._draw_marker(painter, QPointF(legend_x + 10, y), "circle", 8, self._gb_fill(10), QColor("#bdbdbd"), 1)

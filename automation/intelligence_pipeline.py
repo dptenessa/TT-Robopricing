@@ -244,7 +244,7 @@ class Pipeline:
         if key == 'pricing':
             files += list((self.root/'outputs/combined_scrapes/history').glob('*.csv'))
         if key == 'report':
-            files += [self.automation/'campaign_monthly.py', self.sales, self.price_book, self.recommendations, self.market, self.automation/'market_history.py', self.automation/'pipeline_files.py', self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py', self.root/'inputs/destinations.yaml', self.root/'inputs/promos.json']
+            files += [self.automation/'campaign_monthly.py', self.automation/'pricing_worklist.py', self.sales, self.price_book, self.recommendations, self.market, self.automation/'market_history.py', self.automation/'pipeline_files.py', self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py', self.root/'inputs/destinations.yaml', self.root/'inputs/promos.json']
             files += list((self.root/'outputs/combined_scrapes/history').glob('*.csv'))
             files += list((self.root/'outputs/manual_prices/history').glob('**/manual_prices_*'))
             data['tables'] = self.table_digest(('opportunity_scores','events','destination_articles','destination_article_topics','google_ads_keywords','holiday_periods','collector_refresh'))

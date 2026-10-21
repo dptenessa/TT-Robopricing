@@ -31,7 +31,7 @@ EDITABLE_FIELDS = (
     "_PromoPlannerOriginalPrice_EUR",
     "_PromoPlannerOriginalPrice_USD",
     "_PromoPlannerPriceOwner",
-    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved",
+    "PromoNet_EUR", "PromoNet_USD", "_PromoPlannerPAUnderlying", "_PromoPlannerPAUnresolved", "_ManualPALinks",
 )
 
 LAYER_PRIORITIES = {"base": 10, "campaign": 20, "override": 30, "import": 10}
@@ -613,10 +613,12 @@ class PricingTimeline:
                     currency = field.replace("Price_", "").lower()
                     if currency in {"eur", "usd"}:
                         item[f"price_{currency}"] = json.loads(change["new_value_json"])
-                    elif field in {"PromoCode", "PromoType", "PromoValue", "PromoLabel"}:
+                    elif field in {"PromoCode", "PromoType", "PromoValue", "PromoLabel", "PromoNet_EUR", "PromoNet_USD", "_ManualPALinks"}:
                         promo_field = {
                             "PromoCode": "promo_code", "PromoType": "promo_type",
                             "PromoValue": "promo_value", "PromoLabel": "promo_label",
+                            "PromoNet_EUR": "promo_net_eur", "PromoNet_USD": "promo_net_usd",
+                            "_ManualPALinks": "manual_pa_links",
                         }[field]
                         item[promo_field] = json.loads(change["new_value_json"])
             result = list(grouped.values())
@@ -670,7 +672,7 @@ class PricingTimeline:
                 layer = "base" if source == "price_date" else "override"
                 cur = con.execute("INSERT INTO pricing_change_sets(effective_from,expires_at,layer,priority,source,label,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)",
                                   (effective.isoformat(), "", layer, LAYER_PRIORITIES[layer], source, label, stamp, json.dumps(metadata)))
-                changes = con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD')", (row["id"],)).fetchall()
+                changes = con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD','PromoCode','PromoType','PromoValue','PromoLabel','PromoNet_EUR','PromoNet_USD','_ManualPALinks')", (row["id"],)).fetchall()
                 con.executemany("INSERT INTO pricing_changes(change_set_id,row_key,field,old_value_json,new_value_json) VALUES(?,?,?,?,?)", [
                     (cur.lastrowid, c["row_key"], c["field"], json.dumps(_json_value(reference_rows.get(c["row_key"], {}).get(c["field"], json.loads(c["old_value_json"])))), c["new_value_json"])
                     for c in changes
@@ -747,7 +749,7 @@ class PricingTimeline:
             con.commit()
 
     def mark_price_date_official(self, key_date: str, *, partner_pack: str = "", _connection=None) -> int:
-        """Commit only this event's list-price changes as a permanent dated base layer."""
+        """Commit this event's explicit list-price and manual promo edits as a dated base layer."""
         markers = [m for m in self.event_markers(key_date) if m["source"] == "price_date"]
         if not markers:
             return 0  # A campaign-only export never bakes its discount into base prices.
@@ -766,7 +768,7 @@ class PricingTimeline:
                 if not metadata.get("is_base_price_change") and metadata.get("event_label") != markers[0]["metadata"].get("event_label"):
                     continue
                 selected.append(draft["id"])
-                for field in con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD')", (draft["id"],)):
+                for field in con.execute("SELECT row_key,field,old_value_json,new_value_json FROM pricing_changes WHERE change_set_id=? AND field IN ('Price_EUR','Price_USD','PromoCode','PromoType','PromoValue','PromoLabel','PromoNet_EUR','PromoNet_USD','_ManualPALinks')", (draft["id"],)):
                     fields[(field["row_key"],field["field"])] = tuple(field)
             marker = markers[0]
             metadata = dict(marker["metadata"], official=True, official_at=datetime.now().isoformat(timespec="seconds"), partner_pack=partner_pack, is_base_price_change=True)

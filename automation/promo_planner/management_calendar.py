@@ -42,7 +42,7 @@ def _campaign_payload(store: PromoStore, campaigns: list[Campaign], today: date)
     out: list[dict] = []
     for c in campaigns:
         state, key = _state(store, c, today)
-        visual_start = c.start_date or today.isoformat()
+        visual_start = c.display_start_date
         visual_end = c.end_date or (today + timedelta(days=180)).isoformat()
         out.append({
             "id": c.id,
