@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
-VERSION = "1.0-monthly-planning"
+VERSION = "1.1-quarter-month-planning"
 
 
 def monthly_inputs(database, folder, today):
@@ -79,13 +79,14 @@ def plan_rows(frame, database, folder, today, score_fn):
     import pandas as pd
     season,holidays,fresh_years,ads=monthly_inputs(database,folder,today)
     current=today.replace(day=1)
-    next_month=(current+timedelta(days=32)).replace(day=1)
     output=[]
     def parsed(value):
         try:return date.fromisoformat(str(value)[:10])
         except ValueError:return None
     for original in frame.to_dict("records"):
-        for start in (current,next_month):
+        for offset in range(4):
+            month_index = current.month - 1 + offset
+            start = date(current.year + month_index // 12, month_index % 12 + 1, 1)
             end=start.replace(day=calendar.monthrange(start.year,start.month)[1])
             effective=max(start,today)
             row=dict(original)

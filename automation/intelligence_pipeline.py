@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-VERSION = '1.0.4-monthly-planning-inputs'
+VERSION = '1.1.0-weekly-agent-research-primary'
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -108,11 +108,11 @@ class Step:
 
 
 STEPS = (
-    Step('radar', '1 · Travel stories and events', 'daily_event_radar.py'),
+    Step('research', '1 · Import weekly travel research', 'import_weekly_travel_research.py', (), False),
     Step('demand', '2 · Travel demand signals', 'collect_travel_demand.py'),
-    Step('scores', '3 · Sales and route opportunities', 'build_opportunities.py', ('radar', 'demand')),
+    Step('scores', '3 · Sales and route opportunities', 'build_opportunities.py', ('research', 'demand')),
     Step('pricing', '4 · Pricing recommendations', 'pricing_recommendations.py', (), False),
-    Step('report', '5 · Market Insights', 'market_insights.py', ('scores', 'pricing', 'radar')),
+    Step('report', '5 · Market Insights', 'market_insights.py', ('scores', 'pricing', 'research')),
 )
 BY_KEY = {s.key: s for s in STEPS}
 CURRENT_STATES = {'Ready', 'Warning', 'Ready*'}
@@ -167,9 +167,6 @@ class Pipeline:
 
     @property
     def sales(self):
-        if (self.root / 'outputs' / '.development_workspace').exists():
-            # Ignore inherited settings and environment overrides in the dev copy.
-            return self.root / 'local_data' / 'T-Travel_sales_master.csv'
         value = self.settings.get('sales_file') or os.environ.get('TT_INTELLIGENCE_SALES_FILE') or os.environ.get('TTRAVEL_SALES_MASTER_CSV')
         if not value:
             value = literal_config(self.intelligence / 'config.py', 'SALES_FILE')
@@ -183,7 +180,22 @@ class Pipeline:
 
     def script(self, key):
         step = BY_KEY[key]
-        return (self.intelligence if key in ('radar', 'demand', 'scores') else self.automation) / step.script
+        return (self.intelligence if key in ('radar', 'research', 'demand', 'scores') else self.automation) / step.script
+
+    def research_report(self):
+        """Return the newest dated weekly research JSON, if one is present."""
+        folder = self.intelligence / 'inputs' / 'travel_research'
+        candidates = []
+        for path in folder.glob('weekly_travel_research_*.json'):
+            match = re.fullmatch(r'weekly_travel_research_(\d{6})\.json', path.name)
+            if not match:
+                continue
+            try:
+                stamp = datetime.strptime(match.group(1), '%y%m%d').date()
+            except ValueError:
+                continue
+            candidates.append((stamp, path))
+        return max(candidates, default=(None, None), key=lambda pair: pair[0])[1]
 
     @staticmethod
     def file_stamp(path):
@@ -232,6 +244,10 @@ class Pipeline:
         input_files = list((self.intelligence/'inputs/travel_demand').glob('*.csv'))
         if key == 'radar':
             files += [self.intelligence/'sources.json', self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py']
+        if key == 'research':
+            files += [self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py',
+                      self.intelligence/'inputs/travel_demand/destination_aliases.csv',
+                      self.research_report() or self.intelligence/'inputs/travel_research/weekly_travel_research_YYMMDD.json']
         if key in ('demand','scores','report'):
             files += config_files + input_files
         if key == 'demand':
@@ -244,10 +260,10 @@ class Pipeline:
         if key == 'pricing':
             files += list((self.root/'outputs/combined_scrapes/history').glob('*.csv'))
         if key == 'report':
-            files += [self.automation/'campaign_monthly.py', self.automation/'pricing_worklist.py', self.sales, self.price_book, self.recommendations, self.market, self.automation/'market_history.py', self.automation/'pipeline_files.py', self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py', self.root/'inputs/destinations.yaml', self.root/'inputs/promos.json']
+            files += [self.automation/'campaign_monthly.py', self.sales, self.price_book, self.recommendations, self.market, self.automation/'market_history.py', self.automation/'pipeline_files.py', self.intelligence/'destination_coverage.py', self.intelligence/'event_matching.py', self.root/'inputs/destinations.yaml', self.root/'inputs/promos.json']
             files += list((self.root/'outputs/combined_scrapes/history').glob('*.csv'))
             files += list((self.root/'outputs/manual_prices/history').glob('**/manual_prices_*'))
-            data['tables'] = self.table_digest(('opportunity_scores','events','destination_articles','destination_article_topics','google_ads_keywords','holiday_periods','collector_refresh'))
+            data['tables'] = self.table_digest(('opportunity_scores','events','destination_articles','destination_article_topics','agent_research_imports','google_ads_keywords','holiday_periods','collector_refresh'))
         data['files'] = [self.file_stamp(f) for f in sorted(set(files)) if not f.is_dir()]
         data['dependencies'] = {dep:self.state.get(dep,{}).get('last_completed') or self.state.get(dep,{}).get('finished_at','') for dep in BY_KEY[key].dependencies}
         return hashlib.sha256(json.dumps(data,sort_keys=True).encode()).hexdigest()
@@ -271,6 +287,8 @@ class Pipeline:
             return self.table_summary('demand_observations')[0] is not None
         if key == 'scores':
             return self.table_summary('opportunity_scores')[0] is not None
+        if key == 'research':
+            return self.table_summary('agent_research_imports')[0] is not None
         return (self.recommendations if key=='pricing' else self.report).exists()
 
     def status(self, key):
@@ -331,6 +349,12 @@ class Pipeline:
         required=[self.script(key)]
         if key=='radar':
             required += [self.database,self.intelligence/'sources.json']
+        if key=='research':
+            required += [self.database]
+            report = self.research_report()
+            if report is None:
+                raise RuntimeError('No dated weekly research JSON found in automation/intelligence/inputs/travel_research. Save it as weekly_travel_research_YYMMDD.json.')
+            required += [report]
         if key=='demand':
             required += [self.root/'inputs/WS_PPG.csv']
             required += [self.intelligence/'inputs/travel_demand'/f for f in ('origins.csv','destination_aliases.csv','origin_keyword_templates.csv','destination_seasonality.csv','origin_market_weights.csv')]
@@ -339,6 +363,21 @@ class Pipeline:
         if key=='report': required += [self.recommendations]
         missing=[str(x) for x in required if not x.exists()]
         if missing: raise RuntimeError('Missing required input(s):\n'+'\n'.join(missing))
+        if key == 'research':
+            try:
+                report_value = json.loads(report.read_text(encoding='utf-8-sig'))
+                report_date = datetime.fromisoformat(str(report_value.get('report_date', ''))).date()
+            except (ValueError, OSError, AttributeError) as exc:
+                raise RuntimeError(
+                    f'Weekly research report is missing a valid report_date: {report}. '
+                    'Save the latest dated weekly_travel_research_YYMMDD.json in inputs/travel_research first.'
+                ) from exc
+            age_days = (datetime.now().astimezone().date() - report_date).days
+            if age_days < 0 or age_days > 7:
+                raise RuntimeError(
+                    f'Weekly research report is {age_days} days old. '
+                    'Save the latest dated weekly_travel_research_YYMMDD.json in inputs/travel_research first.'
+                )
         if key=='radar' and self.table_summary('events')[0] is None:
             raise RuntimeError('The selected events.db has no events table. Restore the existing Intelligence database; this launcher does not create a replacement.')
 
@@ -403,7 +442,7 @@ class Pipeline:
                         assert process.stdout is not None
                         for line in process.stdout:
                             log.write(line);log.flush();emit('line',line.rstrip())
-                            warning_match=re.search(r'^(AI ERR|ERR\b|HOLIDAY ERR|GOOGLE TRENDS (ERR|SKIP)|GOOGLE ADS ERR|SALES (ERR|SKIP)|ORIGIN FILTER SKIP)|Qwen: unavailable',line)
+                            warning_match=re.search(r'^(AI ERR|ERR\b|HOLIDAY ERR|GOOGLE TRENDS (ERR|SKIP)|GOOGLE ADS ERR|SALES (ERR|SKIP)|ORIGIN FILTER SKIP|AGENT RESEARCH WARNING)|Qwen: unavailable',line)
                             if warning_match:
                                 warnings+=1
                                 category=warning_match.group(0)
@@ -452,13 +491,14 @@ def worker(pipeline, key):
     p=pipeline
     os.environ['TT_INTELLIGENCE_DATABASE']=str(p.database)
     os.environ['TT_INTELLIGENCE_SALES_FILE']=str(p.sales)
-    if key in ('radar','demand','scores'):
+    if key in ('radar','research','demand','scores'):
         # Intelligence config.py must win over automation/config.py.
         sys.path.insert(0,str(p.intelligence))
         os.chdir(p.intelligence)
         import importlib
         module=importlib.import_module(Path(BY_KEY[key].script).stem)
         args=[str(p.script(key)),'--database',str(p.database)]
+        if key=='research': args += ['--input',str(p.research_report())]
         if key=='demand': args += ['--input-dir',str(p.intelligence/'inputs/travel_demand'),'--portfolio-file',str(p.root/'inputs/WS_PPG.csv')]
         if key=='scores': module.SALES_FILE=str(p.sales)
         sys.argv=args

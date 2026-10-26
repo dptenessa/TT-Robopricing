@@ -30,7 +30,7 @@ API_KEY_ENV_VARS = {
 }
 
 # Small pause between requests when uploading everything.
-DELAY_BETWEEN_REQUESTS = 0.15
+DELAY_BETWEEN_REQUESTS = 0.25
 
 # Default country used for the one-row test upload.
 TEST_COUNTRY = "HR"
@@ -203,7 +203,7 @@ destinations = {
 # ============================================================
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-MAPPING_FILE = SCRIPT_DIR / "0_destination_iso_codes_amdocs.csv"
+MAPPING_FILE = SCRIPT_DIR / "00_destination_iso_codes_amdocs.csv"
 
 
 def load_destination_mapping():

@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import csv
 import sqlite3
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, replace, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -181,10 +182,12 @@ class PromoStore:
                     continue
         con.execute("INSERT INTO store_metadata(key,value) VALUES(?,?)", (marker, "1"))
 
+    @contextmanager
     def _connect(self):
-        con = sqlite3.connect(self.path)
-        con.row_factory = sqlite3.Row
-        return con
+        with closing(sqlite3.connect(self.path)) as con:
+            con.row_factory = sqlite3.Row
+            with con:
+                yield con
 
     def _migrate_legacy_key_date_changes(self, con: sqlite3.Connection) -> None:
         """Import the old JSON schedule once, leaving the source file untouched."""
@@ -460,6 +463,16 @@ class PromoStore:
                         con.execute("UPDATE pricing_change_sets SET undone_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), row["id"]))
             con.execute("DELETE FROM executions WHERE campaign_id=?", (campaign_id,))
             con.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
+
+    def rename_campaign(self, campaign_id: int, name: str) -> None:
+        name = str(name).strip()
+        if not name:
+            raise ValueError("Enter a campaign name.")
+        original = self.get_campaign(campaign_id)
+        from .timeline_labels import campaign_presentation
+        if campaign_presentation(original, self)["readonly"]:
+            raise ValueError("Published or finished campaigns are read-only.")
+        self.update_campaign(replace(original, name=name))
 
     def duplicate_campaign(self, campaign_id: int, new_code: str) -> int:
         c = self.get_campaign(campaign_id)

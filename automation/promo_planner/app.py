@@ -9,7 +9,7 @@ import subprocess
 import sys
 import pandas as pd
 
-from PySide6.QtCore import QDate, Qt, Signal, Slot, QRect, QThread
+from PySide6.QtCore import QDate, Qt, Signal, Slot, QRect, QThread, QUrl
 from PySide6.QtGui import QColor, QBrush, QFont, QPen, QDesktopServices, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication,
@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from .engine import PromoOption, preview_campaign, preview_batch, read_catalogue_frame
+from .issue_review import promotion_review, review_summary
 from .calendar_export import generate_promotion_calendar
 from .management_calendar import generate_management_calendar
 from .date_price_changes import active_changes, changes_for_key_date, project_dataframe
@@ -255,6 +256,7 @@ class PromoPlanner(QMainWindow):
         self.on_timeline_changed = None
         self.on_destination_selected = None
         self.before_timeline_update = None
+        self.on_review_status = None
         self._shared_key_date: str | None = None
         self._timeline_start_date: str | None = None
         self._draft_timeline_key_date: str | None = None
@@ -777,7 +779,10 @@ class PromoPlanner(QMainWindow):
         subtitle.setStyleSheet(f"color:{MID};")
         title_row.addWidget(subtitle)
         title_row.addStretch(1)
-        for text, fn in (("Refresh", self._refresh_campaigns), ("Edit", self._edit_selected), ("Duplicate", self._duplicate_selected)):
+        self.campaign_review_btn = QPushButton("Preview & resolve")
+        self.campaign_review_btn.clicked.connect(self._preview_execution_date)
+        title_row.addWidget(self.campaign_review_btn)
+        for text, fn in (("Refresh", self._refresh_campaigns), ("Edit", self._edit_selected), ("Rename", self._rename_selected), ("Duplicate", self._duplicate_selected), ("🖨 Calendar HTML", self._export_promotion_calendar)):
             b = QPushButton(text)
             b.clicked.connect(fn)
             title_row.addWidget(b)
@@ -1390,6 +1395,7 @@ class PromoPlanner(QMainWindow):
         if not hasattr(self, "tree"):
             return
         self.tree.clear()
+        self._last_review_key = None
         today = date.today().isoformat()
         campaigns = self.store.list_campaigns()
         key = self._shared_key_date if self.embedded else self._qdate_iso(self.execution_date.date())
@@ -1605,6 +1611,21 @@ class PromoPlanner(QMainWindow):
             b.setChecked(False)
         self._last_day_clicked = None
         self._refresh_day_summary()
+
+    def _rename_selected(self):
+        try:
+            campaign = self._selected_campaign()
+            if campaign_presentation(campaign, self.store)["readonly"]:
+                return self._info("Rename campaign", "Published or finished campaigns are read-only.")
+            name, ok = QInputDialog.getText(self, "Rename campaign", "Campaign name:", text=campaign.name)
+            if not ok or not name.strip() or name.strip() == campaign.name:
+                return
+            self.store.rename_campaign(campaign.id, name)
+            if self.editing_campaign_id == campaign.id:
+                self.name_edit.setEditText(name.strip())
+            self._refresh_campaigns()
+        except Exception as exc:
+            return self._error("Rename campaign", str(exc))
 
     def _duplicate_selected(self):
         try:
@@ -1858,6 +1879,8 @@ class PromoPlanner(QMainWindow):
             self.execution_date_title.setText(f"{date.today():%d %b %Y} · {transition}")
             self.execution_summary.setText("Read only. Choose a date in Timeline, or add a dated change before editing.")
             self.preview_date_btn.setEnabled(False)
+            self.campaign_review_btn.setEnabled(False)
+            self.campaign_review_btn.setText("Preview & resolve · choose a date")
             self.apply_date_btn.setEnabled(False)
             self.undo_btn.setVisible(False)
             return
@@ -1865,6 +1888,9 @@ class PromoPlanner(QMainWindow):
             self._render_key_date_strip()
         d = self._qdate_iso(self.execution_date.date())
         self._load_issue_choices(d)
+        if getattr(self, "_last_review_key", None) != d:
+            self.campaign_review_btn.setText("Preview & resolve · check needed")
+            self.campaign_review_btn.setStyleSheet("")
         if hasattr(self, "execution_date_title"):
             try:
                 key_date = self._parse_iso(d)
@@ -1905,6 +1931,7 @@ class PromoPlanner(QMainWindow):
 
         has_reviewable_changes = bool(actions or date_price_changes or planned_events)
         self.preview_date_btn.setEnabled(has_reviewable_changes)
+        self.campaign_review_btn.setEnabled(has_reviewable_changes)
         self.apply_date_btn.setEnabled(bool(actions) and not bool(batch))
         self.apply_date_btn.setText("Apply campaign handover")
         self.undo_btn.setVisible(bool(batch))
@@ -1946,6 +1973,7 @@ class PromoPlanner(QMainWindow):
         return "—" if value is None else f"{float(value):.2f}"
 
     def _batch_preview_dialog(self, preview, *, approval: bool = False, editable_issues: bool = True) -> bool:
+        preview = promotion_review(preview)
         dlg = QDialog(self)
         dlg.setWindowTitle("Approve pricing changes" if approval else "Pricing change preview")
         screen = self.screen() or QApplication.primaryScreen()
@@ -2041,7 +2069,7 @@ class PromoPlanner(QMainWindow):
 
         if preview.cost_floor_issues:
             warn = QLabel(
-                f"Cost-floor review: {len(preview.cost_floor_issues)} currency price(s) need a decision. "
+                f"Promo cost-floor review: {len(preview.cost_floor_issues)} currency price(s) listed. "
                 "Saved choices are reflected in the AFTER columns. Open the issue list to review or change them."
             )
             warn.setWordWrap(True)
@@ -2308,6 +2336,15 @@ class PromoPlanner(QMainWindow):
         elif not editable:
             dlg.exec()
 
+    def _show_promotion_review_status(self, key_date, summary):
+        self._last_review_key = key_date
+        count = summary["total"]
+        self.campaign_review_btn.setText(
+            f"Preview & resolve · {count} unresolved" if count else "Preview & resolve · no unresolved issues")
+        self.campaign_review_btn.setStyleSheet("color:#9B1C1C;font-weight:700;" if count else "color:#1B5E20;")
+        if callable(self.on_review_status):
+            self.on_review_status(key_date, summary)
+
     def _preview_execution_date(self):
         if self.embedded and not self._shared_key_date:
             return self._info("Date preview", "Choose a date in Timeline first.")
@@ -2319,13 +2356,15 @@ class PromoPlanner(QMainWindow):
             return self._info("Date preview", f"No scheduled price or campaign changes are projected through {d}.")
         try:
             self._load_issue_choices(d)
-            p = self._simulate_with_saved_choices(d, actions)
+            p = promotion_review(self._simulate_with_saved_choices(d, actions))
         except Exception as exc:
             return self._error("Date preview", str(exc))
+        summary = review_summary(p)
+        self._show_promotion_review_status(d, summary)
         if p.cost_floor_issues or p.collision_issues:
             self._batch_issue_choices_dialog(p)
         else:
-            self._info("Date preview", "No cost-floor issues or promo conflicts at this date.")
+            self._info("Date preview", "No promo cost-floor issues or promo conflicts at this date. Ordinary price edits are excluded.")
 
     def _persist_issue_decisions(self, floor_choices, conflict_choices, conflict_contexts):
         """Save a complete snapshot, including partial resolutions and cleared choices."""
@@ -2345,17 +2384,18 @@ class PromoPlanner(QMainWindow):
 
     def _batch_issue_choices_dialog(self, preview, *, editable=True, on_saved=None):
         """Show cost-floor and promo-conflict rows together and collect their decisions."""
+        preview = promotion_review(preview)
         floor_issues = list(preview.cost_floor_issues or [])
         conflict_issues = list(preview.collision_issues or [])
         if not floor_issues and not conflict_issues:
             return ({}, {}) if editable else None
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Price and promotion issues")
+        dialog.setWindowTitle("Promotion issues")
         dialog.resize(1450, 720)
         layout = QVBoxLayout(dialog)
         intro = QLabel(
-            f"Review {len(floor_issues)} cost-floor prices and {len(conflict_issues)} promo conflicts. "
+            f"Review {len(floor_issues)} promo cost-floor prices and {len(conflict_issues)} promo conflicts. Ordinary price edits are excluded. "
             "Unresolved rows are red and bold; saved decisions are green. "
             + ("Each decision saves immediately. Close to see the updated editor." if editable else
                "This is an unsaved campaign preview. Save the campaign, then use Timeline Preview & resolve to record decisions.")
@@ -2485,6 +2525,14 @@ class PromoPlanner(QMainWindow):
         if changed:
             if self.embedded and callable(self.on_timeline_changed):
                 self.on_timeline_changed(self._shared_key_date)
+            if not self.embedded:
+                key_date = self._qdate_iso(self.execution_date.date())
+                try:
+                    current = self._simulate_with_saved_choices(key_date, self._actions_through_execution_date(key_date))
+                    self._show_promotion_review_status(key_date, review_summary(current))
+                except Exception:
+                    self._last_review_key = None
+                    self.campaign_review_btn.setText("Preview & resolve · check needed")
             if on_saved:
                 on_saved()
         if editable:
@@ -2935,7 +2983,7 @@ class PromoPlanner(QMainWindow):
         self._info("Management calendar", f"Management timeline created:\n{path}")
 
     def _export_promotion_calendar(self):
-        suggested = self.root_dir / "outputs" / "promo_planner" / "promotion_calendar.html"
+        suggested = self.root_dir / "outputs" / "promo_planner" / f"promotion_calendar_{date.today():%Y%m%d}.html"
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export promotion calendar",
@@ -2949,6 +2997,7 @@ class PromoPlanner(QMainWindow):
             out_path = out_path.with_suffix(".html")
         try:
             generate_promotion_calendar(self.store, out_path, self.timeline.project())
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_path.resolve())))
         except Exception as exc:
             return self._error("Export promotion calendar", str(exc))
         QMessageBox.information(

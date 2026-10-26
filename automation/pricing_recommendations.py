@@ -9,6 +9,10 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+try:
+    from pricing_snapshot import load_pricing_snapshot, pricing_database, pricing_inputs, pricing_signature, pricing_metadata_path, pricing_date
+except ImportError:
+    from automation.pricing_snapshot import load_pricing_snapshot, pricing_database, pricing_inputs, pricing_signature, pricing_metadata_path, pricing_date
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -1960,12 +1964,22 @@ def recommendation_outputs_are_stale(
     *,
     price_book_path: str | Path | None = None,
     recommendations_path: str | Path | None = None,
+    as_of=None,
 ) -> bool:
-    price_book_path = Path(price_book_path or (paths.base_dir / "outputs" / "manual_prices" / "current" / "manual_prices_current.xlsx"))
     recommendations_path = Path(recommendations_path or (paths.work_dir / "pricing_recommendations" / "recommendations_latest.csv"))
     if not recommendations_path.exists():
         return True
-    inputs = [Path(__file__), price_book_path, paths.market_annotated, paths.promos_json, paths.pricing_units_json]
+    try:
+        metadata = json.loads(pricing_metadata_path(recommendations_path).read_text())
+        if metadata.get('source') != 'pricing_database' or metadata.get('signature') != pricing_signature(paths.base_dir, as_of):
+            return True
+    except (OSError, ValueError):
+        return True
+    inputs = [Path(__file__), Path(__file__).with_name('pricing_snapshot.py'),
+              Path(__file__).with_name('pricing_timeline.py'),
+              Path(__file__).parent/'promo_planner/engine.py',
+              Path(__file__).parent/'promo_planner/date_price_changes.py',
+              *pricing_inputs(paths.base_dir), paths.market_annotated, paths.promos_json, paths.pricing_units_json]
     latest_input = max((p.stat().st_mtime for p in inputs if p.exists()), default=0.0)
     return recommendations_path.stat().st_mtime + 0.001 < latest_input
 
@@ -1983,12 +1997,13 @@ def generate_recommendations_from_files(
     config: RecommendationConfig = DEFAULT_CONFIG,
     generate_insights: bool = True,
     annotate_workbook: bool = True,
+    as_of=None,
 ) -> pd.DataFrame:
-    default_price_book = paths.base_dir / "outputs" / "manual_prices" / "current" / "manual_prices_current.xlsx"
-    legacy_price_book = paths.base_dir / "outputs" / "manual_prices" / "current" / "manual_prices_current.csv"
-    if price_book_path is None:
-        price_book_path = default_price_book if default_price_book.exists() else legacy_price_book
-    price_book_path = Path(price_book_path)
+    price_book_path = Path(price_book_path) if price_book_path is not None else pricing_database(paths.base_dir)
+    if price_book_path.resolve() != pricing_database(paths.base_dir).resolve():
+        raise ValueError('BI pricing must come from promo_schedule.db. Excel/CSV price-book overrides are no longer supported.')
+    day = pricing_date(as_of)
+    source_signature = pricing_signature(paths.base_dir, day)
     market_path = Path(market_path or paths.market_annotated)
     promos_path = Path(promos_path or paths.promos_json)
     pricing_units_path = Path(pricing_units_path or paths.destinations_yaml)
@@ -1996,12 +2011,10 @@ def generate_recommendations_from_files(
     output_path = Path(output_path or recommendation_dir / "recommendations_latest.csv")
     summary_path = Path(summary_path or recommendation_dir / "recommendations_summary_latest.csv")
 
-    if not price_book_path.exists():
-        raise FileNotFoundError(f"Current price book not found: {price_book_path}")
     if not market_path.exists():
         raise FileNotFoundError(f"Current annotated market not found: {market_path}")
 
-    prices = read_pricing_workbook(price_book_path) if price_book_path.suffix.lower() == ".xlsx" else pd.read_csv(price_book_path)
+    prices = load_pricing_snapshot(paths.base_dir, as_of=day)
     raw_market = pd.read_csv(market_path, low_memory=False)
     raw_market, temporal_outliers_excluded = _exclude_temporal_market_anomalies(raw_market, paths)
     rate = float(eur_to_usd or _infer_eur_to_usd(raw_market))
@@ -2018,21 +2031,20 @@ def generate_recommendations_from_files(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary = build_summary(recommendations)
-    # Annotate first, then timestamp the CSVs. This ordering is intentional:
-    # the disposable Excel annotation must not make the workbook look newer
-    # than the recommendation output and trigger a pointless recalculation on
-    # every editor launch.
-    if annotate_workbook and price_book_path.suffix.lower() == ".xlsx":
-        annotate_price_book_with_recommendations(price_book_path, recommendations)
+    recommendations['PricingAsOf'] = day.isoformat()
     recommendations.to_csv(output_path, index=False)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(summary_path, index=False)
+    pricing_metadata_path(output_path).write_text(json.dumps(dict(
+        source='pricing_database', as_of=day.isoformat(), signature=source_signature,
+        database=str(price_book_path.resolve())), indent=2), encoding='utf-8')
     if generate_insights:
         try:
             try:
                 from market_insights import generate_market_insights
             except ImportError:
                 from automation.market_insights import generate_market_insights
-            generate_market_insights(paths, recommendations_path=output_path)
+            generate_market_insights(paths, recommendations_path=output_path, as_of=day)
         except Exception as exc:
             # Recommendation generation must remain usable even if the optional HTML
             # insight view cannot be produced from an incomplete scrape history.
@@ -2040,7 +2052,7 @@ def generate_recommendations_from_files(
 
     print()
     print("Pricing Recommendations")
-    print(f"Current price book: {price_book_path}")
+    print(f"Pricing database:   {price_book_path} (effective {day})")
     print(f"Current market:     {market_path}")
     print(f"Destinations:       {pricing_units_path}")
     print(f"Commercial markets: {len(priority_countries)} configured")
@@ -2058,7 +2070,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate conservative non-regression pricing recommendations from the current price book and current market."
     )
-    parser.add_argument("--price-book", default=None, help="Current manual_prices_current.xlsx")
+    parser.add_argument("--price-book", default=None, help="Pricing database path (Excel/CSV overrides are not supported)")
+    parser.add_argument("--as-of", default=None, help="Pricing effective date YYYY-MM-DD; defaults to today, published prices only")
     parser.add_argument("--market", default=None, help="market_prices_annotated_latest.csv")
     parser.add_argument("--promos", default=None, help="promos.json")
     parser.add_argument("--pricing-units", default=None, help="destinations.yaml (legacy pricing_units.json also supported)")
@@ -2078,6 +2091,7 @@ def main() -> int:
         output_path=args.output,
         summary_path=args.summary,
         eur_to_usd=args.eur_usd,
+        as_of=args.as_of,
     )
     return 0
 

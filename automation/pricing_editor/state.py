@@ -267,6 +267,16 @@ def load_table(
     else:
         df = pd.read_csv(path)
 
+    return normalize_editor_pricebook(df, currency_hint=currency_hint, eur_to_usd=eur_to_usd)
+
+
+def normalize_editor_pricebook(
+    df: pd.DataFrame,
+    currency_hint: str | None = None,
+    eur_to_usd: float = DEFAULT_EUR_TO_USD,
+) -> pd.DataFrame:
+    """Prepare workbook or SQLite rows for the editor without changing stored data."""
+    df = df.copy()
     needed = [
         "Provider", "ReferenceProvider", "Country", "ISO", "ISO3", "SKU", "GB", "Days", "Price",
         "Currency", "Price_USD", "Price_EUR", "usd_price", "eur_price", "EUR_TO_USD", "COST_EUR_TO_USD",
@@ -290,7 +300,7 @@ def load_table(
         if col not in df.columns:
             df[col] = np.nan
 
-    df = df[needed].copy()
+    df = df[list(dict.fromkeys([*needed, *df.columns]))].copy()
     df = add_currency_price_columns(
         df,
         currency_hint=currency_hint or DEFAULT_CURRENCY,
@@ -1034,7 +1044,9 @@ class EditorState:
         return out
 
     def _prepare_pricebook_frame(self, df: pd.DataFrame) -> pd.DataFrame:
-        frame = df.copy()
+        # The planner can seed SQLite directly from the compact workbook schema,
+        # which lacks display Price and editor row/scope keys.
+        frame = normalize_editor_pricebook(df, currency_hint="EUR", eur_to_usd=self.eur_to_usd)
         self._canonicalize_pricebook_country_names(frame)
         allowed_isos = self.allowed_ppg_isos()
 
@@ -2048,6 +2060,13 @@ class EditorState:
         point.setdefault("display_prices", {})[currency] = float(point["y"])
         self._refresh_point_floor_status(point)
 
+    def _refresh_curve_display_prices(self, points):
+        affected = {str(p["row_id"]) for p in points}
+        floor_keys = {(p.get("provider"),p.get("plan"),p.get("days")) for p in points if not self._is_region_point(p)}
+        for rid,point in self.row_index.items():
+            if str(rid) in affected or (self._is_region_point(point) and (point.get("provider"),point.get("plan"),point.get("days")) in floor_keys):
+                self._apply_point_display(point)
+
     def _refresh_all_display_prices(self) -> None:
         currency = self.normalize_current_currency()
         for points in self.points_by_country.values():
@@ -2687,7 +2706,7 @@ class EditorState:
             q.update(promo_pa_underlying="", promo_pa_unresolved=False,
                      promo_planner_owner="", allow_below_cost=False)
         if not align_shorter or promo_code == "__REMOVE_PROMO__":
-            self._refresh_all_display_prices()
+            self._refresh_curve_display_prices(points)
             return count + len(touched)
         caps = {c: self._final_price_for_currency(selected, c, self._working_price_for_currency(selected, c))
                 for c in CURRENCIES}
@@ -2712,7 +2731,7 @@ class EditorState:
             data["layers"].append({"owner": owner, "caps": caps})
             self._render_manual_pa(q, data, active_campaign_ids=active_campaign_ids, effective_date=effective_date)
             touched.add(str(q.get("promo_scope_key")))
-        self._refresh_all_display_prices()
+        self._refresh_curve_display_prices(points)
         return count + len(touched)
 
 
@@ -2905,10 +2924,11 @@ class EditorState:
             )
         )
 
-    def export_prices_dataframe(self) -> pd.DataFrame:
+    def export_prices_dataframe(self, *, refresh: bool = True) -> pd.DataFrame:
         """Return one consolidated pricing snapshot containing EUR and USD."""
         rows = []
-        self._refresh_all_display_prices()
+        if refresh:
+            self._refresh_all_display_prices()
 
         for point in self.row_index.values():
             price_usd = self.round_regular_price(self._working_price_for_currency(point, "USD"))

@@ -1,10 +1,104 @@
 """Sales-prioritised product worklist for the existing Market Insights report."""
 import json
 from html import escape
+from datetime import date
+import re
+import sys
 
 
-def render_pricing_worklist(rows, sales_note, sales_available):
+def build_origin_sales(sales_note, *, sales_path=None):
+    """Same 60-day eligible sales as the worklist, with origin-specific amounts.
+
+    Identifiers are inspected only inside the shared local sales-reader boundary.
+    Only aggregate country/product counts and currency amounts leave this function.
+    """
+    match = re.search(r'Completed sales, (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2});', sales_note)
+    if not match:
+        return dict(origins=[], by_origin={}, note='Buyer-origin sales could not be resolved for this report date.')
+    m = sys.modules.get('automation.market_insights') or sys.modules.get('market_insights')
+    if m is None:
+        try:
+            from automation import market_insights as m
+        except ImportError:
+            import market_insights as m
+    as_of = date.fromisoformat(match[2])
+    begin = date.fromisoformat(match[1])
+    names, _ = m._campaign_inputs()
+    aliases = {re.sub(r'\W+',' ', name.casefold()).strip():iso for iso,name in names.items()}
+    resolve = lambda value: aliases.get(re.sub(r'\W+',' ', m._text(value).casefold()).strip()) or m._sales_iso2(value)
+    path = sales_path if sales_path is not None else m._configured_sales_path()
+    sales = m._campaign_sales(path, resolve, as_of, include_daily=True)
+    if not sales['available']:
+        return dict(origins=[], by_origin={}, note='Buyer-origin sales are unavailable.')
+    by_origin = {}
+    def origin(code):
+        return by_origin.setdefault(code, dict(destinations={}, products={}, unmapped=[]))
+    for (code, dest), values in sales['routes'].items():
+        origin(code)['destinations'][dest] = values['units']
+    def product_key(dest,plan,days):
+        return json.dumps([dest,plan,int(days)], separators=(',',':'))
+    for (code,dest,plan,days), units in sales['skus'].items():
+        origin(code)['products'][product_key(dest,plan,days)] = dict(units=units, revenue={})
+    for (_stamp,code,dest), units in sales['daily_unmapped'].items():
+        if units>0 and dest not in origin(code)['unmapped']:
+            origin(code)['unmapped'].append(dest)
+    # Reuse precisely the shared reader's duplicate, reversal and status rules.
+    raw = m._read_sales_csv(path)
+    dates = raw['TransactionDate'].map(m._campaign_date)
+    types = raw.TransactionType.fillna('').astype(str).str.strip().str.upper()
+    statuses = raw.DocumentStatus.fillna('').astype(str).str.casefold()
+    visible = dates.map(lambda d:d is not None and d<=as_of)
+    cancelled = (types.isin(['CANCELLATION','REFUND','REVERSAL']) | statuses.str.contains('cancel|refund|revers',regex=True)) & visible
+    accepted = types.eq('SALE') & statuses.str.strip().isin(['completeddeliveryandsettledinvoice','completed','settled','paid','delivered']) & ~cancelled & visible
+    if 'LineID' in raw:
+        ids = raw.LineID.fillna('').astype(str).str.strip()
+        cancelled_ids = set(ids[cancelled & ids.ne('')])
+        accepted &= ~ids.isin(cancelled_ids)
+        fields = [c for c in ['LineID','BuyerCountry','Destination','Quantity','TransactionDate','TransactionType','DocumentStatus','PackageSize','ValidityDays','ProductName','TotalAmount','UnitPrice','ConnectXPriceCurrency','Currency','PaymentCurrency','TransactionCurrency'] if c in raw]
+        variants = raw.loc[accepted & ids.ne(''),fields].drop_duplicates()
+        conflicts = set(variants.loc[variants.LineID.duplicated(keep=False),'LineID'].astype(str))
+        accepted &= ~ids.isin(conflicts)
+        accepted &= ~(ids.duplicated(keep='first') & ids.ne(''))
+    totals, missing, counted = {}, set(), {}
+    for index,row in raw.loc[accepted].iterrows():
+        day = dates.loc[index]
+        if day is None or not begin<=day<=as_of:continue
+        code,dest = resolve(row.BuyerCountry),resolve(row.Destination)
+        plan = m._campaign_plan(row.get('PackageSize')) or m._campaign_plan(row.get('ProductName'))
+        days = m._campaign_number(row.get('ValidityDays'))
+        if days is None:
+            duration = re.search(r'(\d+)\s*days?\b',m._text(row.get('ProductName')),re.I)
+            days = float(duration[1]) if duration else None
+        units = m._campaign_number(row.get('Quantity'))
+        if days is None or not days.is_integer() or not units or units<=0:continue
+        sk=(code,dest,plan,int(days))
+        if sk not in sales['skus']:continue
+        counted[sk]=counted.get(sk,0)+units
+        currency = next((m._text(row.get(field)).upper() for field in ('ConnectXPriceCurrency','Currency','PaymentCurrency','TransactionCurrency') if m._text(row.get(field))), '')
+        if currency not in ('EUR','USD'):continue
+        amount = m._campaign_number(row.get('TotalAmount'))
+        if amount is None:
+            unit_price=m._campaign_number(row.get('UnitPrice'))
+            if unit_price is not None:amount=unit_price*units
+        key=(*sk,currency)
+        if amount is None:missing.add(key)
+        else:totals[key]=totals.get(key,0)+amount
+    for (code,dest,plan,days,currency),amount in totals.items():
+        sk=(code,dest,plan,days)
+        value = None if (*sk,currency) in missing or abs(counted.get(sk,0)-sales['skus'][sk])>1e-8 else amount
+        origin(code)['products'][product_key(dest,plan,days)]['revenue'][currency]=value
+    return dict(origins=[dict(iso=code,name=names.get(code,code)) for code in sorted(by_origin)],
+                by_origin=by_origin, note='Buyer-origin filter applies to product units, destination totals, recorded amounts, country cards and ranking. Competitive price advice remains shared across origins.')
+
+
+def render_pricing_worklist(rows, sales_note, sales_available, *, origin_sales=None):
     payload=json.dumps(rows,ensure_ascii=False,allow_nan=False).replace('<','\\u003c')
+    if origin_sales is None:
+        try:
+            origin_sales=build_origin_sales(sales_note) if sales_available else dict(origins=[],by_origin={},note='Sales unavailable or stale; buyer-origin filtering is disabled.')
+        except (OSError,ValueError,KeyError):
+            origin_sales=dict(origins=[],by_origin={},note='Buyer-origin sales could not be loaded; showing the existing all-origins figures.')
+    origin_payload=json.dumps(origin_sales,ensure_ascii=False,allow_nan=False).replace('<','\\u003c')
     return '''<section class="card pricing-actions" id="pricing-actions">
 <style>
 .pricing-actions{border-top:4px solid #e20074}.pw-filters{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:12px;margin:18px 0}.pw-filters label{display:grid;gap:5px;color:#66727f;font-size:12px}.pw-filters select,.pw-filters input{width:100%;padding:10px;border:1px solid #d8dee4;border-radius:7px;background:white}.pw-country-strip{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.pw-country-strip button{border:1px solid #d8dee4;border-radius:8px;background:#fafbfc;padding:8px 12px;text-align:left;cursor:pointer}.pw-country-strip small{display:block;color:#66727f}.pw-table td{white-space:normal;vertical-align:top;min-width:100px;padding:12px}.pw-table td:first-child{min-width:180px}.pw-table td:last-child{min-width:220px}.pw-table small{display:block;color:#66727f;margin-top:4px}.pw-table button,.pw-more{background:#fff;border:1px solid #d8dee4;border-radius:6px;padding:5px 9px;cursor:pointer;margin-top:8px}.pw-detail{background:#fafbfc}.pw-detail table{font-size:12px}.pw-detail td{padding:6px;min-width:0}.pw-detail th{position:static}.pw-count{font-variant-numeric:tabular-nums;font-weight:650}.pw-table .up{color:#177a3f}.pw-table .down{color:#b42318}@media(max-width:800px){.pw-filters{grid-template-columns:1fr 1fr}}@media(max-width:500px){.pw-filters{grid-template-columns:1fr}}
@@ -12,6 +106,7 @@ def render_pricing_worklist(rows, sales_note, sales_available):
 <h2>Pricing actions where we sell</h2>
 <p class="chart-sub">Specific destination, plan and duration · latest trusted competitor prices · the same price advice as Campaign opportunities.</p>
 <div class="pw-filters">
+<label>Buyer origin<select id="pw-origin"><option value="all">All buyer origins</option></select></label>
 <label>Sales relevance<select id="pw-scope"><option value="sold">Destinations with sales</option><option value="products">Products with matched sales</option><option value="all">All destinations</option></select></label>
 <label>Destination<select id="pw-country"><option value="all">All destinations</option></select></label>
 <label>Action<select id="pw-action"><option value="all">All actions</option><option>Decrease</option><option>Increase</option><option>Keep</option><option>Review cost floor</option><option>Insufficient evidence</option></select></label>
@@ -25,13 +120,19 @@ def render_pricing_worklist(rows, sales_note, sales_available):
 <div class="table-wrap"><table class="pw-table"><thead><tr><th>Destination / product</th><th>Product sales · 60d</th><th>Destination sales · 60d</th><th>Our net</th><th>Credible benchmark</th><th>Price position</th><th>Suggested net</th><th>Action &amp; evidence</th></tr></thead><tbody id="pw-body"></tbody></table></div>
 <button id="pw-more" class="pw-more" hidden>Show 30 more</button>
 <p class="note">'''+escape(sales_note)+'''</p>
-<p class="note">Product units match destination, plan and duration across origins and currencies. Recorded sales amounts are shown only in their original reporting currency, without FX conversion. Missing or unmapped sales stay unknown. Destination totals are context and are never allocated to individual products. Price advice is advisory; a cheaper price alone never triggers an increase.</p>
+<p class="note">Product units match destination, plan and duration for the selected buyer origin, combining currencies. Prices and competitive recommendations apply to the destination product across origins. Recorded sales amounts are shown only in their original reporting currency, without FX conversion. Missing or unmapped sales stay unknown. Destination totals are context and are never allocated to individual products. Price advice is advisory; a cheaper price alone never triggers an increase.</p>
+<p class="note">'''+escape(origin_sales['note'])+'''</p>
 </section>
+<script type="application/json" id="pw-origin-data">'''+origin_payload+'''</script>
 <script type="application/json" id="pw-data">'''+payload+'''</script>
 <script>
 (()=>{
 const data=JSON.parse(document.getElementById('pw-data').textContent),available='''+str(bool(sales_available)).lower()+''';
-const ids=['scope','country','action','currency','plan','days','position','search'],controls=Object.fromEntries(ids.map(k=>[k,document.getElementById('pw-'+k)]));
+const originData=JSON.parse(document.getElementById('pw-origin-data').textContent);
+const ids=['origin','scope','country','action','currency','plan','days','position','search'],controls=Object.fromEntries(ids.map(k=>[k,document.getElementById('pw-'+k)]));
+controls.origin.value='all';
+originData.origins.forEach(o=>controls.origin.add(new Option(o.name+' ('+o.iso+')',o.iso)));
+controls.origin.disabled=!available||!originData.origins.length;
 const countries=new Map(data.map(r=>[r.iso,r.country]));[...countries].sort((a,b)=>a[1].localeCompare(b[1])).forEach(([iso,name])=>controls.country.add(new Option(name+' ('+iso+')',iso)));
 [...new Set(data.map(r=>r.plan))].sort().forEach(v=>controls.plan.add(new Option(v,v)));
 [...new Set(data.map(r=>r.days))].sort((a,b)=>a-b).forEach(v=>controls.days.add(new Option(v+' days',v)));
@@ -41,10 +142,12 @@ const fmt=(v,d=2)=>v===null||v===undefined?'—':Number(v).toLocaleString(undefi
 function add(parent,tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;parent.append(e);return e;}
 function render(){
 const q=controls.search.value.toLowerCase();
-filtered=data.filter(r=>(controls.scope.value==='all'||(controls.scope.value==='products'?r.units>0:r.country_units>0))&&(controls.country.value==='all'||r.iso===controls.country.value)&&(controls.currency.value==='all'||r.currency===controls.currency.value)&&(controls.action.value==='all'||r.action===controls.action.value)&&(controls.plan.value==='all'||r.plan===controls.plan.value)&&(controls.days.value==='all'||r.days===Number(controls.days.value))&&(controls.position.value==='all'||r.position===controls.position.value)&&(!q||JSON.stringify(r).toLowerCase().includes(q)));
+const scoped=controls.origin.value==='all'?data:data.map(r=>{const origin=originData.by_origin[controls.origin.value],stats=origin?.products[JSON.stringify([r.iso,r.plan,r.days])];return {...r,units:stats?stats.units:origin?.unmapped.includes(r.iso)?null:0,country_units:origin?.destinations[r.iso]??0,revenue:stats?.revenue[r.currency]??null};});
+filtered=scoped.filter(r=>(controls.scope.value==='all'||(controls.scope.value==='products'?r.units>0:r.country_units>0))&&(controls.country.value==='all'||r.iso===controls.country.value)&&(controls.currency.value==='all'||r.currency===controls.currency.value)&&(controls.action.value==='all'||r.action===controls.action.value)&&(controls.plan.value==='all'||r.plan===controls.plan.value)&&(controls.days.value==='all'||r.days===Number(controls.days.value))&&(controls.position.value==='all'||r.position===controls.position.value)&&(!q||JSON.stringify(r).toLowerCase().includes(q)));
 filtered.sort((a,b)=>(b.units??-1)-(a.units??-1)||(b.country_units??-1)-(a.country_units??-1)||a.country.localeCompare(b.country)||a.days-b.days||a.currency.localeCompare(b.currency));
 const summary=document.getElementById('pw-summary');summary.replaceChildren();
 add(summary,'b',filtered.length.toLocaleString()+' price views · '+new Set(filtered.map(r=>r.iso)).size+' destinations');
+add(summary,'span',' · '+(controls.origin.value==='all'?'All buyer origins':originData.origins.find(o=>o.iso===controls.origin.value)?.name||controls.origin.value));
 add(summary,'span',' · '+filtered.filter(r=>r.action==='Decrease').length+' decrease · '+filtered.filter(r=>r.action==='Increase').length+' increase · '+filtered.filter(r=>r.action==='Keep').length+' keep');
 const strip=document.getElementById('pw-countries');strip.replaceChildren();const grouped=new Map();
 filtered.forEach(r=>{if(!grouped.has(r.iso))grouped.set(r.iso,{country:r.country,units:r.country_units,up:0,down:0});const g=grouped.get(r.iso);g.up+=r.action==='Increase'?1:0;g.down+=r.action==='Decrease'?1:0;});

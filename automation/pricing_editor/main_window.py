@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import copy
+import time
+from concurrent.futures import ThreadPoolExecutor
 import re
 from pathlib import Path
 import pandas as pd
@@ -45,6 +48,10 @@ from .canvas import PriceCurveCanvas
 from .state import EditorState, load_promos, load_table
 from .timeline_views import DateViewCache
 from .key_date_strip import KeyDateStrip
+try:
+    from automation.promo_planner.issue_review import review_summary
+except ImportError:
+    from promo_planner.issue_review import review_summary
 from .key_date_strip_model import build_date_markers
 try:
     from automation.pricing_timeline import PricingTimeline
@@ -149,6 +156,11 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
         self.autosave_dirty = False
         self.autosave_in_progress = False
+        self._save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pricing-save")
+        self._save_future = None
+        self._edit_revision = 0
+        self._last_edit_at = 0.0
+        self._dirty_since = 0.0
         self._manual_pricebook_df = pd.DataFrame()
         self._manual_pricebook_path: Path | None = None
         self._active_key_date: str | None = None
@@ -156,12 +168,14 @@ class MainWindow(QMainWindow):
         self._date_view_baseline_df = pd.DataFrame()
         self._date_view_loaded_df = pd.DataFrame()
         self._switching_price_view = False
+        self._promotion_review_summary = None
+        self._promotion_review_key = None
         self._build_ui()
         self.statusBar().showMessage("Opening editor...")
         QTimer.singleShot(100, self.try_auto_load)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave)
-        self.autosave_timer.start(30000)  # every 30 seconds
+        self.autosave_timer.start(1000)  # Poll worker; save after idle, never during a drag.
 
         self.save_shortcut = QShortcut(QKeySequence.Save, self)
         self.save_shortcut.activated.connect(self.quick_save)
@@ -186,7 +200,15 @@ class MainWindow(QMainWindow):
         self.clear_busy_cursor()
 
     def mark_dirty(self) -> None:
+        was_dirty = self.autosave_dirty
+        self._promotion_review_summary = None
+        if not was_dirty and hasattr(self, "campaign_preview_btn"):
+            self._refresh_campaign_review_status()
         self.autosave_dirty = bool(self._active_key_date)
+        self._edit_revision = getattr(self, "_edit_revision", 0) + 1
+        self._last_edit_at = time.monotonic()
+        if not was_dirty:
+            self._dirty_since = self._last_edit_at
 
     def _build_ui(self):
         root = QWidget()
@@ -460,14 +482,6 @@ class MainWindow(QMainWindow):
             "border: 1px solid #e6b566; border-radius: 4px; padding: 5px;"
         )
 
-        self.recommendation_status_label = QLabel("Recommendations: not loaded")
-        self.recommendation_status_label.setWordWrap(True)
-        self.recommendation_status_label.setStyleSheet("color: #444444;")
-        self.reload_recommendations_btn = QPushButton("Refresh recommendations")
-        self.reload_recommendations_btn.setFixedHeight(32)
-        self.reload_recommendations_btn.setToolTip("Recalculate recommendations from the current price book and latest market data.")
-        self.reload_recommendations_btn.clicked.connect(lambda: self.refresh_pricing_intelligence(force=True, refresh=True))
-
         self.open_market_insights_btn = QPushButton("Open market insights")
         self.open_market_insights_btn.setFixedHeight(32)
         self.open_market_insights_btn.setToolTip("Open the latest competitor-market movement dashboard in your browser.")
@@ -501,8 +515,14 @@ class MainWindow(QMainWindow):
         self.import_excel_btn.setToolTip("Import edited list prices into the selected Timeline date; confirmation shows the target date.")
         self.import_excel_btn.clicked.connect(self.load_pricebook)
 
-        remove_promo_btn = QPushButton("❌ Remove selected promo")
-        remove_promo_btn.clicked.connect(self.remove_selected_promo)
+        self.remove_promo_btn = QPushButton("❌ Remove selected promo")
+        self.remove_promo_btn.setMinimumHeight(38)
+        self.remove_promo_btn.setStyleSheet("QPushButton { color:#a71930; background:#fff0f2; border:1px solid #d96375; border-radius:6px; font-weight:700; padding:8px; } QPushButton:hover { background:#ffdde3; } QPushButton:disabled { color:#999; border-color:#ddd; background:#f5f5f5; }")
+        self.remove_promo_btn.setToolTip(
+            "Select a price point, then remove its manual promo and any shorter-duration "
+            "adjustments linked to it. Scheduled campaigns are managed in Campaigns."
+        )
+        self.remove_promo_btn.clicked.connect(self.remove_selected_promo)
 
         # Info widgets
         self.country_info_label = QLabel("No country loaded")
@@ -587,12 +607,9 @@ class MainWindow(QMainWindow):
         controls_layout.addLayout(mode_row_1)
         controls_layout.addLayout(mode_row_2)
         controls_layout.addLayout(mode_row_3)
-        controls_layout.addWidget(self.recommendation_status_label)
-        recommendation_buttons = QHBoxLayout()
-        recommendation_buttons.addWidget(self.reload_recommendations_btn)
-        recommendation_buttons.addWidget(self.open_market_insights_btn)
-        controls_layout.addLayout(recommendation_buttons)
+        controls_layout.addWidget(self.open_market_insights_btn)
         controls_layout.addWidget(self.selection_label)
+        controls_layout.addWidget(self.remove_promo_btn)
         controls_layout.addWidget(self.region_floor_label)
         controls_layout.addWidget(reset_zoom_btn)
         controls_layout.addLayout(reset_grid)
@@ -605,6 +622,19 @@ class MainWindow(QMainWindow):
         campaigns_layout = QVBoxLayout(campaigns_tab)
         campaigns_layout.setContentsMargins(6, 6, 6, 6)
         campaigns_layout.setSpacing(6)
+        self.campaign_preview_btn = QPushButton("Preview & resolve")
+        self.campaign_preview_btn.setMinimumHeight(36)
+        self.campaign_preview_btn.clicked.connect(self._preview_timeline_changes)
+        self.campaign_review_status = QLabel("Choose a date in Timeline to review promo issues.")
+        self.campaign_review_status.setWordWrap(True)
+        self.campaign_calendar_btn = QPushButton("🖨 Calendar HTML")
+        self.campaign_calendar_btn.setToolTip("Export a detailed, printable campaign calendar from today onwards.")
+        self.campaign_calendar_btn.clicked.connect(self.export_campaign_calendar)
+        campaigns_layout.addWidget(self.campaign_calendar_btn)
+        campaigns_layout.addWidget(self.campaign_preview_btn)
+        campaigns_layout.addWidget(self.campaign_review_status)
+        self._refresh_campaign_review_status()
+
         campaign_timeline_title = QLabel("Campaign timeline · dates follow the shared selector above")
         campaign_timeline_title.setStyleSheet("font-weight:600; color:#343B44;")
         campaigns_layout.addWidget(campaign_timeline_title)
@@ -652,6 +682,10 @@ class MainWindow(QMainWindow):
         campaign_actions.addWidget(self.edit_campaign_btn, 0, 1)
         campaign_actions.addWidget(self.duplicate_campaign_btn, 1, 0)
         campaign_actions.addWidget(self.delete_campaign_btn, 1, 1)
+        self.rename_campaign_btn = QPushButton("Rename")
+        self.rename_campaign_btn.setEnabled(False)
+        self.rename_campaign_btn.clicked.connect(self.rename_selected_campaign)
+        campaign_actions.addWidget(self.rename_campaign_btn, 2, 0, 1, 2)
         campaigns_layout.addLayout(campaign_actions)
 
         campaign_scroll = QScrollArea()
@@ -683,9 +717,10 @@ class MainWindow(QMainWindow):
         reset_zoom_btn.clicked.connect(self.canvas.reset_zoom)
         self.canvas.pointSelected.connect(self.on_point_selected)
         self.canvas.pointDragged.connect(self.on_point_dragged)
-        self.canvas.recommendationSelected.connect(self.on_recommendation_selected)
+        self.canvas.priceDragFinished.connect(self.on_price_drag_finished)
         self.canvas.promoSelected.connect(self.on_promo_selected_from_chart)
         self.canvas.manualPromoSelected.connect(self.on_manual_promo_selected_from_chart)
+        self.canvas.belowCostApprovalRequested.connect(self.approve_point_below_cost)
         self.canvas.statusChanged.connect(self.statusBar().showMessage)
 
         self.splitter.addWidget(self.side_panel)
@@ -710,6 +745,7 @@ class MainWindow(QMainWindow):
             self.planner_workspace = planner
             planner.on_timeline_changed = self._reload_editor_from_shared_timeline
             planner.before_timeline_update = self._confirm_price_view_switch
+            planner.on_review_status = self._set_campaign_review_status
             planner.on_destination_selected = self._select_campaign_destination_curve
             planner.campaignsChanged.connect(self._on_campaigns_changed)
             self.campaign_panel = self.campaigns_panel
@@ -782,6 +818,9 @@ class MainWindow(QMainWindow):
             self.splitter.setSizes([left, total - left, 0])
 
     def _set_workspace_mode(self, mode: str) -> None:
+        if mode == "campaigns" and (self.autosave_dirty or getattr(self, "_save_future", None) is not None):
+            if not self._confirm_price_view_switch():
+                return
         self._workspace_mode = mode if mode in {"campaigns", "canvas"} else "prices"
         if self.campaign_dock is not None:
             self.campaign_dock.setVisible(self._workspace_mode == "campaigns")
@@ -850,6 +889,8 @@ class MainWindow(QMainWindow):
         planner.tabs.setCurrentWidget(planner.create_tab)
 
     def _move_timeline_event(self) -> None:
+        if getattr(self, "_save_future", None) is not None:
+            self._finish_background_save(wait=True)
         options = []
         today = date.today()
         for marker in self.timeline.event_markers():
@@ -983,6 +1024,8 @@ class MainWindow(QMainWindow):
             temporary.replace(path)
 
     def _delete_timeline_event(self) -> None:
+        if getattr(self, "_save_future", None) is not None:
+            self._finish_background_save(wait=True)
         key_date = self._active_key_date
         if not key_date:
             return
@@ -1081,6 +1124,10 @@ class MainWindow(QMainWindow):
             self._reload_editor_from_shared_timeline(self._active_key_date)
 
     def _reload_editor_from_shared_timeline(self, selected_date: str | None = None) -> None:
+        if getattr(self, "_save_future", None) is not None:
+            self._finish_background_save(wait=True)
+        if getattr(self, "autosave_dirty", False) and self._dated_edit_allowed():
+            self._save_key_date_prices(silent=True)
         self._price_view_cache.clear()
         current = self.timeline.project()
         if current.empty:
@@ -1118,10 +1165,41 @@ class MainWindow(QMainWindow):
         if hasattr(self, "campaign_timeline_view"):
             self.refresh_campaign_panel()
 
+    def _set_campaign_review_status(self, key_date, summary):
+        if key_date != self._active_key_date:
+            return
+        self._promotion_review_key = key_date
+        self._promotion_review_summary = dict(summary)
+        self._refresh_campaign_review_status()
+
+    def _refresh_campaign_review_status(self):
+        if not hasattr(self, "campaign_preview_btn"):
+            return
+        enabled = bool(self._active_key_date)
+        self.campaign_preview_btn.setEnabled(enabled)
+        summary = (self._promotion_review_summary
+                   if self._promotion_review_key == self._active_key_date else None)
+        if not enabled:
+            text, message, color = "Preview & resolve", "Choose a date in Timeline to review promo issues.", "#666666"
+        elif summary is None:
+            text, message, color = "Preview & resolve · check needed", "Review promos for the selected date. Ordinary price edits are excluded.", "#666666"
+        elif summary["total"]:
+            text = f"Preview & resolve · {summary['total']} unresolved"
+            message = (f"{summary['floor_products']} promo product(s) below floor without approval · "
+                       f"{summary['conflicts']} promo conflict(s). Unanswered issues stay visible.")
+            color = "#9B1C1C"
+        else:
+            text, message, color = "Preview & resolve · no unresolved issues", "No unresolved promo issues for the selected date. Ordinary price edits are excluded.", "#1B5E20"
+        self.campaign_preview_btn.setText(text)
+        self.campaign_preview_btn.setStyleSheet(f"color:{color};font-weight:700;")
+        self.campaign_review_status.setText(message)
+        self.campaign_review_status.setStyleSheet(f"color:{color};")
+
     def refresh_campaign_panel(self) -> None:
         """Refresh the compact campaign browser from the shared planner database."""
         if not hasattr(self, "campaign_list"):
             return
+        self._refresh_campaign_review_status()
         current = self.campaign_list.currentItem()
         selected_id = current.data(Qt.UserRole) if current else None
         try:
@@ -1254,6 +1332,7 @@ class MainWindow(QMainWindow):
         self.campaign_destinations_list.clear()
         if current is None:
             self.edit_campaign_btn.setEnabled(False)
+            self.rename_campaign_btn.setEnabled(False)
             self.duplicate_campaign_btn.setEnabled(False)
             self.delete_campaign_btn.setEnabled(False)
             return
@@ -1271,6 +1350,7 @@ class MainWindow(QMainWindow):
         state = campaign_presentation(campaign, self._promo_store())
         self.edit_campaign_btn.setText("View" if state["readonly"] else "Edit")
         self.delete_campaign_btn.setEnabled(not state["readonly"])
+        self.rename_campaign_btn.setEnabled(not state["readonly"])
         promo = campaign.promo_name or campaign.promo_code or campaign.promo_type
         self.campaign_detail_label.setText(
             f"<b>{campaign.name}</b><br>{campaign.start_date} → {campaign.end_date}<br>"
@@ -1314,6 +1394,8 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def open_promo_planner(self) -> None:
+        if getattr(self, "_save_future", None) is not None:
+            self._finish_background_save(wait=True)
         if self.planner_workspace is None:
             self._retry_planner_workspace()
         if self.campaign_dock is not None:
@@ -1348,6 +1430,34 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
+    def export_campaign_calendar(self):
+        if self.planner_workspace is None:
+            return
+        self.planner_workspace._export_promotion_calendar()
+
+    def rename_selected_campaign(self):
+        item = self.campaign_list.currentItem()
+        if item is None:
+            return
+        store = self._promo_store()
+        campaign = store.get_campaign(int(item.data(Qt.UserRole)))
+        if campaign_presentation(campaign, store)["readonly"]:
+            QMessageBox.information(self, "Rename campaign", "Published or finished campaigns are read-only.")
+            return
+        name, ok = QInputDialog.getText(self, "Rename campaign", "Campaign name:", text=campaign.name)
+        if not ok or not name.strip() or name.strip() == campaign.name:
+            return
+        try:
+            store.rename_campaign(campaign.id, name)
+        except Exception as exc:
+            QMessageBox.warning(self, "Rename campaign", str(exc))
+            return
+        planner = self.planner_workspace
+        if planner is not None and planner.editing_campaign_id == campaign.id:
+            planner.name_edit.setEditText(name.strip())
+        self._refresh_key_date_views(selected=self._active_key_date)
+        self.refresh_campaign_panel()
+
     def duplicate_selected_campaign(self) -> None:
         item = self.campaign_list.currentItem()
         if item is None or self.planner_workspace is None:
@@ -1357,9 +1467,9 @@ class MainWindow(QMainWindow):
             return
         from dataclasses import replace
         original = self._promo_store().get_campaign(int(item.data(Qt.UserRole)))
-        effective, _label = chosen
+        effective, label = chosen
         key_date = (effective - timedelta(days=1)).isoformat()
-        clone = replace(original, id=None, status="PLANNED", name=original.name + " - Copy",
+        clone = replace(original, id=None, status="PLANNED", name=label.strip() or original.name + " - Copy",
                         start_date=effective.isoformat(), end_date=(effective + timedelta(days=6)).isoformat())
         self.timeline.schedule_promotion_date(key_date, clone.name)
         self._reload_editor_from_shared_timeline(key_date)
@@ -1387,6 +1497,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_price_view_switch():
             event.ignore()
             return
+        if hasattr(self, "_save_executor"):
+            self._save_executor.shutdown(wait=True)
         super().closeEvent(event)
     
     def set_drag_mode(self, mode_key: str):
@@ -1603,6 +1715,8 @@ class MainWindow(QMainWindow):
         for button in self.mode_buttons.values():
             button.setEnabled(editable)
         self.exchange_rate_spin.setEnabled(editable)
+        if hasattr(self, "remove_promo_btn"):
+            self.remove_promo_btn.setEnabled(editable)
         if hasattr(self, "canvas"):
             self.canvas.editing_allowed = editable
         self.drag_safety_label.setText(
@@ -1636,11 +1750,21 @@ class MainWindow(QMainWindow):
             self._manual_pricebook_path = FILES.editor_exports_dir / "manual_prices_current.xlsx"
 
     def _confirm_price_view_switch(self) -> bool:
+        if getattr(self, "_save_future", None) is not None:
+            try:
+                self._finish_background_save(wait=True)
+            except Exception as exc:
+                QMessageBox.warning(self, "Save pending prices", str(exc))
+                return False
         if not self.autosave_dirty:
             return True
         if self._active_key_date:
-            self._save_key_date_prices(silent=True)
-            return True
+            try:
+                self._save_key_date_prices(silent=True)
+                return True
+            except Exception as exc:
+                QMessageBox.warning(self, "Save pending prices", str(exc))
+                return False
         box = QMessageBox(self)
         box.setWindowTitle("Unsaved current prices")
         box.setText("Save your current-price edits before switching to a scheduled date?")
@@ -1727,6 +1851,9 @@ class MainWindow(QMainWindow):
                 view, baseline, warning_text = cached
             self._date_view_baseline_df = baseline
             self._active_key_date = key_date
+        self._promotion_review_key = key_date
+        self._promotion_review_summary = view.attrs.get("promotion_review") if key_date else None
+        self._refresh_campaign_review_status()
         self.state.load_timeline_view(view)
         self._date_view_loaded_df = view.copy()
         self.populate_combos()
@@ -1755,11 +1882,13 @@ class MainWindow(QMainWindow):
             projected, FILES.base_dir, key_date, boundary,
         )
         view = projected
+        projected.attrs["promotion_review"] = review_summary(preview)
         warnings = []
         if preview.collisions:
             warnings.append(f"{len(preview.collisions)} promo conflict(s) still need a decision in Promo Planner")
-        if preview.cost_floor_issues:
-            warnings.append(f"{len(preview.cost_floor_issues)} active price(s) need cost-floor review")
+        pending_promos = projected.attrs["promotion_review"]["floor_products"]
+        if pending_promos:
+            warnings.append(f"{pending_promos} promo product(s) need cost-floor review")
         boundary = date.fromisoformat(key_date) + timedelta(days=1)
         warning_text = f"After midnight: {boundary.strftime('%d %b %Y')} 00:00"
         if warnings:
@@ -1774,8 +1903,12 @@ class MainWindow(QMainWindow):
     def _save_key_date_prices(self, *, silent: bool = False) -> int:
         if not self._active_key_date:
             return 0
+        if getattr(self, "_save_future", None) is not None:
+            completed = self._finish_background_save(wait=True)
+            if not self.autosave_dirty:
+                return completed
         self._ensure_price_event()
-        edited = self.state.export_prices_dataframe()
+        edited = self.state.export_prices_dataframe(refresh=False)
         campaigns = self._promo_store().list_campaigns()
         count, unlinked = save_key_date_changes(
             FILES.base_dir,
@@ -1953,18 +2086,63 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.statusBar().showMessage(f"Could not save dated prices: {exc}", 12000)
 
-    def autosave(self):
-        if not self._dated_edit_allowed():
-            return
-        if not self.autosave_dirty or self.autosave_in_progress or self.canvas.is_dragging:
+    def _finish_background_save(self, *, wait=False):
+        future = getattr(self, "_save_future", None)
+        if future is None or (not wait and not future.done()):
+            return 0
+        self._save_future = None
+        self.autosave_in_progress = False
+        result = future.result()  # Propagate errors; dirty edits remain pending.
+        self._price_view_cache.clear()
+        if self._active_key_date == self._save_key:
+            self._date_view_loaded_df = result["edited"].copy()
+            self._date_view_baseline_df = result["baseline"]
+            if self._edit_revision == self._save_revision:
+                self.autosave_dirty = False
+                self._promotion_review_key = self._active_key_date
+                self._promotion_review_summary = result.get("promotion_review")
+                if hasattr(self, "campaign_preview_btn"):
+                    self._refresh_campaign_review_status()
+                if result.get("model_changed", True):
+                    self.state.load_timeline_view(result["view"])
+                    self.refresh_canvas()
+        self.statusBar().showMessage("Dated prices saved." + (" Newer edits are still pending." if self.autosave_dirty else ""), 5000)
+        return result["count"]
+
+    def _start_background_save(self):
+        if self._save_future is not None or not self.autosave_dirty or not self._dated_edit_allowed() or self.canvas.is_dragging:
             return
         try:
+            try:
+                from automation.pricing_editor.background_save import save_editor_snapshot
+            except ImportError:
+                from pricing_editor.background_save import save_editor_snapshot
+            # Freeze mutable model state before handing it to the worker. It never touches live Qt/state objects.
+            snapshot = copy.deepcopy(self.state)
+            self._save_key = self._active_key_date
+            self._save_revision = self._edit_revision
+            label = self._price_date_event_name(self._active_key_date)
+            self._save_future = self._save_executor.submit(save_editor_snapshot, snapshot, FILES.base_dir,
+                self._save_key, self._date_view_baseline_df.copy(), self._date_view_loaded_df.copy(), label)
             self.autosave_in_progress = True
-            self._save_key_date_prices(silent=True)
+            self.statusBar().showMessage("Saving dated prices in the background…", 3000)
         except Exception as exc:
-            self.statusBar().showMessage(f"Could not autosave dated prices: {exc}", 12000)
-        finally:
             self.autosave_in_progress = False
+            self.statusBar().showMessage(f"Could not start saving: {exc}", 12000)
+
+    def autosave(self):
+        try:
+            if getattr(self, "_save_future", None) is not None:
+                self._finish_background_save()
+            if not self._dated_edit_allowed() or not self.autosave_dirty or self.autosave_in_progress or self.canvas.is_dragging:
+                return
+            now = time.monotonic()
+            if now - self._last_edit_at >= 15 or now - self._dirty_since >= 90:
+                self._start_background_save()
+        except Exception as exc:
+            self._last_edit_at = time.monotonic()  # Retry after a pause, not every timer tick.
+            self._dirty_since = self._last_edit_at
+            self.statusBar().showMessage(f"Could not autosave; edits remain pending: {exc}", 12000)
 
     def export_prices(self):
         """Create a pack for the displayed date, publishing only editable dates."""
@@ -2243,6 +2421,10 @@ class MainWindow(QMainWindow):
         self.refresh_canvas()
 
     def refresh_canvas(self):
+        if self.canvas.is_dragging:
+            # Keep prices/floor markers live; defer global totals and unchanged UI.
+            self.canvas.set_curve_points(self.state.current_points(), self.state.selected_row_id)
+            return
         promo_markers = []
         if self.canvas.show_promo_markers and not self.canvas.is_dragging:
             promo_markers = self.state.promo_candidate_markers()
@@ -2257,20 +2439,13 @@ class MainWindow(QMainWindow):
 
         self.refresh_currency_visuals()
         self.refresh_selection_label()
-        self._refresh_recommendation_status()
         self.country_info_label.setText(self.state.country_info())
         self.refresh_impact_labels()
         
 
     def refresh_pricing_intelligence(self, *, force: bool = False, refresh: bool = True) -> bool:
-        """Keep Excel annotations, recommendation CSVs and HTML insights in sync.
-
-        Opening the editor only recalculates when the workbook/market/config is newer
-        than the recommendation CSV. Explicit saves and the Refresh button force a
-        recalculation. Autosave intentionally does not, so the 30-second recovery
-        cycle stays lightweight.
-        """
-        price_book = FILES.editor_exports_dir / "manual_prices_current.xlsx"
+        """Refresh BI from published database prices effective today."""
+        price_book = FILES.base_dir / "outputs/promo_planner/promo_schedule.db"
         if not price_book.exists() or not FILES.market_annotated.exists():
             return False
 
@@ -2292,13 +2467,6 @@ class MainWindow(QMainWindow):
                     output_path=RECOMMENDATIONS_PATH,
                 )
             else:
-                if RECOMMENDATIONS_PATH.exists():
-                    recs = pd.read_csv(RECOMMENDATIONS_PATH, low_memory=False)
-                    annotate_price_book_with_recommendations(price_book, recs)
-                    # The annotation is derived from this exact CSV. Touching the
-                    # CSV records that synchronization so the workbook annotation
-                    # itself does not make recommendations look stale next launch.
-                    RECOMMENDATIONS_PATH.touch()
                 if force or market_insights_is_stale(
                     FILES,
                     recommendations_path=RECOMMENDATIONS_PATH,
@@ -2318,34 +2486,18 @@ class MainWindow(QMainWindow):
                 self.clear_busy_cursor()
 
     def open_market_insights(self):
-        # Always check staleness before opening. Previously an existing HTML file
-        # was opened unconditionally, so dashboard-code changes could leave the UI
-        # showing an old report indefinitely.
-        needs_refresh = not MARKET_INSIGHTS_PATH.exists()
-        if not needs_refresh:
-            try:
-                needs_refresh = market_insights_is_stale(
-                    FILES,
-                    recommendations_path=RECOMMENDATIONS_PATH,
-                    output_path=MARKET_INSIGHTS_PATH,
-                )
-            except Exception as exc:
-                print("Market insights staleness check failed; regenerating:", exc)
-                needs_refresh = True
-
-        if needs_refresh:
-            self.refresh_pricing_intelligence(force=False, refresh=False)
-
-        if not MARKET_INSIGHTS_PATH.exists():
-            QMessageBox.warning(self, "Market insights", "The market insights HTML could not be generated.")
+        # Intelligence is refreshed by the BI pipeline, never by this button.
+        if not MARKET_INSIGHTS_PATH.is_file():
+            QMessageBox.information(
+                self, "Market insights",
+                "No Market Insights report is available yet. Run Market Insights in the BI pipeline first.",
+            )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(MARKET_INSIGHTS_PATH.resolve())))
 
     def load_recommendations(self, *_args, refresh: bool = True):
         if not RECOMMENDATIONS_PATH.exists():
             self.state.preload_recommendations(pd.DataFrame(), source=RECOMMENDATIONS_PATH)
-            if hasattr(self, "recommendation_status_label"):
-                self.recommendation_status_label.setText("Recommendations: file not found. Run pricing_recommendations.py first.")
             if refresh and self.state.countries():
                 self.refresh_canvas()
             return False
@@ -2355,13 +2507,11 @@ class MainWindow(QMainWindow):
             self.state.preload_recommendations(df, source=RECOMMENDATIONS_PATH)
         except Exception as exc:
             self.state.preload_recommendations(pd.DataFrame(), source=RECOMMENDATIONS_PATH)
-            if hasattr(self, "recommendation_status_label"):
-                self.recommendation_status_label.setText(f"Recommendations: could not load ({exc})")
+            self.statusBar().showMessage(f"Could not load recommendation arrows: {exc}")
             if refresh and self.state.countries():
                 self.refresh_canvas()
             return False
 
-        self._refresh_recommendation_status()
         if refresh and self.state.countries():
             self.refresh_canvas()
         self.statusBar().showMessage(
@@ -2369,63 +2519,35 @@ class MainWindow(QMainWindow):
         )
         return True
 
-    def _refresh_recommendation_status(self):
-        if not hasattr(self, "recommendation_status_label"):
-            return
-        if self.state.recommendations_loaded_rows <= 0:
-            self.recommendation_status_label.setText("Recommendations: not loaded")
-            return
 
-        points = self.state.current_points()
-        visible = sum(1 for p in points if p.get("recommendation"))
-        stale = sum(1 for p in points if p.get("recommendation_stale"))
-        text = (
-            f"{visible} actionable here in {self.state.active_currency} | "
-            f"{self.state.recommendations_actionable_rows} total rows actionable"
-        )
-        if stale:
-            text += f" | {stale} stale here"
-        text += "\nClick ▲/▼ to apply. Curve dragging always requires SHIFT."
-        self.recommendation_status_label.setText(text)
-
-    def on_recommendation_selected(self, row_id: str):
-        if not self._require_dated_edit():
-            return
+    def approve_point_below_cost(self, row_id: str):
         self.state.selected_row_id = str(row_id)
-        point = self.state.row_index.get(str(row_id))
-        rec = self.state.recommendation_for_point(point, self.state.active_currency, actionable_only=True) if point else None
-        if rec and str(rec.get("Mechanism", "")).upper() == "PROMO":
-            self._open_promotion_for_selected_date(str(rec.get("SuggestedPromoCode", "")))
+        point = self.state.selected_point_info()
+        if point is None:
             return
-        self._ensure_price_event()
-        result = self.state.apply_recommendation(str(row_id))
-
-        if result.get("needs_confirmation"):
-            answer = QMessageBox.question(
-                self,
-                "Shared promo recommendation",
-                str(result.get("message", "Apply shared promo?")),
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
-                self.refresh_canvas()
-                self.statusBar().showMessage("Recommendation not applied.")
+        key = self._active_key_date or (date.today() - timedelta(days=1)).isoformat()
+        if date.fromisoformat(key) + timedelta(days=1) < date.today():
+            self.statusBar().showMessage("Choose Today or a future date to approve below-cost export.", 8000)
+            return
+        try:
+            try:
+                from automation.pricing_editor.floor_approval import approve_below_cost_point
+            except ImportError:
+                from pricing_editor.floor_approval import approve_below_cost_point
+            if self.autosave_dirty and self._active_key_date:
+                self._save_key_date_prices(silent=True)
+                point = self.state.selected_point_info()
+                if point is None:
+                    return
+            count = approve_below_cost_point(FILES.base_dir, key, point, self._promo_store().list_campaigns())
+            if not count:
+                self.statusBar().showMessage("This point does not need a below-cost override.", 8000)
                 return
-            result = self.state.apply_recommendation(str(row_id), force_shared_promo=True)
-
-        if not result.get("ok"):
-            message = str(result.get("message", "Recommendation could not be applied."))
-            if result.get("stale"):
-                QMessageBox.warning(self, "Stale recommendation", message)
-            else:
-                QMessageBox.warning(self, "Recommendation", message)
-            self.refresh_canvas()
-            return
-
-        self.mark_dirty()
-        self.refresh_canvas()
-        self.statusBar().showMessage(str(result.get("message", "Recommendation applied.")))
+            self._price_view_cache.clear()
+            self._load_price_view_data(self._active_key_date)
+            self.statusBar().showMessage("Below-cost export approved for this product in its below-floor currencies. Green tick = approved.", 10000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Approve below-cost export", str(exc))
 
     def on_point_selected(self, row_id: str):
         self.state.selected_row_id = str(row_id)
@@ -2435,11 +2557,7 @@ class MainWindow(QMainWindow):
         if not self._require_dated_edit():
             return
         if promo_code == "__REMOVE_PROMO__":
-            if self.state.selected_has_manual_pa_dependents():
-                self.on_manual_promo_selected_from_chart(promo_code, False)
-                return
-            self.open_promo_planner()
-            self.statusBar().showMessage("Set the campaign end date in Campaigns to schedule its removal.", 8000)
+            self.on_manual_promo_selected_from_chart(promo_code, False)
             return
         planner = self.planner_workspace
         if planner is None:
@@ -2465,12 +2583,21 @@ class MainWindow(QMainWindow):
         planner.tabs.setCurrentWidget(planner.create_tab)
 
     def on_promo_selected_from_chart(self, promo_code: str):
-        self._open_promotion_for_selected_date(promo_code)
+        self.on_manual_promo_selected_from_chart(promo_code, False)
 
     def on_manual_promo_selected_from_chart(self, promo_code: str, align_shorter: bool):
         if not self._require_dated_edit():
             return
-        before = self.state.export_prices_dataframe()
+        if promo_code == "__REMOVE_PROMO__":
+            point = self.state.selected_point_info()
+            if point is None:
+                self.statusBar().showMessage("Select a price point to remove its manual promo.", 8000)
+                return
+            if point.get("promo_planner_owner") and not self.state.selected_has_manual_pa_dependents():
+                self.open_promo_planner()
+                self.statusBar().showMessage("This promo belongs to a scheduled campaign; manage its dates in Campaigns.", 8000)
+                return
+        before = self.state.export_prices_dataframe(refresh=False)
         try:
             effective = (date.fromisoformat(self._active_key_date) + timedelta(days=1)).isoformat()
             active_ids = {str(int(c.id or 0)) for c in self._promo_store().list_campaigns()
@@ -2480,22 +2607,29 @@ class MainWindow(QMainWindow):
             if not count:
                 return
             self.mark_dirty()
-            self._save_key_date_prices(silent=True)
             self._price_view_cache.clear()
-            self._load_price_view_data(self._active_key_date)
             self.refresh_canvas()
             self.statusBar().showMessage(
-                f"Manual promo saved: {count} price point(s) updated" +
-                ("; shorter durations aligned." if align_shorter else "."), 8000)
+                ("Manual promo removed: " if promo_code == "__REMOVE_PROMO__" else "Manual promo applied: ") +
+                f"{count} price point(s) updated" +
+                ("; shorter durations aligned." if align_shorter else ".") + " Autosave pending; Ctrl+S saves now.", 8000)
         except Exception as exc:
             self.state.load_timeline_view(before)
             self.refresh_canvas()
             QMessageBox.warning(self, "Apply manual promo", str(exc))
 
+    def on_price_drag_finished(self):
+        self._drag_price_event_key = None
+        self.refresh_canvas()
+
     def on_point_dragged(self, row_id: str, new_price: float, point_index: int):
         if not self._require_dated_edit():
             return
-        self._ensure_price_event()
+        # The date marker only needs checking once per gesture, not per mouse move.
+        if not self.canvas.is_dragging or getattr(self, "_drag_price_event_key", None) != self._active_key_date:
+            self._ensure_price_event()
+            if self.canvas.is_dragging:
+                self._drag_price_event_key = self._active_key_date
         self.state.selected_row_id = row_id
         mode = self.current_drag_mode
 
@@ -2524,124 +2658,6 @@ class MainWindow(QMainWindow):
         self.mark_dirty()
         self.refresh_canvas()
 
-    @staticmethod
-    def _rec_value(rec: dict, key: str):
-        value = pd.to_numeric(rec.get(key, None), errors="coerce")
-        return None if pd.isna(value) else float(value)
-
-    @staticmethod
-    def _human_recommendation_reason(rec: dict) -> str:
-        reason = str(rec.get("Reason", "") or "").strip().lower()
-        direction = str(rec.get("Direction", "") or "").upper()
-        if reason == "local_signal_list_price":
-            side = "cheap" if direction == "UP" else "expensive"
-            return (
-                f"The permanent list price looks locally {side} versus the adjacent duration anchors "
-                "after adjusting for the competitor market."
-            )
-        if reason == "isolated_anchor_local_signal":
-            side = "expensive" if direction == "DOWN" else "cheap"
-            return (
-                f"This appears to be an isolated {side} anchor rather than a structural curve issue, "
-                "so the engine recommends a promo/net-price adjustment instead of changing the list-price curve."
-            )
-        if reason == "consecutive_anchor_local_signal":
-            side = "high" if direction == "DOWN" else "low"
-            return (
-                f"The same structural signal appears across consecutive anchors, suggesting the list-price segment is {side}."
-            )
-        return str(rec.get("Reason", "") or "").replace("_", " ") or "Local market-position signal."
-
-    def _recommendation_detail_text(self, rec: dict) -> str:
-        direction = str(rec.get("Direction", "") or "").upper()
-        arrow = "▲" if direction == "UP" else "▼" if direction == "DOWN" else "•"
-        mechanism = str(rec.get("Mechanism", "") or "").upper()
-        is_promo = mechanism == "PROMO"
-        kind = "P" if is_promo else "L"
-        mechanism_label = "PROMO / NET PRICE" if is_promo else "LIST PRICE"
-        currency = self.state.active_currency
-
-        current_list = self._rec_value(rec, "CurrentListPriceNow")
-        if current_list is None:
-            current_list = self._rec_value(rec, "CurrentListPrice")
-        current_net = self._rec_value(rec, "CurrentNetPriceNow")
-        if current_net is None:
-            current_net = self._rec_value(rec, "CurrentNetPrice")
-        target = self._rec_value(rec, "MarketTargetPrice")
-        providers = int(self._rec_value(rec, "MarketProviderCount") or 0)
-        neighbours = int(self._rec_value(rec, "NeighborAnchorCount") or 0)
-        decision_basis = str(rec.get("DecisionBasis", "") or "").replace("_", " ")
-        confidence = str(rec.get("Confidence", "") or "").upper()
-        promo_code = str(rec.get("CurrentPromoCodeNow", rec.get("CurrentPromoCode", "")) or "").strip()
-        if promo_code.lower() in {"nan", "none"}:
-            promo_code = ""
-
-        if is_promo:
-            suggested = self._rec_value(rec, "SuggestedPromoFinalPrice")
-            if suggested is None:
-                suggested = self._rec_value(rec, "SuggestedNetPrice")
-            deviation = self._rec_value(rec, "PositionDeviationPct")
-            suggested_promo = str(rec.get("SuggestedPromoCode", "") or "").strip()
-            if suggested_promo.lower() in {"nan", "none"}:
-                suggested_promo = ""
-            action = f"Set net price to {suggested:.2f} {currency}" if suggested is not None else "Adjust net price"
-            if suggested_promo:
-                action += f" via promo {suggested_promo}"
-            action += "; list price stays unchanged."
-        else:
-            suggested = self._rec_value(rec, "SuggestedListPrice")
-            if suggested is None:
-                suggested = self._rec_value(rec, "SuggestedNetPrice")
-            deviation = self._rec_value(rec, "ListPositionDeviationPct")
-            action = f"Set list price to {suggested:.2f} {currency}." if suggested is not None else "Adjust list price."
-
-        current_parts = []
-        if current_list is not None:
-            current_parts.append(f"list {current_list:.2f}")
-        if current_net is not None:
-            current_parts.append(f"net {current_net:.2f}")
-        current_line = f"Current: {' | '.join(current_parts)}" if current_parts else "Current price unavailable"
-        if promo_code:
-            current_line += f" | active promo {promo_code}"
-
-        evidence = []
-        if target is not None:
-            evidence.append(f"market reference {target:.2f} {currency}")
-        if deviation is not None:
-            if deviation < 0:
-                evidence.append(f"{abs(deviation):.0%} cheaper vs market than neighboring anchors")
-            elif deviation > 0:
-                evidence.append(f"{abs(deviation):.0%} more expensive vs market than neighboring anchors")
-        if providers:
-            evidence.append(f"{providers} competitor providers")
-        if neighbours:
-            evidence.append(f"{neighbours} neighboring anchors")
-
-        secondary = str(rec.get("SecondarySignal", "") or "").upper()
-        priority = str(rec.get("PriorityCountry", "") or "").strip()
-        market_context = ""
-        if priority and priority.lower() not in {"nan", "none"}:
-            market_context = f"\nMini-region: priority market {priority}"
-            if secondary and secondary not in {"NONE", "NAN"}:
-                market_context += f" | secondary-market signal {secondary}"
-
-        scope_note = "This applies only to this anchor SKU"
-        countries = str(rec.get("Countries", "") or "").strip()
-        if countries and "," in countries:
-            scope_note += f", across the shared pricing unit ({countries})"
-        scope_note += ". It does not move the rest of the curve."
-
-        reason_text = self._human_recommendation_reason(rec)
-        evidence_line = " | ".join(evidence) if evidence else "local market/neighbor evidence"
-        return (
-            f"\n\n{arrow}{kind}  {direction} — {mechanism_label} | Confidence: {confidence}\n"
-            f"Action: {action}\n"
-            f"{current_line}\n"
-            f"Why: {reason_text}\n"
-            f"Evidence: {evidence_line}\n"
-            f"Signal basis: {decision_basis or '-'}{market_context}\n"
-            f"Scope: {scope_note}"
-        )
 
     def refresh_selection_label(self):
         info = self.state.selected_point_info()
@@ -2668,25 +2684,6 @@ class MainWindow(QMainWindow):
         if promo:
             lines[-1] += f" · promo {promo}"
 
-        rec = self.state.recommendation_for_point(info, currency, actionable_only=True)
-        if rec is not None:
-            if rec.get("applied"):
-                lines.append("Recommendation applied")
-            elif rec.get("stale"):
-                lines.append("Recommendation stale — refresh")
-            else:
-                direction = str(rec.get("Direction", "") or "").upper()
-                arrow = "▲" if direction == "UP" else "▼" if direction == "DOWN" else "•"
-                suggested = self._rec_value(rec, "SuggestedListPrice")
-                if suggested is None:
-                    suggested = self._rec_value(rec, "SuggestedPromoFinalPrice")
-                if suggested is None:
-                    suggested = self._rec_value(rec, "SuggestedNetPrice")
-                confidence = str(rec.get("Confidence", "") or "").upper()
-                target_text = f" {suggested:.2f} {currency}" if suggested is not None else ""
-                conf_text = f" · {confidence}" if confidence else ""
-                lines.append(f"Rec {arrow}{target_text}{conf_text}")
-
         self.selection_label.setText("\n".join(lines))
 
         floor_info = self.state.regional_floor_driver_info(info, currency)
@@ -2702,12 +2699,6 @@ class MainWindow(QMainWindow):
         else:
             self.region_floor_label.clear()
             self.region_floor_label.setVisible(False)
-
-
-
-
-
-
 
 
     def toggle_left_panel(self):
@@ -2830,8 +2821,7 @@ class MainWindow(QMainWindow):
 
         # Recommendations and Market Insights are precomputed by the weekly-pack
         # importer.  Startup must stay lightweight: only load the existing CSV.
-        # If prices are edited later, explicit Save/Quick Save and the Refresh
-        # recommendations button still force a full recalculation.
+        # Market Insights refreshes intelligence separately from price editing.
         progress("Loading pricing recommendations...")
         self.load_recommendations(refresh=False)
 

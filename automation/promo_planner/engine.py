@@ -558,6 +558,8 @@ def _apply_monotonic_adjustments(states, rows, value, campaigns, boundary, floor
                     below = True
                     source = owners.get(currency, owner)
                     choice = floor_choices.get((int(source.id or 0), iso, plan, days, currency))
+                    if choice is None and source.allow_below_cost:
+                        choice = "override"
                     if review_rows is None or (iso, plan, days) in review_rows:
                         floor_issues.append(CostFloorIssue(int(source.id or 0), source.name, iso, plan, days, currency,
                                                          state["list_eur" if currency == "EUR" else "list_usd"],
@@ -646,9 +648,11 @@ def preview_batch(
         collision_issues: list[PromoCollisionIssue] = []
 
         def floor_choice(campaign_id, iso, plan, days, currency):
-            return normalized_floor_choices.get(
-                (int(campaign_id or 0), str(iso).upper(), str(plan), int(days), str(currency).upper())
-            )
+            key = (int(campaign_id or 0), str(iso).upper(), str(plan), int(days), str(currency).upper())
+            if key in normalized_floor_choices:
+                return normalized_floor_choices[key]
+            campaign = next((c for c in (campaigns or []) if int(c.id or 0) == key[0]), None)
+            return "override" if campaign and campaign.allow_below_cost else None
 
         def row_value(values, name):
             return values[h[name] - 1] if name in h else None
@@ -944,8 +948,6 @@ def preview_batch(
             plan = _text(row_value(values, "Plan"))
             day = int(_num(row_value(values, "Days")) or 0)
             in_review = review_rows is None or (iso, plan, day) in review_rows
-            if not code:
-                continue
             active_campaign = campaign_by_id.get(str(state.get("promo_owner", "")))
             if active_campaign is None:
                 resulting_date = (date.fromisoformat(execution_date) + timedelta(days=1)).isoformat() if execution_date else execution_date
@@ -955,6 +957,7 @@ def preview_batch(
             campaign_id = int(active_campaign.id or 0) if active_campaign else 0
             campaign_name = active_campaign.name if active_campaign else (state["promo_label"] or code or "Price change")
             pa_approvals = []
+            below_approvals = []
             for currency in ("EUR", "USD"):
                 list_key = "list_eur" if currency == "EUR" else "list_usd"
                 floor = _num(row_value(values, f"CostFloor_{currency}")) if f"CostFloor_{currency}" in h else None
@@ -973,7 +976,9 @@ def preview_batch(
                         code == "PA" and state["promo_type"] == "net"
                     ))
                 below_by_campaign.setdefault(campaign_id, set()).add((iso, plan, day))
-                choice = floor_choice(campaign_id, iso, plan, day, currency) if campaign_id or in_review or idx in manual_rows else None
+                choice = floor_choice(campaign_id, iso, plan, day, currency)
+                if choice != "raise" or (code == "PA" and state["promo_type"] == "net"):
+                    below_approvals.append(choice == "override")
                 if code == "PA" and state["promo_type"] == "net":
                     pa_approvals.append(choice == "override")
                 if choice == "raise" and not (code == "PA" and state["promo_type"] == "net"):
@@ -988,6 +993,8 @@ def preview_batch(
                     if not state["allow_below_cost"]:
                         state["events"].append(f"BELOW-COST OVERRIDE ({currency})")
                     state["allow_below_cost"] = True
+            if below_approvals:
+                state["allow_below_cost"] = all(below_approvals)
             if pa_approvals:
                 state["allow_below_cost"] = all(pa_approvals)
                 state["pa_unresolved"] = in_review and not all(pa_approvals)
@@ -1099,6 +1106,10 @@ def execute_batch(
         (int(cid), str(iso).upper(), str(plan), int(days), str(currency).upper()): str(choice).lower()
         for (cid, iso, plan, days, currency), choice in (cost_floor_choices or {}).items()
     }
+    approved_campaigns = {int(c.id or 0) for c in (campaigns or [c for c, _action in actions]) if c.allow_below_cost}
+    for issue in preview.cost_floor_issues:
+        if issue.campaign_id in approved_campaigns:
+            normalized_floor_choices.setdefault((issue.campaign_id,issue.iso.upper(),issue.plan,issue.days,issue.currency.upper()), "override")
     unresolved = [
         issue for issue in preview.cost_floor_issues
         if normalized_floor_choices.get((issue.campaign_id, issue.iso.upper(), issue.plan, issue.days, issue.currency.upper()))

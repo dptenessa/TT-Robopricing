@@ -15,12 +15,15 @@ from html import escape
 import json
 import os
 import re
+import csv
+import unicodedata
 from string import Template
 from pathlib import Path
 from typing import Any
 
 import math
 import sqlite3
+from collections import Counter
 import pandas as pd
 
 try:
@@ -63,33 +66,14 @@ MAX_CURRENT_AGE_DAYS = 14   # old observations are not "latest" market movement
 HISTORICAL_BASELINE_DAYS = 56
 HISTORICAL_MIN_OBSERVATIONS = 3
 TREND_WINDOWS = (("latest", "Latest snapshot", None), ("28", "4 weeks", 28), ("56", "8 weeks", 56), ("84", "12 weeks", 84))
-DASHBOARD_VERSION = "history-charts-v30-sales-pricing"
+DASHBOARD_VERSION = "history-charts-v33-route-event-fallback"
 SALES_LOOKBACK_DAYS = 60
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEV_WORKSPACE_MARKER = PROJECT_ROOT / "outputs" / ".development_workspace"
-DEFAULT_INTELLIGENCE_DATABASE = PROJECT_ROOT / "automation" / "intelligence" / "events.db"
-INTELLIGENCE_DATABASE = (
-    DEFAULT_INTELLIGENCE_DATABASE
-    if DEV_WORKSPACE_MARKER.exists()
-    else Path(os.environ.get("TT_INTELLIGENCE_DATABASE", str(DEFAULT_INTELLIGENCE_DATABASE)))
+INTELLIGENCE_DATABASE = Path(
+    os.environ.get(
+        "TT_INTELLIGENCE_DATABASE",
+        str(Path(__file__).resolve().parent / "intelligence" / "events.db"),
+    )
 )
-
-
-def _configured_sales_path() -> Path | None:
-    """Resolve sales input without allowing a dev workspace to reach production."""
-    if DEV_WORKSPACE_MARKER.exists():
-        return FILES.sales_master_csv
-    value = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
-    if value:
-        return Path(value)
-    try:
-        import config  # type: ignore
-        value = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
-        if value:
-            return Path(value)
-    except ImportError:
-        pass
-    return FILES.sales_master_csv
 VERY_COMPETITIVE_GAP_PCT = 0.05
 COMPETITIVE_GAP_PCT = 0.15
 MIN_COMPETITIVE_COUNTRY_ANCHORS = 3
@@ -186,7 +170,15 @@ def _sales_competitiveness_matrix(
     the destination has at least one credible pricing benchmark.
     """
     if sales_path is None:
-        sales_path = _configured_sales_path()
+        sales_path = os.environ.get("TT_INTELLIGENCE_SALES_FILE")
+    if sales_path is None:
+        try:
+            import config  # type: ignore
+            sales_path = getattr(config, "T_TRAVEL_SALES_FILE", None) or getattr(config, "SALES_FILE", None)
+        except ImportError:
+            sales_path = None
+    if sales_path is None:
+        sales_path = getattr(FILES, "sales_master_csv", None)
     if not sales_path or not Path(sales_path).exists() or competitiveness.empty:
         return pd.DataFrame(), "Sales file not configured or competitiveness unavailable"
 
@@ -305,6 +297,7 @@ def _load_intelligence_route_priorities(
                 (score_date,),
             ).fetchall()
             event_lookup = {}
+            all_event_records = []
             if "events" in tables:
                 event_cols = {r[1] for r in db.execute('PRAGMA table_info("events")')}
                 wanted = [
@@ -318,6 +311,7 @@ def _load_intelligence_route_priorities(
                     query = ",".join(f'"{c}"' for c in present)
                     for event_row in db.execute(f'SELECT {query} FROM events'):
                         item = {c: str(event_row[i] or "").strip() for i, c in enumerate(present)}
+                        all_event_records.append(item)
                         event_lookup.setdefault(item.get("Occasion_Event", "").casefold(), []).append(item)
     except (OSError, sqlite3.Error) as exc:
         return pd.DataFrame(columns=columns), f"Could not read Intelligence DB: {exc}"
@@ -386,6 +380,36 @@ def _load_intelligence_route_priorities(
             source = detail.get("Source_URL", "").strip()
             if source and source not in sources:
                 sources.append(source)
+        # Route cards should show relevant upcoming events from the live event
+        # catalogue even if an older/incomplete score snapshot omitted one.
+        # This is display-only: the saved score is not recalculated here.
+        score_as_of = _campaign_date(date_value) or datetime.now().date()
+        event_horizon = score_as_of + timedelta(days=90)
+        known_event_keys = {(e.get('title','').casefold(), e.get('start','')) for e in event_details}
+        if scoreable and destination_matches and origin_matches:
+            for detail in all_event_records:
+                if not (scoreable(detail) and destination_matches(detail, str(destination))
+                        and origin_matches(detail, str(origin))):
+                    continue
+                start_date = _campaign_date(detail.get('Start_Date'))
+                end_date = _campaign_date(detail.get('End_Date')) or start_date
+                if not start_date or not end_date or start_date > event_horizon or end_date < score_as_of:
+                    continue
+                event_key = (str(detail.get('Occasion_Event') or '').casefold(), start_date.isoformat())
+                if event_key in known_event_keys:
+                    continue
+                known_event_keys.add(event_key)
+                event_details.append({
+                    'title': str(detail.get('Occasion_Event') or '').strip(),
+                    'start': start_date.isoformat(), 'end': end_date.isoformat(),
+                    'planning_score': 0.0, 'source': detail.get('Source_URL', ''),
+                    'destination': detail.get('Destination', ''),
+                    'segment': detail.get('Main_Traveller_Segment', ''),
+                    'interests': detail.get('Interests_Motivation', ''),
+                    'audience': detail.get('Estimated_Addressable_Travellers', ''),
+                    'campaign_start': detail.get('Campaign_Start', ''),
+                    'landing': detail.get('Landing_Page_Recommendation', ''),
+                })
         result.append({
             "Origin": str(origin or "").upper(),
             "DestinationISO": str(destination or "").upper(),
@@ -403,6 +427,153 @@ def _load_intelligence_route_priorities(
         })
     frame = pd.DataFrame(result, columns=columns)
     return frame, f"Intelligence route priorities: {len(frame):,} routes from complete snapshot {score_date}"
+
+
+def _load_upcoming_campaign_events(database_path, as_of=None, horizon_days=90):
+    """Read concrete, dated events for the upcoming-event overview."""
+    as_of = as_of or datetime.now().date()
+    path = Path(database_path or INTELLIGENCE_DATABASE)
+    if not path.is_file():
+        return []
+    try:
+        try:
+            from intelligence.event_matching import scoreable
+        except ImportError:
+            from automation.intelligence.event_matching import scoreable
+        with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as db:
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+            if not exists:
+                return []
+            columns = {row[1] for row in db.execute('PRAGMA table_info("events")')}
+            wanted = ["Occasion_Event", "Country", "Destination", "Start_Date", "End_Date",
+                      "Priority", "Opportunity_Score", "Confidence", "Source_URL", "Source_Type",
+                      "Main_Traveller_Segment", "Interests_Motivation", "Notes", "Origin_Markets",
+                      "Content_Classification"]
+            present = [name for name in wanted if name in columns]
+            records = [dict(zip(present, row)) for row in db.execute(
+                'SELECT ' + ','.join('"'+name+'"' for name in present) + ' FROM events')]
+    except (OSError, sqlite3.Error, ImportError):
+        return []
+    result = []
+    end_limit = as_of + timedelta(days=horizon_days)
+    country_labels = set()
+    aliases_path = Path(__file__).resolve().parent / 'intelligence' / 'inputs' / 'travel_demand' / 'destination_aliases.csv'
+    if aliases_path.exists():
+        try:
+            with aliases_path.open(encoding='utf-8-sig', newline='') as handle:
+                for row in csv.DictReader(handle):
+                    country_labels.add(str(row.get('country_name') or '').strip())
+                    country_labels.update(x.strip() for x in str(row.get('aliases') or '').split('|') if x.strip())
+                    country_labels.add(str(row.get('destination_iso2') or '').strip().upper())
+        except OSError:
+            pass
+    def country_key(value):
+        plain = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode('ascii')
+        return re.sub(r'[^a-z0-9]+', '', plain.casefold())
+    known_country_keys = {country_key(value) for value in country_labels if value}
+    for event in records:
+        start = _campaign_date(event.get('Start_Date'))
+        end = _campaign_date(event.get('End_Date')) or start
+        if not start or not end or start < as_of or start > end_limit or end < as_of:
+            continue
+        if known_country_keys and country_key(event.get('Country')) not in known_country_keys:
+            continue
+        if not scoreable(event):
+            continue
+        event['start_iso'] = start.isoformat()
+        event['end_iso'] = end.isoformat()
+        event['month_key'] = start.strftime('%Y-%m')
+        cursor = start.replace(day=1)
+        last_month = end.replace(day=1)
+        month_keys = []
+        while cursor <= last_month:
+            month_keys.append(cursor.strftime('%Y-%m'))
+            month_index = cursor.month
+            cursor = cursor.replace(year=cursor.year + (month_index == 12),
+                                    month=1 if month_index == 12 else month_index + 1)
+        event['month_keys'] = ','.join(month_keys)
+        try:
+            event['_score'] = float(event.get('Opportunity_Score') or 0)
+        except (TypeError, ValueError):
+            event['_score'] = 0.0
+        result.append(event)
+    result.sort(key=lambda event: (
+        0 if str(event.get('Priority') or '').casefold() in {'prepare', 'high', 'activate now'} else 1,
+        -event['_score'], event['start_iso'], str(event.get('Occasion_Event') or '').casefold()))
+    return result[:40]
+
+
+def _weekly_research_highlights_html(database_path, as_of=None, country_names=None):
+    """Render recent agent-researched travel stories independently of routes."""
+    as_of = as_of or datetime.now().date()
+    cutoff = (as_of - timedelta(days=6)).isoformat()
+    path = Path(database_path or INTELLIGENCE_DATABASE)
+    if not path.is_file():
+        return '<section class="weekly-highlights"><h3>This week’s campaign research highlights</h3><p>No Intelligence database is available.</p></section>'
+    try:
+        with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {'destination_articles', 'destination_article_topics'}.issubset(tables):
+                rows = []
+            else:
+                rows = db.execute('''SELECT a.url,a.title,a.description,a.publisher,a.published_date,
+                    t.destination_iso2,t.topics_json
+                    FROM destination_articles a JOIN destination_article_topics t USING(url)
+                    WHERE a.published_date BETWEEN ? AND ?
+                      AND lower(a.model) LIKE '%weekly travel research%'
+                    ORDER BY a.published_date DESC,a.title''',
+                    (cutoff, as_of.isoformat())).fetchall()
+    except (OSError, sqlite3.Error):
+        rows = []
+    stories = {}
+    for url,title,description,publisher,published,code,topics_json in rows:
+        story = stories.setdefault(url, {
+            'url': url, 'title': title, 'description': description, 'publisher': publisher,
+            'published': published, 'countries': set(), 'topics': set(),
+        })
+        story['countries'].add(str(code or '').upper())
+        try:
+            story['topics'].update(json.loads(topics_json or '[]'))
+        except (TypeError, json.JSONDecodeError):
+            pass
+    names = country_names or {}
+    cards = []
+    topic_labels = {
+        'food':'Food', 'culture':'Culture', 'nature':'Nature', 'beach':'Beach',
+        'sport':'Sport', 'music':'Music', 'family':'Family', 'wellness':'Wellness',
+        'city_break':'City breaks', 'adventure':'Adventure', 'winter_sports':'Winter sports',
+        'shopping':'Shopping', 'business':'Business', 'practical':'Practical travel',
+        'transport':'Transport', 'accommodation':'Accommodation',
+    }
+    for story in list(stories.values())[:12]:
+        countries = ', '.join(names.get(code, code) for code in sorted(story['countries']))
+        topics = ', '.join(topic_labels.get(topic, topic.replace('_',' ').title())
+                           for topic in sorted(story['topics']))
+        description = str(story['description'] or '').split('\nSource evidence:',1)[0].strip()
+        if len(description) > 340:
+            description = description[:337].rsplit(' ',1)[0] + '…'
+        url = str(story['url'])
+        cards.append(
+            '<article class="weekly-highlight"><h4><a href="'+escape(url,quote=True)+'" target="_blank" rel="noopener noreferrer">'+escape(str(story['title'] or 'Untitled story'))+'</a></h4>'
+            '<p>'+escape(description)+'</p><div class="weekly-highlight-meta">'+
+            escape(str(story['publisher'] or 'Source'))+' · '+escape(str(story['published'] or ''))+
+            ((' · '+escape(countries)) if countries else '')+
+            ((' · '+escape(topics)) if topics else '')+'</div></article>')
+    intro = ('Selected travel and destination stories published in the last seven days, linked to supported destinations and topics. '
+             'These are campaign research signals, not route demand or origin-specific preferences.')
+    if stories:
+        topic_counts = Counter(topic for story in stories.values() for topic in story['topics'])
+        leading_topics = ', '.join(topic_labels.get(topic, topic.replace('_',' ').title())
+                                   for topic,_count in topic_counts.most_common(4))
+        destination_count = len({code for story in stories.values() for code in story['countries']})
+        summary = (f'<p class="weekly-highlight-summary"><b>{len(stories)} source-linked stories</b> across '
+                   f'{destination_count} destinations in the last seven days.'+
+                   (f' Leading topics in these sources: {escape(leading_topics)}.' if leading_topics else '')+
+                   '</p>')
+    else:
+        summary = ''
+    content = ''.join(cards) if cards else '<p class="empty">No destination-linked weekly research stories have been imported for the last seven days. Import the latest weekly JSON to refresh this section.</p>'
+    return '<section class="weekly-highlights"><h3>This week’s campaign research highlights</h3><p class="note">'+escape(intro)+'</p>'+summary+'<div class="weekly-highlight-grid">'+content+'</div></section>'
 
 
 # Campaign policy: editable planning thresholds, not learned demand forecasts.
@@ -610,40 +781,10 @@ def _campaign_price(current, floor, benchmark, guardrail=None):
             'gap':target/benchmark-1,'room':(target-floor)/target,'target':target}
 
 
-def _conflicting_pricing_copies(copies):
-    first=copies[0]
-    for row in copies[1:]:
-        if any(_campaign_number(row.get(k)) != _campaign_number(first.get(k)) for k in
-               ('CurrentNetPrice','CostFloor','GB','SuggestedNetPrice','GuardrailLower','GuardrailUpper')):
-            return True
-        if _text(row.get('Direction')).upper()!=_text(first.get('Direction')).upper() or _boolish(row.get('Actionable'))!=_boolish(first.get('Actionable')):
-            return True
-    return False
-
-
-def _shared_product_advice(row, benchmark):
-    """One advisory price for campaign cards and the destination pricing queue."""
-    current, floor = (_campaign_number(row.get(k)) for k in ('CurrentNetPrice', 'CostFloor'))
-    if current is None or floor is None or current < floor or not benchmark:
-        return None
-    lower, upper = (_campaign_number(row.get(k)) for k in ('GuardrailLower','GuardrailUpper'))
-    proposed = _campaign_number(row.get('SuggestedNetPrice'))
-    direction = _text(row.get('Direction')).upper()
-    # Increases require an explicit actionable engine recommendation. Being
-    # cheaper than competitors alone never creates an increase suggestion.
-    if _boolish(row.get('Actionable')) and direction == 'UP' and proposed is not None and proposed > current:
-        cap = min(benchmark*(1+CAMPAIGN_TARGET_GAP), upper if upper is not None else math.inf)
-        target = math.floor((min(proposed, cap)+1e-9)*20)/20
-        if target > current+1e-8 and target >= floor and (lower is None or target >= lower):
-            return dict(price=target,discount=0.0,action='Review price increase',
-                        gap=target/benchmark-1,room=(target-floor)/target,target=target)
-    return _campaign_price(current,floor,benchmark,lower)
-
-
 def _campaign_sales(path, country_resolver, as_of):
     """Aggregate locally; identifiers are used only to reject duplicate/reversed lines."""
     empty = {'routes':{},'skus':{},'destination_skus':{},'as_of':None,'available':False,
-             'note':'Sales export unavailable','history_complete':False,'sku_revenue':{},'destination_units':{},'unmapped_sku_units':{}}
+             'note':'Sales export unavailable','history_complete':False}
     if not path or not Path(path).exists():
         return empty
     try:
@@ -672,7 +813,7 @@ def _campaign_sales(path, country_resolver, as_of):
             accepted &= ~ids.isin(cancelled_ids)
             # Only exact business-line duplicates are collapsed. Conflicting copies are excluded.
             compare = [c for c in ['LineID','BuyerCountry','Destination','Quantity','TransactionDate',
-                                  'TransactionType','DocumentStatus','PackageSize','ValidityDays','ProductName','TotalAmount','UnitPrice','ConnectXPriceCurrency','Currency','PaymentCurrency','TransactionCurrency'] if c in raw]
+                                  'TransactionType','DocumentStatus','PackageSize','ValidityDays','ProductName'] if c in raw]
             variants = raw.loc[accepted & ids.ne(''), compare].drop_duplicates()
             conflicts = set(variants.loc[variants['LineID'].duplicated(keep=False),'LineID'].astype(str))
             accepted &= ~ids.isin(conflicts)
@@ -680,8 +821,6 @@ def _campaign_sales(path, country_resolver, as_of):
             duplicate_count = int((accepted & dup).sum())
             accepted &= ~dup
         routes, skus, destination_skus = {}, {}, {}
-        sku_revenue, destination_units, unmapped_sku_units = {}, {}, {}
-        missing_revenue = set()
         for index, row in raw.loc[accepted].iterrows():
             ds = dates.loc[index]
             if ds is None or ds < window_begin or ds > as_of:
@@ -693,7 +832,6 @@ def _campaign_sales(path, country_resolver, as_of):
             key = (origin, dest)
             item = routes.setdefault(key, {'units':0.0,'recent':0.0,'prior':0.0,'weeks':set()})
             item['units'] += units
-            destination_units[dest] = destination_units.get(dest,0.0)+units
             if ds >= recent_begin:
                 item['recent'] += units
             elif ds >= prior_begin:
@@ -709,25 +847,8 @@ def _campaign_sales(path, country_resolver, as_of):
                 dk = (dest,plan,int(days))
                 skus[sk] = skus.get(sk,0.0)+units
                 destination_skus[dk] = destination_skus.get(dk,0.0)+units
-                # Match the transaction-master currency used by the pricing editor.
-                currency = next((_text(row.get(field)).upper() for field in
-                                 ('ConnectXPriceCurrency','Currency','PaymentCurrency','TransactionCurrency')
-                                 if _text(row.get(field))), '')
-                amount = _campaign_number(row.get('TotalAmount'))
-                if amount is None:
-                    unit_price = _campaign_number(row.get('UnitPrice'))
-                    if unit_price is not None:
-                        amount = units * unit_price
-                if currency in ('EUR','USD') and amount is not None:
-                    revenue_key = (*dk,currency)
-                    sku_revenue[revenue_key] = sku_revenue.get(revenue_key,0.0)+amount
-                elif currency in ('EUR','USD'):
-                    missing_revenue.add((*dk,currency))
-            else:
-                unmapped_sku_units[dest] = unmapped_sku_units.get(dest,0.0)+units
         return {'routes':routes,'skus':skus,'destination_skus':destination_skus,'as_of':last,
                 'available':True,'history_complete':earliest<=prior_begin,
-                'sku_revenue':{key:None if key in missing_revenue else value for key,value in sku_revenue.items()},'destination_units':destination_units,'unmapped_sku_units':unmapped_sku_units,
                 'note':f'Completed sales, {window_begin.isoformat()} to {as_of.isoformat()}; export latest {last.isoformat()}; {duplicate_count} duplicate lines ignored'}
     except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
         empty['note'] = f'Sales could not be read: {exc}'
@@ -763,7 +884,15 @@ def _campaign_product_matrix(competitiveness, recommendations, market,
     """One feasible SKU per eligible route; the UI ranks the full pool per profile."""
     as_of = as_of or datetime.now().date()
     if sales_path is None:
-        sales_path = _configured_sales_path()
+        sales_path = os.environ.get('TT_INTELLIGENCE_SALES_FILE')
+    if sales_path is None:
+        try:
+            import config
+            sales_path = getattr(config,'T_TRAVEL_SALES_FILE',None) or getattr(config,'SALES_FILE',None)
+        except ImportError:
+            pass
+    if sales_path is None:
+        sales_path = getattr(FILES, "sales_master_csv", None)
     names, weights = _campaign_inputs()
     country_by_name = {re.sub(r'\W+',' ',v.casefold()).strip():k for k,v in names.items()}
     def resolve(value):
@@ -828,7 +957,7 @@ def _campaign_product_matrix(competitiveness, recommendations, market,
         key = (dest,plan,int(days),currency)
         if key in anchor_rows:
             old = anchor_rows[key]
-            if _conflicting_pricing_copies([old,row]):
+            if any(_campaign_number(old.get(c))!=_campaign_number(row.get(c)) for c in ['CurrentNetPrice','CostFloor','GB']):
                 conflicting.add(key)
         else:
             anchor_rows[key] = row
@@ -854,7 +983,7 @@ def _campaign_product_matrix(competitiveness, recommendations, market,
         if not ref:
             continue
         benchmark = ref['BestBenchmarkPrice']
-        price = _shared_product_advice(row,benchmark)
+        price = _campaign_price(current,floor,benchmark,_campaign_number(row.get('GuardrailLower')))
         if price is None:
             continue
         moves = movement_index.get((dest,float(days)))
@@ -1043,7 +1172,8 @@ def _campaign_price_evidence_html(row, fmt):
     return html
 
 
-def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None):
+def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None,
+                          upcoming_events=None, weekly_research_html=''):
     """Keep the eligible pool available; display only the filtered top twenty cards."""
     as_of = as_of or datetime.now().date()
     def fmt(value, digits=0):
@@ -1053,6 +1183,40 @@ def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None):
         return escape(_text(value))
     cards, briefs = [], {}
     coverage = coverage or {}
+    upcoming_events = upcoming_events or []
+    planning_months = []
+    current_month = as_of.replace(day=1)
+    for offset in range(4):
+        month_index = current_month.month - 1 + offset
+        month = current_month.replace(year=current_month.year + month_index // 12,
+                                      month=month_index % 12 + 1)
+        planning_months.append((month.strftime('%Y-%m'), month.strftime('%B %Y')))
+    month_options = ''.join(f'<option value="{key}">{label}</option>' for key,label in planning_months)
+    event_cards = []
+    for event in upcoming_events:
+        title = text(event.get('Occasion_Event'))
+        place = ' · '.join(x for x in [text(event.get('Destination')), text(event.get('Country'))] if x)
+        dates = event['start_iso'] + ((' → ' + event['end_iso']) if event['end_iso'] != event['start_iso'] else '')
+        priority = text(event.get('Priority') or 'Upcoming')
+        source_url = str(event.get('Source_URL') or '')
+        source = (f'<a href="{escape(source_url, quote=True)}" target="_blank" rel="noopener noreferrer">Source</a>'
+                  if re.match(r'^https://', source_url, re.I) else '')
+        notes = text(event.get('Notes') or '')
+        notes = notes[:360] + ('…' if len(notes) > 360 else '')
+        audience = text(event.get('Main_Traveller_Segment') or '')
+        interests = text(event.get('Interests_Motivation') or '')
+        extra = '<p>' + notes + '</p>' if notes else ''
+        if audience or interests:
+            extra += '<p class="upcoming-event-audience">' + ' · '.join(x for x in [audience, interests] if x) + '</p>'
+        event_cards.append(
+            f'<article class="upcoming-event" data-months="{event["month_keys"]}">'
+            f'<div class="upcoming-event-title"><b>{title}</b><span class="pill">{priority}</span></div>'
+            f'<div>{escape(place)} · {dates}</div>{extra}<div>{source}</div></article>')
+    event_section = (
+        '<section class="upcoming-events"><h3>Major upcoming events</h3>'
+        '<p class="note">Concrete, country-specific events in the next 90 days. This list follows the Planning month filter below; event audience estimates are not route forecasts.</p>'
+        '<div id="upcoming-event-list">' + ''.join(event_cards) + '</div>'
+        '<p id="upcoming-event-empty" class="empty" hidden>No confirmed dated events in this planning month.</p></section>')
     for rank,row in enumerate(campaigns.to_dict('records') if not campaigns.empty else [],1):
         ident = f'campaign-{rank}'
         route = f'{row.get("OriginName",row["Origin"])} ({row["Origin"]}) → {row["Country"]} ({row["DestinationISO"]})'
@@ -1092,8 +1256,6 @@ def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None):
         price = row['ProposedPrice']
         ccy = row['Currency']
         decision = ('Keep existing promo; no further discount' if row.get('ExistingPromo') else 'No new promo needed') if row['DiscountPct']==0 else f'Test {fmt(row["DiscountPct"]*100,1)}% off current net price'
-        if price > row['CurrentPrice'] + 1e-8:
-            decision = 'Review price increase; not an additional discount'
         why = '<ul>'+''.join('<li>'+text(x)+'</li>' for x in row['Why'])+'</ul>'
         event_html = ''
         for ev in events[:4]:
@@ -1140,8 +1302,10 @@ def _campaign_briefs_html(campaigns, note, as_of=None, coverage=None):
 <details open><summary>Destination coverage · last 60 days</summary>{coverage_panel}</details>
 <details><summary>Concrete events and sources ({len(events)})</summary>{event_html}</details><button type="button" onclick="copyCampaignBrief('{ident}')">Copy agency brief</button></details></article>''')
     payload = json.dumps(briefs,ensure_ascii=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
-    result = '''<section class="campaign-section"><h2>Next campaigns</h2><p>Up to 20 routes with demand evidence, a specific product and a feasible price. Proposals require commercial approval.</p>
-<div class="campaign-controls"><label>Ranking profile <select id="campaign-profile"><option value="conservative">Conservative · sales-led</option><option value="balanced" selected>Balanced</option><option value="exploratory">Higher risk · demand-led</option></select></label><label>Planning month <select id="campaign-period"><option value="current">Current month</option><option value="next">Next month</option></select></label><label>Origin <select id="campaign-origin"><option value="">All origins</option></select></label><label>Destination <select id="campaign-destination"><option value="">All destinations</option></select></label><button type="button" onclick="downloadCampaignBriefs()">Download selected agency briefs</button><span id="campaign-visible"></span></div>'''
+    result = '<section class="campaign-section"><h2>Next campaigns</h2><p>Up to 20 routes with demand evidence, a specific product and a feasible price. Proposals require commercial approval.</p>'
+    result += weekly_research_html
+    result += event_section
+    result += '''<div class="campaign-controls"><label>Ranking profile <select id="campaign-profile"><option value="conservative">Conservative · sales-led</option><option value="balanced" selected>Balanced</option><option value="exploratory">Higher risk · demand-led</option></select></label><label>Planning month <select id="campaign-period">'''+month_options+'''</select></label><label>Origin <select id="campaign-origin"><option value="">All origins</option></select></label><label>Destination <select id="campaign-destination"><option value="">All destinations</option></select></label><button type="button" onclick="downloadCampaignBriefs()">Download selected agency briefs</button><span id="campaign-visible"></span></div>'''
     result += '<p class="note">'+escape(note)+'</p>'
     result += '<p class="note">Planning month selects the travel opportunity window. Rankings use month-specific seasonality, origin holidays, matched events and available historical Ads seasonality. Sales, Trends and prices are the latest observations, not future forecasts. Advertising can start before the planning month.</p><p id="campaign-profile-note"></p><div id="campaign-cards">'+''.join(cards)+'</div><p id="campaign-empty" hidden>No eligible campaigns meet the priority threshold for this planning month and these filters.</p>'
     result += '''<details class="campaign-method"><summary>Ranking and promotion rules</summary><p>At least 5 completed route units in 60 days, or Ads baseline ≥40 plus Intelligence score ≥45 and coverage ≥50. Origin weight ≥50 when the input is available. Domestic and intra-EU routes excluded throughout the pipeline. Sales, score and competitor snapshots must be no more than 14 days old. Missing evidence contributes zero, never extra weight.</p><p>Ranking profiles use independent 0–100 signals, avoiding double-counting sales through the Intelligence score. Missing signals contribute zero; weights are never redistributed. Minimum priority 35. No additional demand-scale multiplier is applied. The intra-EEA SIM factor remains 0.75 for permitted routes.</p><table><thead><tr><th>Profile</th><th>Sales</th><th>Ads</th><th>Trends</th><th>Context</th><th>Competitiveness</th><th>Pack movement</th><th>Floor room</th></tr></thead><tbody><tr><td>Conservative</td><td>45%</td><td>10%</td><td>5%</td><td>10%</td><td>20%</td><td>5%</td><td>5%</td></tr><tr><td>Balanced</td><td>30%</td><td>20%</td><td>10%</td><td>10%</td><td>20%</td><td>5%</td><td>5%</td></tr><tr><td>Higher risk</td><td>15%</td><td>30%</td><td>20%</td><td>5%</td><td>20%</td><td>5%</td><td>5%</td></tr></tbody></table><p>Sales strength = log(1 + route units) relative to the largest observed route. Context is the fixed average of seasonality, holiday timing and event score; absent values count as zero. Country-wide moves are supporting context; matched pack movement enters the score. These are planning weights, not calibrated probabilities. Higher risk does not relax demand eligibility, freshness, comparability or floor safeguards. Profile selection changes route ranking, not the chosen product or price. The separate Intelligence score is displayed for reference.</p><p>Product choice favours observed route pack/duration sales, then destination product sales, competitiveness, competitor movement and a 7/10-day planning preference. A missing SKU match is labelled a hypothesis. Promo target is within 5% of the trusted benchmark; rounded down to 0.05, above cost floor +10%, within any lower guardrail and at most 30% below current net price. If infeasible, the product is excluded. Thresholds are editable planning defaults. EU origins use EUR; all other origins use USD. Competitor prices come from the corresponding stored eur_price/usd_price column, with the base price used only when its currency matches. Rows containing both currencies remain eligible regardless of their base currency label.</p><p>Planning months select travel windows, independently of advertising launch dates. Ads monthly adjustment uses a complete 12-month keyword history: historical month divided by annual mean, capped to 0.5–2, applied on the existing logarithmic baseline scale. Missing history leaves the baseline unchanged. Holiday timing uses 35 plus 15 per distinct public-holiday date, capped at 70, when the origin calendar is fresh; otherwise it contributes zero. Only events overlapping the remaining month contribute. Destination seasonality uses that month’s configured model; neutral fallback is labelled. These heuristics are monthly planning scenarios, not calibrated forecasts. Event audiences are catalogue estimates for the whole event. Suggested messages and timing require review. Agency exports omit internal cost floors.</p></details></section>'''
@@ -1161,13 +1325,10 @@ function downloadCampaignBriefs(){const chosen=[...document.querySelectorAll('.c
  for(const [el,key] of [[o,'origin'],[d,'destination']]){
    [...new Set(cards.map(c=>c.dataset[key]))].sort().forEach(v=>{const x=document.createElement('option');x.value=v;x.textContent=v;el.appendChild(x)})
  }
- const today=new Date('''+json.dumps(as_of.isoformat()+'T12:00:00')+''');
- p.options[0].textContent=today.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
- p.options[1].textContent=new Date(today.getFullYear(),today.getMonth()+1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+ const eventCards=[...document.querySelectorAll('.upcoming-event')];
+ function renderUpcomingEvents(monthKey){let count=0;for(const card of eventCards){card.hidden=!card.dataset.months.split(',').includes(monthKey);if(!card.hidden)count++}document.getElementById('upcoming-event-empty').hidden=count>0}
  function render(){
-   const offset=p.value==='next'?1:0;
-   const monthDate=new Date(today.getFullYear(),today.getMonth()+offset,1);
-   const monthKey=monthDate.getFullYear()+'-'+String(monthDate.getMonth()+1).padStart(2,'0');
+   const monthKey=p.value;
    const selected=cards.filter(c=>{
      return (!o.value||o.value===c.dataset.origin)&&(!d.value||d.value===c.dataset.destination)&&
        c.profileScores[profile.value]>=35 && c.dataset.month===monthKey;
@@ -1180,137 +1341,83 @@ function downloadCampaignBriefs(){const chosen=[...document.querySelectorAll('.c
    const notes={conservative:'Sales 45% · Ads 10% · Trends 5%. Favours demonstrated route sales.',balanced:'Sales 30% · Ads 20% · Trends 10%. Balances observed sales and search signals.',exploratory:'Sales 15% · Ads 30% · Trends 20%. Favours search-led opportunities; search interest does not prove travel demand.'};
    document.getElementById('campaign-profile-note').textContent=notes[profile.value]+' Product selection and price safeguards stay unchanged. All eligible routes are re-ranked before selecting the top 20.';
  }
- [o,d,p,profile].forEach(x=>x.addEventListener('change',render));render();
+ [o,d,profile].forEach(x=>x.addEventListener('change',render));p.addEventListener('change',()=>{render();renderUpcomingEvents(p.value)});render();renderUpcomingEvents(p.value);
 })();
 </script>'''
     return result
 
 
 
-def _pricing_action_rows(recommendations, market, country_names=None, *, sales_path=None, as_of=None, competitor_changes=None, previous_prices=None, previous_price_date=""):
-    """Unique commercial destination/plan/duration/currency, independent of routes."""
+def _destination_pricing_html(recommendations, market, country_names=None, as_of=None):
+    """Destination SKU explorer; independent of campaign demand eligibility."""
     as_of = as_of or datetime.now().date()
-    names, _weights = _campaign_inputs()
-    names.update(country_names or {})
-    aliases = {re.sub(r'\W+',' ',v.casefold()).strip():k for k,v in names.items()}
-    resolve = lambda value: aliases.get(re.sub(r'\W+',' ',_text(value).casefold()).strip()) or _sales_iso2(value)
-    sales = _campaign_sales(sales_path if sales_path is not None else _configured_sales_path(),resolve,as_of)
-    fresh_sales = sales['available'] and 0 <= (as_of-sales['as_of']).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS
+    names = country_names or {}
     fresh = market.copy()
     if not fresh.empty:
-        if 'observed_date' not in fresh:
+        if 'observed_date' in fresh:
+            fresh = fresh.loc[fresh['observed_date'].map(lambda v: (d := _campaign_date(v)) is not None and 0 <= (as_of-d).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS)]
+        else:
             fresh = fresh.iloc[:0]
-        else:
-            fresh = fresh.loc[fresh['observed_date'].map(lambda v:(d:=_campaign_date(v)) is not None and 0 <= (as_of-d).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS)]
-    index = _index_market_offers(fresh)
+    index = _index_market_offers(fresh) if not fresh.empty else {}
     anchors = {}
-    for row in recommendations.to_dict('records'):
-        iso = _text(row.get('PricingUnitIdUsed')).upper()
-        if not (len(iso)==2 and iso.isalpha()):
-            # Do not expand regional coverage into country recommendations.
-            if _text(row.get('PricingSourceUsed')).lower().startswith('region'):
-                continue
-            iso = _text(row.get('ISO')).upper()
-        plan = _campaign_plan(row.get('Plan'))
-        days, current = (_campaign_number(row.get(k)) for k in ('Days','CurrentNetPrice'))
-        currency = _text(row.get('Currency')).upper()
-        if not(len(iso)==2 and iso.isalpha() and plan and days and 1 <= days <= 30 and current and current>0 and currency in ('EUR','USD')):
+    for r in recommendations.to_dict('records'):
+        iso = _text(r.get('PricingUnitIdUsed')).upper()
+        if len(iso)!=2 or not iso.isalpha():
+            iso = _text(r.get('ISO')).upper()
+        plan = _campaign_plan(r.get('Plan'))
+        days, price, gb = (_campaign_number(r.get(k)) for k in ('Days','CurrentNetPrice','GB'))
+        cur = _text(r.get('Currency')).upper()
+        if len(iso)!=2 or not iso.isalpha() or not plan or not days or price is None or price<=0 or cur not in ('EUR','USD'):
             continue
-        anchors.setdefault((iso,plan,int(days),currency),[]).append(row)
-    previous_index = {}
-    if previous_prices is not None and not previous_prices.empty:
-        for old in previous_prices.to_dict('records'):
-            old_iso=_text(old.get('PricingUnitIdUsed')).upper()
-            if len(old_iso)!=2:old_iso=_text(old.get('ISO')).upper()
-            old_day=_campaign_number(old.get('Days'))
-            if old_day:
-                previous_index[(old_iso,_campaign_plan(old.get('Plan')),int(old_day),_text(old.get('Currency')).upper())]=old
-    movement_index = {}
-    if competitor_changes is not None and not competitor_changes.empty:
-        for key,group in competitor_changes.groupby(['iso','days','currency'],sort=False):
-            movement_index[(str(key[0]).upper(),int(key[1]),str(key[2]).upper())] = group
-    rows=[]
-    for (iso,plan,days,currency),copies in sorted(anchors.items()):
-        row=copies[0]
-        current,floor,gb=(_campaign_number(row.get(k)) for k in ('CurrentNetPrice','CostFloor','GB'))
-        conflict=_conflicting_pricing_copies(copies)
-        ref=None if conflict else _best_market_reference_for_country(fresh,iso=iso,days=days,gb=gb or 0,
-                unlimited=plan=='Unlimited',currency=currency,market_index=index,include_offers=True)
-        benchmark=ref['BestBenchmarkPrice'] if ref else None
-        gap=current/benchmark-1 if benchmark else None
-        advice=_shared_product_advice(row,benchmark) if ref and not conflict else None
-        proposal=advice['price'] if advice else None
+        anchors.setdefault((iso,plan,days,cur), []).append(r)
+    rows = []
+    money = lambda x: '—' if x is None else f'{x:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+    for (iso,plan,days,cur), copies in sorted(anchors.items()):
+        r=copies[0]
+        price, floor, gb = (_campaign_number(r.get(k)) for k in ('CurrentNetPrice','CostFloor','GB'))
+        conflict = any(any(_campaign_number(c.get(k)) != _campaign_number(r.get(k)) for k in ('CurrentNetPrice','CostFloor','GB')) for c in copies[1:])
+        ref = None if conflict else _best_market_reference_for_country(fresh, iso=iso, days=days, gb=gb or 0, unlimited=plan=='Unlimited', currency=cur, market_index=index, include_offers=True)
+        gap = price/ref['BestBenchmarkPrice']-1 if ref else None
+        below = floor is not None and price<floor
+        status = 'unknown' if ref is None else 'competitive' if gap<=.05+1e-9 else 'attention'
+        if below or conflict:
+            status='attention'
+        label={'unknown':'Insufficient evidence','competitive':'Competitive','attention':'Needs attention'}[status]
+        action='Collect fresh comparable offers'
         if conflict:
-            action,reason='Insufficient evidence','Resolve conflicting price-book copies before recommending a price.'
-        elif floor is not None and current < floor:
-            action,reason='Review cost floor','Current net is below the cost floor; no automatic change is proposed.'
-        elif not ref:
-            action,reason='Insufficient evidence','Need fresh comparable offers from at least two providers.'
-        elif floor is None:
-            action,reason='Insufficient evidence','Cost floor is unavailable.'
-        elif not advice:
-            action,reason='Review cost floor','No safe reduction within the current floor and pricing guardrails.'
-        elif proposal > current+1e-8:
-            action,reason='Increase','Actionable pricing-engine increase, capped by benchmark and guardrails.'
-        elif proposal < current-1e-8:
-            action,reason='Decrease','Above the shared competitive target; reduction respects the floor and guardrails.'
-        else:
-            action,reason='Keep','Current net meets the shared competitive target; no further discount.'
-        units=sales['destination_skus'].get((iso,plan,days),0) if fresh_sales else None
-        if fresh_sales and not units and sales.get('unmapped_sku_units',{}).get(iso,0):units=None
-        country_units=sales.get('destination_units',{}).get(iso,0) if fresh_sales else None
-        revenue=sales.get('sku_revenue',{}).get((iso,plan,days,currency)) if fresh_sales else None
-        offers=(ref or {}).get('ComparableOffers',[])
-        provider=None
-        if ref and offers:
-            if ref['BenchmarkMethod']=='price/GB equivalent':
-                offer=min((o for o in offers if o.get('equivalent') is not None),key=lambda o:o['equivalent'],default=None)
-            else:offer=min(offers,key=lambda o:o['price'])
-            provider=offer['provider'] if offer else None
-        movement, gap_change, gap_change_basis = None, None, ''
-        changes = movement_index.get((iso,days,currency))
-        if changes is not None:
-            changes=changes.copy()
-            if 'Trusted' in changes: changes=changes[changes.Trusted.map(_boolish)]
-            if 'CurrentDate' in changes:
-                changes=changes.loc[changes.CurrentDate.map(lambda v:(d:=_campaign_date(v)) is not None and 0 <= (as_of-d).days <= CAMPAIGN_MAX_SOURCE_AGE_DAYS)]
-            changes=changes[changes.plan_type.eq('unlimited') if plan=='Unlimited' else ~changes.plan_type.eq('unlimited')]
-            if plan!='Unlimited' and gb and gb>0:
-                changes=changes[(pd.to_numeric(changes.gb,errors='coerce')/gb).between(BEST_MARKET_GB_RATIO_MIN,BEST_MARKET_GB_RATIO_MAX)]
-            provider_changes=changes.groupby('provider').PctChange.median().dropna()
-            if len(provider_changes)>=BEST_MARKET_MIN_PROVIDERS: movement=_trimmed_mean(provider_changes)
-            if ref and {'PreviousPrice','PreviousDate'}.issubset(changes.columns) and not changes.empty:
-                previous_market=changes.assign(price=changes.PreviousPrice,observed_date=changes.PreviousDate)
-                previous_market['eur_price']=changes.PreviousPrice if currency=='EUR' else None
-                previous_market['usd_price']=changes.PreviousPrice if currency=='USD' else None
-                previous_ref=_best_market_reference_for_country(previous_market,iso=iso,days=days,gb=gb or 0,
-                    unlimited=plan=='Unlimited',currency=currency,include_offers=True)
-                if previous_ref:
-                    old=previous_index.get((iso,plan,days,currency),{})
-                    old_price=_campaign_number(old.get('CurrentNetPrice'))
-                    same_gb=_campaign_number(old.get('GB'))==gb
-                    historical=old_price is not None and same_gb
-                    baseline_price=old_price if historical else current
-                    gap_change=baseline_price/previous_ref['BestBenchmarkPrice']-1-gap
-                    gap_change_basis=('Historical T-Travel price snapshot '+previous_price_date if historical else
-                                      'Market-driven only: today’s T-Travel price held constant')
-
-        rows.append(dict(iso=iso,country=names.get(iso) or _text(row.get('Country')) or iso,plan=plan,days=days,gb=gb,
-            currency=currency,current=current,benchmark=benchmark,provider=provider,method=(ref or {}).get('BenchmarkMethod'),
-            gap=gap,position='Unknown' if gap is None else 'Competition cheaper' if gap>.005 else 'T-Travel cheaper' if gap<-.005 else 'Similar prices',
-            proposed=proposal,change=proposal/current-1 if proposal is not None else None,action=action,reason=reason,
-            units=units,country_units=country_units,revenue=revenue,floor=floor,offers=offers,competitor_movement=movement,gap_change=gap_change,gap_change_basis=gap_change_basis,
-            model_reason=_text(row.get('Reason')).replace('_',' '),observed=max((o.get('observed','') for o in offers),default='')))
-    return rows, sales['note'] + ('' if fresh_sales else ' · Sales unavailable/stale: sales prioritisation is disabled.'), fresh_sales
-
-
-def _pricing_actions_html(rows, sales_note, sales_available):
-    try:
-        from pricing_worklist import render_pricing_worklist
-    except ImportError:
-        from automation.pricing_worklist import render_pricing_worklist
-    return render_pricing_worklist(rows,sales_note,sales_available)
-
+            action='Resolve conflicting price-book rows'
+        elif below:
+            action='Below cost floor — review price' + (' (override enabled)' if _boolish(r.get('AllowBelowCost')) else '')
+        elif ref:
+            if floor is None:
+                action='Verify cost floor before proposing a price change'
+            elif gap<=.05+1e-9:
+                action='Keep existing promo; no further discount' if _boolish(r.get('HasActivePromo')) else 'Keep price; no new promo needed'
+            else:
+                proposal=_campaign_price(price,floor,ref['BestBenchmarkPrice'],_campaign_number(r.get('GuardrailLower')))
+                action=('Consider '+money(proposal['price'])+' '+cur+'; '+money(proposal['discount']*100)+'% off current net') if proposal else 'No safe promo under current floor/guardrails; review costs or pack'
+        offers=[]
+        for o in (ref or {}).get('ComparableOffers',[]):
+            allowance='Unlimited · FUP may differ' if o['unlimited'] else money(o['gb'])+' GB'
+            offers.append(' · '.join([o['provider'], str(o['days'])+' days',allowance,money(o['price'])+' '+cur, o['observed'] or 'Date unavailable']))
+        benchmark=(money(ref['BestBenchmarkPrice'])+' '+cur+' · '+ref['BenchmarkMethod']) if ref else 'Unavailable'
+        allowance='Unlimited · check FUP' if plan=='Unlimited' else money(gb)+' GB'
+        room=(price-floor)/price*100 if floor is not None else None
+        rows.append(dict(iso=iso,country=names.get(iso) or _text(r.get('Country')) or iso,currency=cur,plan=plan,days=days,status=status,label=label,
+            product=plan+' · '+f'{days:g}'+' days · '+allowance,price=money(price)+' '+cur,benchmark=benchmark,gap=('—' if gap is None else f'{gap*100:+.1f}%'),floor=money(floor)+' '+cur,room=('—' if room is None else money(room)+'%'),action=action,offers=offers))
+    data=json.dumps(rows,ensure_ascii=False,allow_nan=False).replace('<','\\u003c')
+    return r'''<section class="card" id="destination-pricing"><h2>Pricing by destination</h2>
+<p>Select the country where the eSIM is used. This is a product pricing view, independent of campaign route eligibility.</p>
+<div class="campaign-controls"><label>Destination<select id="pricing-country"></select></label><label>Currency<select id="pricing-currency"><option>EUR</option><option>USD</option></select></label><label>Position<select id="pricing-status"><option value="all">All products</option><option value="competitive">Competitive</option><option value="attention">Needs attention</option><option value="unknown">Insufficient evidence</option></select></label><label>Product<select id="pricing-plan"><option value="all">All products</option></select></label></div>
+<p id="pricing-summary" role="status"></p><div class="table-wrap"><table><thead><tr><th>Our product</th><th>Current net</th><th>Benchmark</th><th>Gap</th><th>Position</th><th>Cost floor</th><th>Room above floor</th><th>Suggested action &amp; exact offers</th></tr></thead><tbody id="pricing-body"></tbody></table></div>
+<p class="note">Available price-book anchors only; no inferred prices between durations. Competitive = at or below 105% of the benchmark. Below-floor prices and conflicting rows always need attention. Missing evidence never means competitive. Benchmarks require at least two fresh trusted providers, exact duration and 0.5–2× allowance for capped packs. A price/GB equivalent is calculated, not a purchasable competitor pack. Stored EUR/USD columns are used without new FX conversion. Room above floor is not accounting margin. Actions require commercial review and do not change prices.</p></section>
+<script type="application/json" id="pricing-data">''' + data + r'''</script>
+<script>
+(()=>{const data=JSON.parse(document.getElementById('pricing-data').textContent), country=document.getElementById('pricing-country'),currency=document.getElementById('pricing-currency'),status=document.getElementById('pricing-status'),plan=document.getElementById('pricing-plan');
+const countries=new Map(data.map(r=>[r.iso,r.country]));[...countries].sort((a,b)=>a[1].localeCompare(b[1])).forEach(([iso,name])=>country.add(new Option(name+' ('+iso+')',iso)));if(countries.has('DE'))country.value='DE';[...new Set(data.map(r=>r.plan))].sort().forEach(p=>plan.add(new Option(p,p)));
+function render(){const pool=data.filter(r=>r.iso===country.value&&r.currency===currency.value&&(plan.value==='all'||r.plan===plan.value));const rows=pool.filter(r=>status.value==='all'||r.status===status.value);document.getElementById('pricing-summary').textContent=pool.length+' products · '+pool.filter(r=>r.status==='competitive').length+' competitive · '+pool.filter(r=>r.status==='attention').length+' need attention · '+pool.filter(r=>r.status==='unknown').length+' insufficient evidence. Showing '+rows.length+'.';const body=document.getElementById('pricing-body');body.replaceChildren();rows.forEach(r=>{const tr=document.createElement('tr');['product','price','benchmark','gap','label','floor','room'].forEach(k=>{const td=document.createElement('td');td.textContent=r[k];if(k==='label')td.className=r.status==='competitive'?'up':r.status==='attention'?'down':'neutral';tr.append(td)});const td=document.createElement('td');const action=document.createElement('div');action.textContent=r.action;td.append(action);if(r.offers.length){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Compare '+r.offers.length+' exact offers';details.append(summary);r.offers.forEach(o=>{const p=document.createElement('p');p.textContent=o;details.append(p)});td.append(details)}tr.append(td);body.append(tr)});if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=8;td.textContent='No products available for these filters.';tr.append(td);body.append(tr)}}
+[country,currency,status,plan].forEach(e=>e.addEventListener('change',render));render();})();
+</script>'''
 
 def collect_market_changes(paths: PipelineFiles = FILES) -> pd.DataFrame:
     """Return the latest two observations per stable competitor product."""
@@ -2712,9 +2819,43 @@ def generate_market_insights(
         latest_market_date=latest_market_date,
         country_names=country_name_map,
     )
+    sales_competitiveness, sales_competitiveness_note = _sales_competitiveness_matrix(
+        competitiveness_countries,
+        recommendations=recs,
+    )
     intelligence_routes, intelligence_note = _load_intelligence_route_priorities(
         intelligence_database_path
     )
+    if not intelligence_routes.empty:
+        intelligence_routes = intelligence_routes.copy()
+        intelligence_routes["Country"] = intelligence_routes["DestinationISO"].map(country_name_map).fillna(intelligence_routes["DestinationISO"])
+        intelligence_routes["Route"] = intelligence_routes["Origin"] + " → " + intelligence_routes["DestinationISO"] + " " + intelligence_routes["Country"]
+        intelligence_routes = intelligence_routes.sort_values(
+            ["IntelligenceScore", "Momentum", "Change7d"],
+            ascending=[False, False, False], na_position="last",
+        )
+        intelligence_priority_table = _table_html(
+            intelligence_routes,
+            [
+                ("Route", "Preferred route", "text"),
+                ("IntelligenceScore", "Route opportunity", "dec"),
+                ("Momentum", "Trends momentum", "dec"),
+                ("Baseline", "Ads baseline", "dec"),
+                ("IntelSalesUnits", "Sales units (60d)", "num"),
+                ("EventsScore", "Events score", "dec"),
+                ("MatchedEvents", "Matched event and date", "text"),
+                ("EventSegments", "Event traveller segments", "text"),
+                ("EventInterests", "Event interests", "text"),
+                ("EventAudience", "Event addressable audience", "text"),
+                ("EventSources", "Event sources", "text"),
+                ("Coverage", "Evidence coverage %", "dec"),
+                ("Change7d", "Score change 7d", "dec"),
+                ("ScoreDate", "Score snapshot", "date"),
+            ],
+            "intelligence_priorities", 250,
+        )
+    else:
+        intelligence_priority_table = '<div class="empty">No Intelligence route scores available. ' + escape(intelligence_note) + '</div>'
     campaign_history = _apply_current_quality_to_window(
         _campaign_currency_history(paths.market_history_db,days_back=28),
         quality=quality,current_outlier_keys=current_outlier_keys,latest_market_date=latest_market_date,
@@ -2731,19 +2872,20 @@ def generate_market_insights(
         defer_priority=True,
     )
     from campaign_monthly import plan_rows
+    planning_as_of = datetime.now().date()
     campaign_products = plan_rows(campaign_products,
         intelligence_database_path or INTELLIGENCE_DATABASE,
         Path(__file__).resolve().parent/'intelligence'/'inputs'/'travel_demand',
-        datetime.now().date(), _campaign_profile_scores)
+        planning_as_of, _campaign_profile_scores)
     coverage = destination_briefings(intelligence_database_path or INTELLIGENCE_DATABASE)
-    campaign_briefs_html = _campaign_briefs_html(campaign_products, campaign_products_note, coverage=coverage)
+    upcoming_events = _load_upcoming_campaign_events(intelligence_database_path or INTELLIGENCE_DATABASE, planning_as_of)
+    weekly_research_html = _weekly_research_highlights_html(
+        intelligence_database_path or INTELLIGENCE_DATABASE, planning_as_of, country_name_map)
+    campaign_briefs_html = _campaign_briefs_html(campaign_products, campaign_products_note,
+                                                 as_of=planning_as_of, coverage=coverage,
+                                                 upcoming_events=upcoming_events,
+                                                 weekly_research_html=weekly_research_html)
     campaign_briefs_html += '<details class="card"><summary>Destination coverage overview · 60 days</summary>'+overview_html(coverage,country_name_map)+'</details>'
-
-    history_target=((_campaign_date(latest_market_date) or datetime.now().date())-timedelta(days=28)).isoformat()
-    previous_prices, previous_price_date = _historical_ttravel_prices_on_or_before(paths,history_target)
-    pricing_rows, pricing_sales_note, pricing_sales_available = _pricing_action_rows(recs,trusted_market,country_name_map,
-        competitor_changes=campaign_history,previous_prices=previous_prices,previous_price_date=previous_price_date)
-    pricing_actions_html = _pricing_actions_html(pricing_rows,pricing_sales_note,pricing_sales_available)
 
     actionable = recs[recs.get("Actionable", False).map(_boolish)].copy() if not recs.empty and "Actionable" in recs.columns else pd.DataFrame()
     rec_up = int((actionable.get("Direction", pd.Series(dtype=str)).astype(str).str.upper() == "UP").sum()) if not actionable.empty else 0
@@ -2796,6 +2938,51 @@ def generate_market_insights(
         "coverage",
         50,
     )
+    days_table = _table_html(by_days, [("Days","Days","dec"),("Recommendations","Total","num"),("Up","Up","num"),("Down","Down","num")], "days", 30)
+    plans_table = _table_html(by_plan, [("Plan","Plan","text"),("Recommendations","Total","num"),("Up","Up","num"),("Down","Down","num")], "plans", 30)
+    units_table = _table_html(unit_sorted, [("PricingUnitIdUsed","Pricing unit","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("HighConfidence","High confidence","num"),("MedianMarketGapPct","Median market gap","pct")], "units", 100)
+    recommendation_country_table = _table_html(recommendation_countries, [("ISO","ISO","text"),("Country","Country","text"),("Recommendations","Recommendations","num"),("Up","Up","num"),("Down","Down","num"),("AffectedShare","Anchors affected","pct"),("AvgSuggestedChangePct","Avg suggested change","pct"),("PricingUnits","Pricing units","num")], "recommendation_countries", 200)
+    competitiveness_country_table = _table_html(competitiveness_countries, [("ISO","ISO","text"),("Country","Country","text"),("Evaluated","Anchors","num"),("TrimmedMeanGapPct","Gap vs best","pct"),("VeryCompetitiveShare","Within 5%","pct"),("AvgProviders","Avg providers","dec")], "competitiveness_countries", 200)
+    if not sales_competitiveness.empty:
+        sales_competitiveness = sales_competitiveness.copy()
+        sales_competitiveness["Route"] = sales_competitiveness["Origin"].astype(str) + " → " + sales_competitiveness["Country"].astype(str)
+        sales_competitiveness_table = _table_html(
+            sales_competitiveness,
+            [("Route", "Route", "text"), ("SalesUnits", "Sales units", "num"),
+             ("CompetitiveScore", "Competitiveness", "dec"), ("Gap", "Gap vs best", "pct"),
+             ("PriceRoomPct", "Room above cost floor", "pct"),
+             ("CompetitiveShare", "Within 15%", "pct"), ("Quadrant", "Campaign interpretation", "text")],
+            "sales_competitiveness", 250,
+        )
+    else:
+        sales_competitiveness_table = '<div class="empty">No sales/competitiveness matrix available yet.</div>'
+
+    if not campaign_products.empty:
+        campaign_products = campaign_products.copy()
+        campaign_products["Route"] = campaign_products["Origin"].astype(str) + " → " + campaign_products["Country"].astype(str)
+        campaign_products_table = _table_html(
+            campaign_products,
+            [
+                ("Route", "Route", "text"),
+                ("IntelligenceScore", "Intelligence score", "dec"),
+                ("Momentum", "Trends momentum", "dec"),
+                ("MatchedEvents", "Matched event", "text"),
+                ("SalesUnits", "Sales 60d", "num"),
+                ("CampaignPriorityScore", "Campaign priority", "dec"),
+                ("ProductCandidate", "Product candidate", "text"),
+                ("CurrentPrice", "Current price", "dec"),
+                ("BenchmarkPrice", "Best benchmark", "dec"),
+                ("GapPct", "Gap vs best", "pct"),
+                ("CompetitorMovement28d", "Competitor price change 28d", "pct"),
+                ("CompetitiveScore", "Competitiveness", "dec"),
+                ("PriceRoomPct", "Room above floor", "pct"),
+                ("CampaignAction", "Campaign decision", "text"),
+            ],
+            "campaign_products", 1000,
+        )
+    else:
+        campaign_products_table = '<div class="empty">No product-level campaign candidates available yet.</div>'
+
     template = Template(r'''<!doctype html>
 <html lang="en">
 <head>
@@ -2807,7 +2994,7 @@ def generate_market_insights(
 :root{--magenta:#e20074;--bg:#f4f6f8;--card:#fff;--text:#1f2933;--muted:#66727f;--green:#177a3f;--red:#b42318;--orange:#b54708;--line:#d8dee4;--dark:#20242a;}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Segoe UI,Arial,sans-serif}
 header{background:var(--dark);color:#fff;padding:20px 28px;border-bottom:5px solid var(--magenta)} header h1{margin:0;font-size:25px} header .sub{margin-top:4px;color:#cbd2d9}.version{display:inline-block;margin-left:8px;padding:2px 7px;border:1px solid #65707b;border-radius:999px;font-size:11px;color:#e8edf2;vertical-align:2px}
-main{max-width:1550px;margin:0 auto;padding:20px}.grid{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px}.grid.market-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+main{max-width:1550px;margin:0 auto;padding:20px}.grid{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
 .kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.kpi .value{font-size:28px;font-weight:700;margin-top:4px}.up{color:var(--green);font-weight:600}.down{color:var(--red);font-weight:600}.neutral{color:var(--muted)}.warn{color:var(--orange);font-weight:600}
 section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;margin:0 0 8px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.two>*{min-width:0}.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.toolbar label{font-weight:600}.toolbar select{padding:8px 34px 8px 10px;border:1px solid var(--line);border-radius:7px;background:#fff}
 .table-wrap{overflow:auto;max-width:100%;max-height:520px;border:1px solid var(--line);border-radius:7px}table{width:100%;border-collapse:collapse;background:#fff}th{position:sticky;top:0;background:#f0f2f4;text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}td{padding:7px 8px;border-bottom:1px solid #edf0f2;white-space:nowrap}tr:hover td{background:#fafbfc}.table-search{width:100%;max-width:330px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin:0 0 8px}.note{color:var(--muted);font-size:12px;margin-top:8px}.empty{color:var(--muted);padding:18px 0}.method{border-left:4px solid var(--magenta);padding-left:12px}
@@ -2815,12 +3002,14 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 .spark-wrap{height:250px;position:relative}.spark-wrap svg{width:100%;height:100%;display:block}.axis-text{font-size:10px;fill:#74808c}.timeline-line{fill:none;stroke:var(--magenta);stroke-width:3}.timeline-area{fill:rgba(226,0,116,.08)}.timeline-dot{fill:var(--magenta)}.map-wrap{height:470px;position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:linear-gradient(#f8fbfd,#eef4f7)}.map-wrap svg{width:100%;height:100%;display:block}.map-land{fill:#e3eaef;stroke:#b8c5ce;stroke-width:.65}.map-lake{fill:#f4f8fb;stroke:#c6d1d8;stroke-width:.45}.map-border{fill:none;stroke:#c4ced5;stroke-width:.42;opacity:.95}.map-grid{stroke:#d9e2e8;stroke-width:1}.map-equator{stroke:#c0ccd5;stroke-width:1.3}.map-label{font-size:13px;fill:#9aa8b4;font-weight:600;letter-spacing:.05em}.map-dot{stroke:#fff;stroke-width:1.2;cursor:pointer;transition:r .12s,opacity .12s}.map-dot:hover{stroke:#20242a;stroke-width:2;opacity:1!important}.map-iso{font-size:9px;fill:#44515d;font-weight:700;pointer-events:none}.map-legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--muted)}.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}.map-tooltip{position:absolute;display:none;pointer-events:none;z-index:5;min-width:220px;max-width:300px;background:#20242a;color:#fff;border-radius:7px;padding:9px 11px;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:12px;line-height:1.45}.map-tooltip b{font-size:13px}.map-tooltip .muted{color:#cbd2d9}
 .competitive-chart{min-height:300px}.competitive-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 72px;gap:9px;align-items:center;margin:7px 0}.competitive-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.competitive-fill{position:absolute;right:0;top:3px;bottom:3px;background:var(--green);border-radius:5px}.competitive-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--green);font-weight:600}.rec-country-chart{min-height:300px}.rec-row{display:grid;grid-template-columns:minmax(110px,190px) 1fr 86px;gap:9px;align-items:center;margin:7px 0}.rec-track{height:20px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.rec-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#9ca7b2;z-index:2}.rec-up,.rec-down{position:absolute;top:3px;bottom:3px;border-radius:5px}.rec-up{left:50%;background:var(--green)}.rec-down{right:50%;background:var(--red)}.rec-count{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.evolution-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.evolution-chart{min-height:285px}.evo-row{display:grid;grid-template-columns:minmax(110px,180px) 1fr 72px;gap:8px;align-items:center;margin:7px 0}.evo-track{height:18px;background:#eef1f4;border-radius:7px;position:relative;overflow:hidden}.evo-fill{position:absolute;left:0;top:3px;bottom:3px;border-radius:5px}.evo-gain{background:var(--green)}.evo-loss{background:var(--red)}.evo-value{text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.evo-controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.evo-controls button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}.evo-controls button.active{background:#111827;color:#fff;border-color:#111827}@media(max-width:900px){.evolution-grid{grid-template-columns:1fr}}.dynamic-table input{margin-bottom:8px}.pill{display:inline-block;border:1px solid var(--line);background:#f7f8fa;padding:3px 7px;border-radius:999px;color:var(--muted);font-size:11px}
 .decision-card{border-top:4px solid var(--magenta)}.decision-legend{display:flex;gap:7px;flex-wrap:wrap;margin:4px 0 12px}.decision-legend .pill{color:var(--text);background:#f7f8fa}.decision-card table td:last-child{white-space:normal;min-width:240px}
-@media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}.three,.chart-grid{grid-template-columns:1fr}}@media(max-width:750px){.grid,.grid.market-kpis,.two,.three,.chart-grid{grid-template-columns:1fr}}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}.three,.chart-grid{grid-template-columns:1fr}}@media(max-width:750px){.grid,.two,.three,.chart-grid{grid-template-columns:1fr}}
 
 .campaign-body>summary{color:#e20074}.campaign-body[open]>summary{border-bottom:1px solid #eee;margin-bottom:12px}.campaign-price,.campaign-audience{border-top:1px solid #eee;padding-top:8px;margin-top:18px}.campaign-price h4{margin:20px 0 10px}.movement-badge{display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:2px 8px;font-size:13px;font-weight:600;background:#f0f2f4;color:#45515d}.movement-up{background:#e8f2fc;color:#19578a}.movement-down{background:#fff1df;color:#865500}.movement-unknown{background:#f2f2f2;color:#666}.offer-evidence{width:100%}.offer-evidence tbody tr:first-child{background:#fff0f7;font-weight:600}
 [hidden]{display:none!important}.campaign-section{max-width:1280px;margin:auto}.campaign-controls{display:flex;gap:15px;align-items:end;flex-wrap:wrap;padding:18px;background:white;border-radius:12px}.campaign-controls label{display:grid;gap:6px}.campaign-card{background:white;border:1px solid #ddd;border-top:4px solid #e20074;border-radius:12px;padding:24px;margin:22px 0}.campaign-head{display:flex;justify-content:space-between;gap:20px;font-size:22px}.campaign-score{color:#e20074;font-size:30px;font-weight:700;text-align:right}.campaign-score small{display:block;font-size:11px;color:#667}.campaign-product{font-size:20px;margin:18px 0}.campaign-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px}.campaign-card p,.campaign-card li{line-height:1.6}.campaign-card summary,.market-diagnostics>summary,.campaign-method>summary{cursor:pointer;font-weight:600;padding:15px 0}.campaign-event{padding:12px;border-bottom:1px solid #eee}.campaign-card button,.campaign-controls button{padding:10px 16px;border-radius:7px;border:1px solid #e20074;background:white;cursor:pointer}.market-diagnostics{margin-top:32px}.campaign-method{background:#f8f1f5;padding:10px 20px;border-radius:12px}@media(max-width:750px){.campaign-grid{grid-template-columns:1fr}.campaign-head{font-size:18px}}
 
 .campaign-controls{border:1px solid #e7dfe4;box-shadow:0 4px 18px #29102108;gap:14px;padding:20px}
+.upcoming-events{background:#fff;border:1px solid #eadde5;border-left:4px solid #e20074;border-radius:12px;padding:18px 22px;margin:16px 0 20px}.upcoming-events h3{margin:0 0 4px}.upcoming-event{padding:12px 0;border-top:1px solid #eee;line-height:1.5}.upcoming-event-title{display:flex;justify-content:space-between;align-items:start;gap:12px}.upcoming-event-audience{font-size:12px;color:#626b75;margin:5px 0}
+.weekly-highlights{background:#fff;border:1px solid #eadde5;border-left:4px solid #6b4eff;border-radius:12px;padding:18px 22px;margin:16px 0 20px}.weekly-highlights h3{margin:0 0 4px}.weekly-highlight-summary{font-size:15px}.weekly-highlight-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.weekly-highlight{border-top:1px solid #eee;padding:12px 4px}.weekly-highlight h4{margin:0 0 6px;font-size:16px}.weekly-highlight p{margin:5px 0;line-height:1.5}.weekly-highlight-meta{font-size:12px;color:#626b75}
 .campaign-controls label{font-size:12px;font-weight:650;color:#666;letter-spacing:.02em;flex:1 1 165px}
 .campaign-controls select{appearance:none;-webkit-appearance:none;width:100%;min-height:44px;border:1px solid #d7d0d5;border-radius:9px;padding:10px 36px 10px 13px;background-color:#fff;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23e20074' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;font:500 14px system-ui,sans-serif;color:#25212a;cursor:pointer;transition:border-color .15s,box-shadow .15s}
 .campaign-controls select:hover{border-color:#e20074;background-color:#fff8fc}
@@ -2836,34 +3025,95 @@ section{margin-top:18px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;marg
 <nav class="report-tabs" aria-label="Report sections"><button type="button" id="campaign-tab" aria-controls="campaign-panel" aria-pressed="true">Campaign opportunities</button><button type="button" id="pricing-tab" aria-controls="pricing-panel" aria-pressed="false">Pricing &amp; competitiveness</button></nav>
 <section id="campaign-panel" aria-labelledby="campaign-tab">$campaign_briefs_html</section>
 <section id="pricing-panel" aria-labelledby="pricing-tab" hidden>
+$destination_pricing_html
 <h2>Market overview and price movements</h2>
-<div class="toolbar card"><label for="windowSelect">Market trend window</label><select id="windowSelect"></select><span class="note" style="margin:0">Market movements follow this window. Pricing actions below use the latest trusted snapshot.</span></div>
-<div class="grid market-kpis">
-<div class="card kpi"><div class="label" id="directionLabel">Overall market</div><div class="value $direction_cls" id="directionValue">$default_trimmed_mean</div><div class="note" id="directionNote"></div></div>
-<div class="card kpi"><div class="label" id="moverLabel">Active movers</div><div class="value $mover_cls" id="moverValue">$default_mover_trimmed_mean</div><div class="note" id="moveNote"></div></div>
-<div class="card kpi"><div class="label">Provider direction</div><div class="value" id="providerDirection">—</div><div class="note">Providers with rising / falling prices; remaining providers broadly stable.</div></div>
+<div class="toolbar card"><label for="windowSelect">Market trend window</label><select id="windowSelect"></select><span class="pill">Overall = 10% trimmed mean of ALL trusted matched offers (stable included)</span><span class="pill">Changes are always measured against the latest available price</span><span class="note" style="margin:0">Use longer windows to separate a one-week shock from a sustained market move.</span></div>
+<div class="grid">
+ <div class="card kpi"><div class="label" id="directionLabel">Selected overall market</div><div class="value $direction_cls" id="directionValue">$default_trimmed_mean</div><div class="note" id="directionNote">10% trimmed mean across all trusted matched offers (stable included) · $direction_word · median $default_median</div></div>
+ <div class="card kpi"><div class="label" id="moverLabel">Selected active movers</div><div class="value $mover_cls" id="moverValue">$default_mover_trimmed_mean</div><div class="note" id="moveNote">10% trimmed mean among materially changed offers · $default_changed of $default_matched changed · <span class="up">↑ $default_up</span> <span class="down">↓ $default_down</span></div></div>
+ <div class="card kpi"><div class="label">Data-quality exclusions</div><div class="value warn">$quality_exclusion_count</div><div class="note">$quality_note</div></div>
+ <div class="card kpi"><div class="label">Historical observations</div><div class="value">$history_observations</div><div class="note">$history_products comparable product series · $history_min → $history_max</div></div>
+ <div class="card kpi"><div class="label">Our recommendations</div><div class="value"><span class="up">↑ $rec_up</span> <span class="down">↓ $rec_down</span></div><div class="note">Exact-duration anchors only</div></div>
 </div>
-<details class="card" style="margin-top:14px"><summary><b>History &amp; data quality</b> · $history_observations observations · $history_min → $history_max · $quality_exclusion_count excluded products</summary>
-<p class="note">$quality_note</p>
-<div class="method"><h3>Historical quality guard</h3><p>Recommendations exclude suspicious prices using the prior $baseline_days-day median where at least $baseline_min observations exist, plus cross-sectional and freshness checks. Otherwise the guard falls back to the previous observation. Raw history is retained.</p></div>
+
+<section class="card decision-card">
+ <div class="chart-titleline"><div><h2>Supporting route and product evidence</h2><div class="chart-sub">Intelligence route demand is joined to current sales, product competitiveness, competitor price movement, and room above cost floor.</div></div></div>
+ <h3>Intelligence route priorities</h3>
+ $intelligence_priority_table
+ <div class="note">$intelligence_note. Intelligence's route score uses baseline demand (18%), Trends momentum (18%), observed sales (25%), seasonality (10%), events (15%), holiday timing (9%), and distance (5%). The route table uses the latest sufficiently complete score snapshot; event names, audience details and source URLs come from the matched events in the Intelligence database.</div>
+ <div class="decision-legend"><span class="pill">High sales / competitive = scale</span><span class="pill">High sales / weak competitiveness = fix price, then scale</span><span class="pill">Low sales / competitive = test demand</span><span class="pill">Low sales / weak competitiveness = deprioritise</span></div>
+ <h3>Route-level campaign priority</h3>
+ $sales_competitiveness_table
+ <div class="note">$sales_competitiveness_note. Sales are completed T-Travel transactions in the latest 60-day window. Competitiveness is destination-level and uses the latest trusted comparable price anchors.</div>
+ <h3 style="margin-top:18px">Product and promotion decision</h3>
+ <div class="note">The campaign rules above govern the shortlist. The table below is supporting evidence, not an additional campaign ranking.</div>
+ $campaign_products_table
+ <div class="note">$campaign_products_note</div>
+</section>
+
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where T-Travel is most competitive</h2><div class="chart-sub">Current net price versus the best credible benchmark from the latest competitor snapshot only</div></div></div>
+ <div class="two">
+  <div><div id="competitivenessCountryChart" class="competitive-chart"></div><div class="note">Benchmark per anchor = the lower of the cheapest trusted exact-duration comparable pack and, for capped plans, the cheapest trusted price/GB × our allowance. At least 2 providers are required. “Very competitive” means our current net price is within 5% of that best benchmark or cheaper. Countries with fewer than 3 comparable anchors are omitted from the chart but remain in the table.</div></div>
+  <div>$competitiveness_country_table<div class="note">Only 1/3/7/10/15/30-day anchors contribute. Capped competitor packs must be 0.5×–2× our GB; one closest-allowance offer per provider is retained (max 5). Only offers present in the latest competitor snapshot contribute; historical prices never enter this benchmark. Quality-excluded rows do not contribute. Regional pricing units are evaluated separately in each covered destination.</div></div>
+ </div>
+</section>
+
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where T-Travel competitiveness is changing</h2><div class="chart-sub">Change in our gap versus the best credible competitor benchmark; positive = gaining competitiveness</div></div></div>
+ <div class="evo-controls" id="evoControls"></div>
+ <div id="evoBasis" class="note"></div>
+ <div class="evolution-grid">
+  <div><h3>Top 10 gaining competitiveness</h3><div id="competitivenessGainers" class="evolution-chart"></div></div>
+  <div><h3>Top 10 losing competitiveness</h3><div id="competitivenessLosers" class="evolution-chart"></div></div>
+ </div>
+ <div class="note">Metric = previous gap versus best credible market − current gap versus best credible market, shown in percentage points. A +10 pp result means our relative position improved by 10 points. Historical T-Travel price snapshots are used when available; otherwise the card explicitly labels the comparison as market-driven only.</div>
+</section>
+
+<section class="card method"><h2>Historical quality guard</h2><div>The primary anomaly check compares each current competitor price with the median of its prior <b>$baseline_days days</b> of history, requiring at least <b>$baseline_min observations</b>. This keeps a repeated bad scrape suspicious even if the immediately previous snapshot is already wrong. Where there is not enough history, the engine falls back to latest-vs-previous. Extreme moves of ≥+$extreme_up or ≤$extreme_down are excluded unless peer providers corroborate the direction <b>or</b> the same provider shows a broad same-direction repricing across at least $broad_moves products in $broad_countries countries. Current cross-sectional outliers remain a separate exclusion gate.</div><div class="note">Raw observations are never deleted. The selectable market windows below are for analysis; the 8-week historical median guard is the data-quality baseline used by recommendations.</div></section>
+
 <section class="chart-grid">
  <div class="card chart"><div class="chart-titleline"><div><h2>Market movement by time window</h2><div class="chart-sub">Overall market vs materially changed offers only</div></div></div><div id="windowChart"></div></div>
  <div class="card chart"><div class="chart-titleline"><div><h2>History coverage</h2><div class="chart-sub">Stored competitor observations per snapshot date</div></div></div><div class="spark-wrap" id="timelineChart"></div></div>
-</section><section class="card"><h2>Data quality — excluded suspicious current prices</h2>$quality_table<div class="note">For historical-median rows, “Baseline” is the median of prior observations, not a single snapshot. These rows remain in SQLite for audit/review and are excluded only from trusted analytics/recommendations.</div></section><section class="card"><h2>Provider coverage & freshness</h2>$coverage_table<div class="note">Freshness is measured against the newest observation date in the DB: current ≤7 days, watch 8–14 days, stale &gt;14 days. Coverage deltas can reveal partial/failed scrapes.</div></section></details>
+</section>
+
 <section class="card">
  <div class="chart-titleline"><div><h2>Where competitor prices are moving</h2><div class="chart-sub" id="mapSub">Geographic view of overall market movement for the selected period.</div></div></div>
  <div class="map-wrap" id="movementMap"><div class="map-tooltip" id="mapTooltip"></div></div>
  <div class="map-legend"><span><span class="legend-dot" style="background:var(--red)"></span>Overall prices lower</span><span><span class="legend-dot" style="background:#8e9aa6"></span>Broadly stable</span><span><span class="legend-dot" style="background:var(--green)"></span>Overall prices higher</span><span>Bubble size = share of matched offers that changed</span></div>
  <div class="note">Country position uses an offline country centroid. Color uses the 10% trimmed mean across all trusted matched offers, including stable prices. Hover for mover-only change, breadth and coverage.</div>
-</section><section class="chart-grid">
- <div class="card chart"><div class="chart-titleline"><div><h2>Largest country movements</h2><div class="chart-sub" id="countryChartSub"></div></div></div><div id="countryChart"></div></div>
- <div class="card chart"><div class="chart-titleline"><div><h2>Largest provider movements</h2><div class="chart-sub" id="providerChartSub"></div></div></div><div id="providerChart"></div></div>
-</section><section class="card dynamic-table"><h2>Largest trusted competitor moves</h2><input class="table-search" id="movesSearch" type="search" placeholder="Filter move…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>ISO</th><th>Country</th><th>Plan</th><th>Days</th><th>GB</th><th>Currency</th><th>Previous</th><th>Current</th><th>Change</th><th>Previous date</th><th>Current date</th></tr></thead><tbody id="movesBody"></tbody></table></div><div class="note">The table follows the selected time window. Product identity is provider + market + plan + duration + allowance + currency.</div></section>
-<details class="card"><summary>More market evidence · country and provider breakdowns</summary>
-<section class="card dynamic-table"><h2>Countries with rising competitor prices</h2><input class="table-search" id="risingSearch" type="search" placeholder="Filter table…"><div class="table-wrap"><table><thead><tr><th>ISO</th><th>Country</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Providers</th><th>Latest data</th><th>Baseline data</th></tr></thead><tbody id="risingBody"></tbody></table></div><div class="note">Breadth = (products up − products down) / changed products.</div></section><section class="card dynamic-table"><h2>Countries with falling competitor prices</h2><input class="table-search" id="fallingSearch" type="search" placeholder="Filter table…"><div class="table-wrap"><table><thead><tr><th>ISO</th><th>Country</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Providers</th><th>Latest data</th><th>Baseline data</th></tr></thead><tbody id="fallingBody"></tbody></table></div><div class="note">Only trusted, fresh observations contribute.</div></section> <div class="card dynamic-table"><h2>Competitor movement</h2><input class="table-search" id="providerSearch" type="search" placeholder="Filter provider…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Up</th><th>Down</th><th>Latest data</th></tr></thead><tbody id="providerBody"></tbody></table></div></div></details>
-$pricing_actions_html
 </section>
 
+<section class="card">
+ <div class="chart-titleline"><div><h2>Where our pricing recommendations are concentrated</h2><div class="chart-sub">Current actionable recommendations by commercial destination · technical coverage is not expanded into extra country signals</div></div></div>
+ <div class="two">
+  <div><div id="recommendationCountryChart" class="rec-country-chart"></div><div class="note"><span class="up">Right = price-up recommendations</span> · <span class="down">Left = price-down recommendations</span>. Bar length is recommendation count.</div></div>
+  <div>$recommendation_country_table<div class="note">“Anchors affected” = actionable anchors ÷ all evaluated anchors for that commercial destination. A country appears only when that country pricing unit itself has a recommendation.</div></div>
+ </div>
+</section>
+
+<section class="chart-grid">
+ <div class="card chart"><div class="chart-titleline"><div><h2>Largest country movements</h2><div class="chart-sub" id="countryChartSub"></div></div></div><div id="countryChart"></div></div>
+ <div class="card chart"><div class="chart-titleline"><div><h2>Largest provider movements</h2><div class="chart-sub" id="providerChartSub"></div></div></div><div id="providerChart"></div></div>
+</section>
+
+<section class="card dynamic-table"><h2>Countries with rising competitor prices</h2><input class="table-search" id="risingSearch" type="search" placeholder="Filter table…"><div class="table-wrap"><table><thead><tr><th>ISO</th><th>Country</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Providers</th><th>Latest data</th><th>Baseline data</th></tr></thead><tbody id="risingBody"></tbody></table></div><div class="note">Breadth = (products up − products down) / changed products.</div></section>
+
+<section class="card dynamic-table"><h2>Countries with falling competitor prices</h2><input class="table-search" id="fallingSearch" type="search" placeholder="Filter table…"><div class="table-wrap"><table><thead><tr><th>ISO</th><th>Country</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Providers</th><th>Latest data</th><th>Baseline data</th></tr></thead><tbody id="fallingBody"></tbody></table></div><div class="note">Only trusted, fresh observations contribute.</div></section>
+
+<section class="three">
+ <div class="card dynamic-table"><h2>Competitor movement</h2><input class="table-search" id="providerSearch" type="search" placeholder="Filter provider…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>Overall trimmed mean</th><th>Movers trimmed mean</th><th>Overall median</th><th>Breadth</th><th>Changed</th><th>Up</th><th>Down</th><th>Latest data</th></tr></thead><tbody id="providerBody"></tbody></table></div></div>
+ <div class="card"><h2>Recommendations by duration</h2>$days_table</div>
+ <div class="card"><h2>Recommendations by plan</h2>$plans_table</div>
+</section>
+
+<section class="card dynamic-table"><h2>Largest trusted competitor moves</h2><input class="table-search" id="movesSearch" type="search" placeholder="Filter move…"><div class="table-wrap"><table><thead><tr><th>Provider</th><th>ISO</th><th>Country</th><th>Plan</th><th>Days</th><th>GB</th><th>Previous</th><th>Current</th><th>Change</th><th>Previous date</th><th>Current date</th></tr></thead><tbody id="movesBody"></tbody></table></div><div class="note">The table follows the selected time window. Product identity is provider + market + plan + duration + allowance + currency.</div></section>
+
+<section class="card"><h2>Data quality — excluded suspicious current prices</h2>$quality_table<div class="note">For historical-median rows, “Baseline” is the median of prior observations, not a single snapshot. These rows remain in SQLite for audit/review and are excluded only from trusted analytics/recommendations.</div></section>
+<section class="card"><h2>Provider coverage & freshness</h2>$coverage_table<div class="note">Freshness is measured against the newest observation date in the DB: current ≤7 days, watch 8–14 days, stale &gt;14 days. Coverage deltas can reveal partial/failed scrapes.</div></section>
+<section class="card"><h2>Pricing units with the most signals</h2>$units_table<div class="note">Recommendation signals use the current quality-filtered market and are separate from the historical trend window selected above.</div></section>
+<section class="card"><h2>History database</h2><div class="note">Local SQLite DB: $history_db<br>Coverage: $history_min to $history_max · $history_providers providers · $history_countries countries · $history_products comparable product series.<br>Current cross-sectional outlier audit: $audit_rows row(s). On this refresh, $imported source file(s) were new/changed and $skipped were already indexed.</div></section>
+</section>
 </main>
 <script id="dashboardData" type="application/json">$dashboard_json</script>
 <script>
@@ -2872,6 +3122,17 @@ const dashboard=JSON.parse(document.getElementById('dashboardData').textContent)
 function pct(v,d=1){if(v===null||v===undefined||!isFinite(Number(v)))return '—';return (Number(v)*100).toFixed(d)+'%'}function n(v){if(v===null||v===undefined||v==='')return '—';const x=Number(v);return isFinite(x)?x.toLocaleString(undefined,{maximumFractionDigits:2}):String(v)}function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 Object.entries(windows).forEach(([key,w])=>{const o=document.createElement('option');o.value=key;o.textContent=w.label;selector.appendChild(o)});selector.value='$default_key';
 function barChart(id,rows,labelKey,valueKey,maxRows=12){const el=document.getElementById(id);el.innerHTML='';const vals=(rows||[]).filter(r=>isFinite(Number(r[valueKey]))&&Math.abs(Number(r[valueKey]))>=0.0001).sort((a,b)=>Math.abs(Number(b[valueKey]))-Math.abs(Number(a[valueKey]))).slice(0,maxRows);if(!vals.length){el.innerHTML='<div class="empty">No material movement in this view.</div>';return}const max=Math.max(...vals.map(r=>Math.abs(Number(r[valueKey]))),0.01);vals.forEach(r=>{const v=Number(r[valueKey]);const row=document.createElement('div');row.className='bar-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r[labelKey]??'');label.textContent=String(r[labelKey]??'');const track=document.createElement('div');track.className='bar-track';const zero=document.createElement('div');zero.className='bar-zero';track.appendChild(zero);const fill=document.createElement('div');fill.className='bar-fill';const width=Math.min(49,Math.abs(v)/max*49);fill.style.width=width+'%';fill.style.left=(v>=0?50:50-width)+'%';fill.style.background=v>=0?'var(--green)':'var(--red)';track.appendChild(fill);const value=document.createElement('div');value.className='bar-value '+(v>=0?'up':'down');value.textContent=pct(v);row.append(label,track,value);el.appendChild(row)})}
+function renderRecommendationCountries(){const el=document.getElementById('recommendationCountryChart');if(!el)return;const rows=(dashboard.recommendation_countries||[]).filter(r=>Number(r.Recommendations)>0).sort((a,b)=>Number(b.Recommendations)-Number(a.Recommendations)).slice(0,18);el.innerHTML='';if(!rows.length){el.innerHTML='<div class="empty">No actionable country recommendations.</div>';return}const max=Math.max(...rows.map(r=>Math.max(Number(r.Up)||0,Number(r.Down)||0)),1);rows.forEach(r=>{const row=document.createElement('div');row.className='rec-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r.Country||r.ISO||'');label.textContent=String(r.Country||r.ISO||'');const track=document.createElement('div');track.className='rec-track';const zero=document.createElement('div');zero.className='rec-zero';track.appendChild(zero);const up=Number(r.Up)||0,down=Number(r.Down)||0;if(down){const b=document.createElement('div');b.className='rec-down';b.style.width=Math.min(49,down/max*49)+'%';track.appendChild(b)}if(up){const b=document.createElement('div');b.className='rec-up';b.style.width=Math.min(49,up/max*49)+'%';track.appendChild(b)}const count=document.createElement('div');count.className='rec-count';count.innerHTML='<span class="up">↑ '+up+'</span> <span class="down">↓ '+down+'</span>';row.append(label,track,count);el.appendChild(row)})}
+function renderCompetitivenessCountries(){const el=document.getElementById('competitivenessCountryChart');if(!el)return;const rows=(dashboard.competitiveness_countries||[]).filter(r=>Number(r.Evaluated)>=3).sort((a,b)=>Number(b.VeryCompetitiveShare)-Number(a.VeryCompetitiveShare)||Number(a.TrimmedMeanGapPct)-Number(b.TrimmedMeanGapPct)).slice(0,18);el.innerHTML='';if(!rows.length){el.innerHTML='<div class="empty">Not enough country-level comparable anchors yet.</div>';return}rows.forEach(r=>{const row=document.createElement('div');row.className='competitive-row';const label=document.createElement('div');label.className='bar-label';label.title=String(r.Country||r.ISO||'');label.textContent=String(r.Country||r.ISO||'');const track=document.createElement('div');track.className='competitive-track';const fill=document.createElement('div');fill.className='competitive-fill';const share=Math.max(0,Math.min(1,Number(r.VeryCompetitiveShare)||0));fill.style.width=(share*100)+'%';track.appendChild(fill);const value=document.createElement('div');value.className='competitive-value';value.textContent=pct(share);value.title='Trimmed mean gap vs best: '+pct(Number(r.TrimmedMeanGapPct)||0);row.append(label,track,value);el.appendChild(row)})}
+
+function renderCompetitivenessEvolution(key){
+ const trends=dashboard.competitiveness_trends||{}; const d=trends[key]||{}; const rows=d.rows||[];
+ const controls=document.getElementById('evoControls'); if(controls){controls.innerHTML='';['28','56','84'].forEach(k=>{if(!trends[k])return;const b=document.createElement('button');b.textContent=trends[k].label||k;b.className=k===key?'active':'';b.onclick=()=>renderCompetitivenessEvolution(k);controls.appendChild(b)})}
+ const basis=document.getElementById('evoBasis'); if(basis)basis.textContent=(d.basis||'')+(d.market_date?' · competitor snapshot '+d.market_date:'')+(d.price_date?' · T-Travel price snapshot '+d.price_date:'');
+ const gain=document.getElementById('competitivenessGainers'), loss=document.getElementById('competitivenessLosers');
+ const draw=(el,data,positive)=>{if(!el)return;el.innerHTML='';if(!data.length){el.innerHTML='<div class="empty">Not enough comparable country history for this window.</div>';return}const max=Math.max(...data.map(r=>Math.abs(Number(r.ChangePctPts)||0)),.001);data.forEach(r=>{const v=Number(r.ChangePctPts)||0;const row=document.createElement('div');row.className='evo-row';const label=document.createElement('div');label.className='bar-label';label.textContent=String(r.Country||r.ISO||'');label.title='Previous gap '+pct(Number(r.PreviousGapPct)||0)+' → current '+pct(Number(r.CurrentGapPct)||0);const track=document.createElement('div');track.className='evo-track';const fill=document.createElement('div');fill.className='evo-fill '+(positive?'evo-gain':'evo-loss');fill.style.width=Math.max(2,Math.min(100,Math.abs(v)/max*100))+'%';track.appendChild(fill);const value=document.createElement('div');value.className='evo-value '+(positive?'up':'down');value.textContent=(v>=0?'+':'')+(v*100).toFixed(1)+' pp';row.append(label,track,value);el.appendChild(row)})};
+ const valid=rows.filter(r=>isFinite(Number(r.ChangePctPts))); const gainers=[...valid].filter(r=>Number(r.ChangePctPts)>0).sort((a,b)=>Number(b.ChangePctPts)-Number(a.ChangePctPts)).slice(0,10); const losers=[...valid].filter(r=>Number(r.ChangePctPts)<0).sort((a,b)=>Number(a.ChangePctPts)-Number(b.ChangePctPts)).slice(0,10); draw(gain,gainers,true);draw(loss,losers,false);
+}
 function renderWindowChart(){const el=document.getElementById('windowChart');el.innerHTML='';const rows=Object.values(windows);const max=Math.max(...rows.flatMap(w=>[Math.abs(Number(w.trimmed_mean)||0),Math.abs(Number(w.mover_trimmed_mean)||0)]),0.01);rows.forEach(w=>{const block=document.createElement('div');block.style.margin='10px 0 14px';const title=document.createElement('div');title.className='bar-label';title.style.fontWeight='700';title.style.marginBottom='5px';title.textContent=w.label;block.appendChild(title);[['Overall',Number(w.trimmed_mean)||0],['Movers',Number(w.mover_trimmed_mean)||0]].forEach(([name,v])=>{const row=document.createElement('div');row.className='bar-row';const label=document.createElement('div');label.className='bar-label';label.textContent=name;const track=document.createElement('div');track.className='bar-track';const zero=document.createElement('div');zero.className='bar-zero';track.appendChild(zero);const fill=document.createElement('div');fill.className='bar-fill';const width=Math.min(49,Math.abs(v)/max*49);fill.style.width=width+'%';fill.style.left=(v>=0?50:50-width)+'%';fill.style.background=v>=0?'var(--green)':'var(--red)';track.appendChild(fill);const value=document.createElement('div');value.className='bar-value '+(v>=0?'up':'down');value.textContent=pct(v);row.append(label,track,value);block.appendChild(row)});el.appendChild(block)})}
 function renderTimeline(){const el=document.getElementById('timelineChart');const data=dashboard.timeline||[];if(data.length<2){el.innerHTML='<div class="empty">More snapshot dates are needed for a history chart.</div>';return}const W=720,H=220,p=28;const ys=data.map(d=>Number(d.Observations)||0);const max=Math.max(...ys,1),min=Math.min(...ys,0);const range=Math.max(max-min,1);const pts=data.map((d,i)=>{const x=p+(W-2*p)*(i/(data.length-1));const y=H-p-(H-2*p)*((ys[i]-min)/range);return [x,y]});const line=pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ');const area='M'+pts[0][0]+','+(H-p)+' '+pts.map(q=>'L'+q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')+' L'+pts[pts.length-1][0]+','+(H-p)+' Z';const first=esc(data[0].Date),last=esc(data[data.length-1].Date);el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none"><path class="timeline-area" d="'+area+'"></path><path class="timeline-line" d="'+line+'"></path><text class="axis-text" x="'+p+'" y="'+(H-8)+'">'+first+'</text><text class="axis-text" text-anchor="end" x="'+(W-p)+'" y="'+(H-8)+'">'+last+'</text><text class="axis-text" x="4" y="'+(p+4)+'">'+max.toLocaleString()+'</text><text class="axis-text" x="4" y="'+(H-p)+'">'+min.toLocaleString()+'</text></svg>'}
 function tableRows(id,rows,cols,searchId,limit=120){const body=document.getElementById(id);const q=(document.getElementById(searchId)?.value||'').toLowerCase();body.innerHTML='';(rows||[]).filter(r=>JSON.stringify(r).toLowerCase().includes(q)).slice(0,limit).forEach(r=>{const tr=document.createElement('tr');cols.forEach(c=>{const td=document.createElement('td');let v=r[c[0]];td.textContent=c[1]==='pct'?pct(v):c[1]==='num'?n(v):(v??'—');if(c[1]==='pct'&&isFinite(Number(v)))td.className=Number(v)>0.005?'up':(Number(v)<-0.005?'down':'neutral');tr.appendChild(td)});body.appendChild(tr)});if(!body.children.length)body.innerHTML='<tr><td colspan="12" class="neutral">No rows for this view/filter.</td></tr>'}
@@ -2895,14 +3156,14 @@ function renderMovementMap(w){
  });
  host.insertBefore(svg,tip); document.getElementById('mapSub').textContent=w.label+' · real country map; overall trimmed mean color; bubble size = share of matched offers changed';
 }
-function renderSelected(){const w=windows[selector.value];if(!w)return;const tm=Number(w.trimmed_mean)||0;const med=Number(w.median)||0;const mtm=Number(w.mover_trimmed_mean)||0;const mmed=Number(w.mover_median)||0;const changed=Number(w.changed||0), matched=Number(w.matched||0);const changedShare=matched?changed/matched:0;const up=Number(w.up||0),down=Number(w.down||0),downShare=changed?down/changed:0;document.getElementById('directionLabel').textContent=w.label+' overall market';const dv=document.getElementById('directionValue');dv.textContent=matched?pct(tm):'—';dv.className='value '+(tm>0.005?'up':(tm<-0.005?'down':'neutral'));const state=tm>0.005?'higher':(tm<-0.005?'lower':'broadly stable');document.getElementById('directionNote').textContent='10% trimmed mean across all matched offers (stable included) · '+state+' · median '+pct(med);document.getElementById('moverLabel').textContent=w.label+' active movers';const mv=document.getElementById('moverValue');mv.textContent=matched?pct(mtm):'—';mv.className='value '+(mtm>0.005?'up':(mtm<-0.005?'down':'neutral'));document.getElementById('moveNote').textContent='10% trimmed mean among materially changed offers · '+changed.toLocaleString()+' of '+matched.toLocaleString()+' changed ('+pct(changedShare)+') · '+pct(downShare)+' of movers down · median '+pct(mmed);renderMovementMap(w);if(!matched){document.getElementById('directionNote').textContent='No trusted comparable price pairs for this period.';document.getElementById('moveNote').textContent='No movement evidence available.';}document.getElementById('providerDirection').textContent=(w.providers||[]).filter(r=>Number(r.TrimmedMeanChangePct)>.005).length+' ↑ / '+(w.providers||[]).filter(r=>Number(r.TrimmedMeanChangePct)<-.005).length+' ↓';const countries=w.countries||[];const rising=countries.filter(r=>Number(r.TrimmedMeanChangePct)>0).sort((a,b)=>Number(b.TrimmedMeanChangePct)-Number(a.TrimmedMeanChangePct));const falling=countries.filter(r=>Number(r.TrimmedMeanChangePct)<0).sort((a,b)=>Number(a.TrimmedMeanChangePct)-Number(b.TrimmedMeanChangePct));barChart('countryChart',countries.map(r=>({...r,Label:(r.iso||'')+' '+(r.country||'')})),'Label','TrimmedMeanChangePct',12);barChart('providerChart',w.providers||[],'Provider','TrimmedMeanChangePct',12);document.getElementById('countryChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the tables below';document.getElementById('providerChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the table below';const ccols=[['iso','text'],['country','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['ProviderCount','num'],['LatestDataDate','text'],['PreviousDataDate','text']];tableRows('risingBody',rising,ccols,'risingSearch',120);tableRows('fallingBody',falling,ccols,'fallingSearch',120);tableRows('providerBody',w.providers||[],[['Provider','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['UpProducts','num'],['DownProducts','num'],['LatestDataDate','text']],'providerSearch',120);tableRows('movesBody',w.moves||[],[['provider','text'],['iso','text'],['country','text'],['plan','text'],['days','num'],['gb','num'],['currency','text'],['PreviousPrice','num'],['CurrentPrice','num'],['PctChange','pct'],['PreviousDate','text'],['CurrentDate','text']],'movesSearch',250)}
-selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderWindowChart();renderTimeline();renderSelected();
+function renderSelected(){const w=windows[selector.value];if(!w)return;const tm=Number(w.trimmed_mean)||0;const med=Number(w.median)||0;const mtm=Number(w.mover_trimmed_mean)||0;const mmed=Number(w.mover_median)||0;const changed=Number(w.changed||0), matched=Number(w.matched||0);const changedShare=matched?changed/matched:0;const up=Number(w.up||0),down=Number(w.down||0),downShare=changed?down/changed:0;document.getElementById('directionLabel').textContent=w.label+' overall market';const dv=document.getElementById('directionValue');dv.textContent=pct(tm);dv.className='value '+(tm>0.005?'up':(tm<-0.005?'down':'neutral'));const state=tm>0.005?'higher':(tm<-0.005?'lower':'broadly stable');document.getElementById('directionNote').textContent='10% trimmed mean across all matched offers (stable included) · '+state+' · median '+pct(med);document.getElementById('moverLabel').textContent=w.label+' active movers';const mv=document.getElementById('moverValue');mv.textContent=pct(mtm);mv.className='value '+(mtm>0.005?'up':(mtm<-0.005?'down':'neutral'));document.getElementById('moveNote').textContent='10% trimmed mean among materially changed offers · '+changed.toLocaleString()+' of '+matched.toLocaleString()+' changed ('+pct(changedShare)+') · '+pct(downShare)+' of movers down · median '+pct(mmed);renderMovementMap(w);const countries=w.countries||[];const rising=countries.filter(r=>Number(r.TrimmedMeanChangePct)>0).sort((a,b)=>Number(b.TrimmedMeanChangePct)-Number(a.TrimmedMeanChangePct));const falling=countries.filter(r=>Number(r.TrimmedMeanChangePct)<0).sort((a,b)=>Number(a.TrimmedMeanChangePct)-Number(b.TrimmedMeanChangePct));barChart('countryChart',countries.map(r=>({...r,Label:(r.iso||'')+' '+(r.country||'')})),'Label','TrimmedMeanChangePct',12);barChart('providerChart',w.providers||[],'Provider','TrimmedMeanChangePct',12);document.getElementById('countryChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the tables below';document.getElementById('providerChartSub').textContent=w.label+' · overall 10% trimmed mean; mover-only metric is shown in the table below';const ccols=[['iso','text'],['country','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['ProviderCount','num'],['LatestDataDate','text'],['PreviousDataDate','text']];tableRows('risingBody',rising,ccols,'risingSearch',120);tableRows('fallingBody',falling,ccols,'fallingSearch',120);tableRows('providerBody',w.providers||[],[['Provider','text'],['TrimmedMeanChangePct','pct'],['MoverTrimmedMeanChangePct','pct'],['MedianChangePct','pct'],['BreadthPct','pct'],['ChangedProducts','num'],['UpProducts','num'],['DownProducts','num'],['LatestDataDate','text']],'providerSearch',120);tableRows('movesBody',w.moves||[],[['provider','text'],['iso','text'],['country','text'],['plan','text'],['days','num'],['gb','num'],['PreviousPrice','num'],['CurrentPrice','num'],['PctChange','pct'],['PreviousDate','text'],['CurrentDate','text']],'movesSearch',250)}
+selector.addEventListener('change',renderSelected);['risingSearch','fallingSearch','providerSearch','movesSearch'].forEach(id=>document.getElementById(id).addEventListener('input',renderSelected));renderRecommendationCountries();renderCompetitivenessCountries();renderCompetitivenessEvolution((dashboard.competitiveness_trends||{})["28"]?"28":((dashboard.competitiveness_trends||{})["56"]?"56":"84"));renderWindowChart();renderTimeline();renderSelected();
 function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' tbody tr').forEach(r=>{r.style.display=r.innerText.toLowerCase().includes(q)?'':'none'})}
 </script>
 </body></html>''')
 
     html = template.safe_substitute(
-        pricing_actions_html=pricing_actions_html,
+        destination_pricing_html=_destination_pricing_html(recs, trusted_market, country_name_map),
         campaign_briefs_html=campaign_briefs_html,
         generated=escape(generated), dashboard_version=escape(DASHBOARD_VERSION), direction_cls=direction_cls,
         direction_word=escape(direction_word.title()), default_trimmed_mean=_fmt_pct(default_trimmed_mean), default_median=_fmt_pct(default_median),
@@ -2914,13 +3175,20 @@ function filterTable(id,q){q=q.toLowerCase();document.querySelectorAll('#'+id+' 
         history_min=escape(history.get('date_min') or '—'), history_max=escape(history.get('date_max') or '—'),
         rec_up=f"{rec_up:,}", rec_down=f"{rec_down:,}", baseline_days=HISTORICAL_BASELINE_DAYS,
         baseline_min=HISTORICAL_MIN_OBSERVATIONS, extreme_up=f"{EXTREME_UP_PCT:.0%}", extreme_down=f"{abs(EXTREME_DOWN_PCT):.0%}", broad_moves=MIN_PROVIDER_BROAD_MOVES, broad_countries=MIN_PROVIDER_BROAD_COUNTRIES,
+        days_table=days_table, plans_table=plans_table, quality_table=quality_table, coverage_table=coverage_table, units_table=units_table, recommendation_country_table=recommendation_country_table, competitiveness_country_table=competitiveness_country_table,
+        sales_competitiveness_table=sales_competitiveness_table,
+        sales_competitiveness_note=escape(sales_competitiveness_note),
+        campaign_products_table=campaign_products_table,
+        campaign_products_note=escape(campaign_products_note),
+        intelligence_priority_table=intelligence_priority_table,
+        intelligence_note=escape(intelligence_note),
         history_db=escape(str(paths.market_history_db)), history_providers=f"{int(history.get('providers', 0)):,}", history_countries=f"{int(history.get('countries', 0)):,}",
         audit_rows=f"{len(current_outlier_audit):,}", imported=history_stats.imported_files, skipped=history_stats.skipped_files,
         dashboard_json=dashboard_json, default_key=default_key,
     )
     output_path.write_text(html, encoding="utf-8")
     print(f"Market insights generator: {DASHBOARD_VERSION} ({Path(__file__).resolve()})")
-    print(f"Sales-prioritised pricing worklist: {len(pricing_rows)} unique price views")
+    print(f"Sales/competitiveness matrix: {len(sales_competitiveness)} route rows ({sales_competitiveness_note})")
     print(f"Saved: {output_path}")
     return output_path
 

@@ -7,7 +7,7 @@ The importer stores a baseline-search observation using the same score scale as
 the API collector, so the opportunity builder can use it immediately.
 """
 from __future__ import annotations
-from route_policy import route_allowed, origin_allowed, ROUTE_POLICY_VERSION
+from route_policy import route_allowed, origin_allowed, configure_input_dir, ROUTE_POLICY_VERSION
 
 
 import argparse
@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 
 
-VERSION = "2.0-monthly-history"
+VERSION = "2.1-localized-manual-keywords"
 
 
 def norm(value: object) -> str:
@@ -57,7 +57,7 @@ def aliases(input_dir: Path) -> dict[str, list[str]]:
                 values = [row.get("country_name", ""), row.get("aliases", "")]
                 result[code] = [norm(x) for value in values for x in str(value or "").split("|") if norm(x)]
     # Useful fallbacks for older input folders.
-    result.update({
+    fallbacks = {
         "DE": ["germany", "deutschland", "berlin", "munich"],
         "FR": ["france", "paris", "nice"],
         "ES": ["spain", "madrid", "barcelona"],
@@ -67,7 +67,30 @@ def aliases(input_dir: Path) -> dict[str, list[str]]:
         "JP": ["japan", "tokyo", "osaka", "kyoto"],
         "IT": ["italy", "rome", "milan", "venice"],
         "GB": ["united kingdom", "uk", "london"],
-    })
+    }
+    for code, values in fallbacks.items():
+        result[code] = list(dict.fromkeys([*result.get(code, []), *values]))
+    return result
+
+
+def keyword_destinations(path: Path | None, origin: str) -> dict[str, str]:
+    """Resolve supplied localized keywords explicitly before guessing aliases."""
+    if path is None:
+        return {}
+    result = {}
+    with path.open(encoding='utf-8-sig', newline='') as handle:
+        reader = csv.DictReader(handle)
+        if not {'origin_iso2', 'keyword', 'destination_iso2'}.issubset(reader.fieldnames or []):
+            raise ValueError('Keyword map needs origin_iso2, keyword, destination_iso2 columns.')
+        for row in reader:
+            if str(row['origin_iso2']).strip().upper() != origin:
+                continue
+            key = norm(row['keyword'])
+            code = str(row['destination_iso2']).strip().upper()
+            if key and len(code) == 2 and code.isalpha():
+                if key in result and result[key] != code:
+                    raise ValueError(f'Ambiguous destination for keyword: {row["keyword"]}')
+                result[key] = code
     return result
 
 
@@ -122,9 +145,16 @@ def main() -> int:
     parser.add_argument("--database", default=str(Path(__file__).resolve().parent / "events.db"))
     parser.add_argument("--input-dir", type=Path, default=Path(__file__).resolve().parent / "inputs" / "travel_demand")
     parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--keyword-map", type=Path, help="Optional exact localized keyword/destination mapping CSV")
     args = parser.parse_args()
 
     origin = args.origin.strip().upper()
+    configure_input_dir(args.input_dir)
+    if not origin_allowed(origin):
+        raise SystemExit(f'Origin {origin} is excluded by the current market-weight policy. Check origin_market_weights.csv.')
+    exact_destinations = keyword_destinations(args.keyword_map, origin)
+    if not Path(args.database).is_file():
+        raise SystemExit(f'Existing BI database not found: {args.database}. Check the project folder and --database path.')
     raw = args.export.read_bytes()
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         export_text = raw.decode("utf-16")
@@ -158,6 +188,10 @@ def main() -> int:
         raise SystemExit("Could not find a Keyword column in the export.")
     if not avg_col:
         raise SystemExit("Could not find an Avg. monthly searches column in the export.")
+    for row in rows:
+        value = str(row.get(avg_col) or '').strip()
+        if re.search(r'\d\s*[–—-]\s*\d|\d\s*[kKmM]\b', value):
+            raise SystemExit('The export contains search-volume ranges or abbreviated values. Download numeric historical metrics before importing.')
 
     month_names = {name.lower(): index for index, name in enumerate(
         ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], 1)}
@@ -168,10 +202,16 @@ def main() -> int:
             month_columns[header] = (int(match[2]), month_names[match[1].lower()])
     history_rows = {}
     known = aliases(args.input_dir)
+    for code in exact_destinations.values():
+        known.setdefault(code, [])
+    def resolve(row):
+        keyword = row.get(keyword_col, '')
+        return exact_destinations.get(norm(keyword)) or destination_for(
+            keyword, row.get(direct_dest_col, '') if direct_dest_col else '', known)
     totals: dict[str, float] = {}
     matched_rows = 0
     for row in rows:
-        dest = destination_for(row.get(keyword_col, ""), row.get(direct_dest_col, "") if direct_dest_col else "", known)
+        dest = resolve(row)
         if not dest or not route_allowed(origin, dest):
             continue
         totals[dest] = totals.get(dest, 0.0) + number(row.get(avg_col))
@@ -199,7 +239,7 @@ def main() -> int:
         metadata = {
             "avg_monthly_searches": round(average, 2),
             "manual_export": str(args.export),
-            "matched_keyword_rows": sum(1 for row in rows if destination_for(row.get(keyword_col, ""), row.get(direct_dest_col, "") if direct_dest_col else "", known) == dest),
+            "matched_keyword_rows": sum(1 for row in rows if resolve(row) == dest),
             "interpretation": "Manual Keyword Planner snapshot; not campaign performance",
         }
         db.execute("""

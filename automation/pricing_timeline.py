@@ -7,7 +7,7 @@ only changed editable fields; XLSX/CSV files remain compatible exports.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from contextlib import nullcontext
+from contextlib import closing, contextmanager, nullcontext
 import hashlib
 import json
 import math
@@ -191,11 +191,15 @@ class PricingTimeline:
         with self._connect() as con:
             con.executescript(SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.path, timeout=30)
-        con.row_factory = sqlite3.Row
-        con.execute("PRAGMA busy_timeout=30000")
-        return con
+    @contextmanager
+    def _connect(self):
+        # SQLite's connection context commits/rolls back but does not close.
+        # Close explicitly so temporary projections can be removed on Windows.
+        with closing(sqlite3.connect(self.path, timeout=30)) as con:
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA busy_timeout=30000")
+            with con:
+                yield con
 
     def baseline_info(self) -> dict[str, Any] | None:
         with self._connect() as con:

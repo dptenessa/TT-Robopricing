@@ -1329,7 +1329,8 @@ def _index_for_diff(df: pd.DataFrame) -> pd.DataFrame:
     for col in PARTNER_DIFF_KEY_COLUMNS:
         if col not in out.columns:
             out[col] = ""
-    out["_diff_key_base"] = out.apply(_diff_key_for_row, axis=1)
+    # Empty eligible snapshots must still support Added/Removed comparisons.
+    out["_diff_key_base"] = out.apply(_diff_key_for_row, axis=1).astype(str)
     out["_diff_duplicate"] = out.groupby("_diff_key_base", dropna=False).cumcount().astype(str)
     out["_diff_key"] = out["_diff_key_base"] + "|" + out["_diff_duplicate"]
     return out.set_index("_diff_key", drop=False)
