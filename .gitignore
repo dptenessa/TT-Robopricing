@@ -25,6 +25,11 @@ scrapes/
 _weekly_pack_import_*/
 weekly-pack-*-test*/
 
+# Data files
+START_HERE/google_ads_keywords/
+START_HERE/00_destination_iso_codes_amdocs.csv
+automation/sales_diagnosis.html
+
 # Large/manual one-off artifacts that are not part of the automated pipeline
 public_price_list.pdf
 promo_countries.xlsx
@@ -36,6 +41,7 @@ reorg-import-test*/
 # Intelligence local runtime files
 automation/intelligence/__pycache__/
 automation/intelligence/cache/
+automation/intelligence/inbox/
 automation/intelligence/backups/
 automation/intelligence/outputs/
 automation/intelligence/*.db
@@ -45,6 +51,7 @@ automation/intelligence/*.html
 automation/intelligence/*.xlsx
 automation/intelligence/**/*.csv
 automation/intelligence/*.log
+automation/intelligence/events.db
 
 # Intelligence private configuration
 automation/intelligence/inputs/
